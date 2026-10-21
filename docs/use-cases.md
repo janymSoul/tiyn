@@ -14,7 +14,7 @@ Actors: **Parent**, **Teen**, **System** (scheduler, relay, push).
 | UC-06 | Parent cancels a task | PAR-02 | MVP |
 | UC-07 | Teen views balance and tasks | TEN-01, TEN-02 | MVP |
 | UC-08 | Teen requests a payout | TEN-03 | MVP |
-| UC-09 | Parent fulfils a payout via Kaspi | SYS-04 | MVP |
+| UC-09 | Parent fulfils a payout through a bank app | SYS-04 | MVP |
 | UC-10 | Recurring tasks and deadlines (system-driven) | PAR-02 | MVP |
 | UC-11 | Parent applies a penalty | PAR-04 | Medium |
 | UC-12 | Teen sets a savings goal | TEN-04 | Medium |
@@ -142,11 +142,11 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 
 ---
 
-## UC-09 Parent fulfils a payout via Kaspi
+## UC-09 Parent fulfils a payout through a bank app
 
 **Flow** (Scenario 2, steps 4–7).
 1. Parent taps the push; the app opens the payout.
-2. "Fulfil via Kaspi" opens a `kaspi://` deep link; the parent transfers to the teen's card with biometrics in Kaspi.
+2. Parent picks a bank from the list (Kaspi first, then Freedom, Forte, and others as added) and the app opens that bank's app through a deep link; the parent transfers to the teen with biometrics in the bank app.
 3. Parent returns and taps "Transfer complete".
 4. Ledger: lock the wallet, `REQUESTED → FULFILLED`, write the debit entry, `PayoutFulfilledEvent`.
 5. Teen is notified.
@@ -154,9 +154,11 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 **Trust model.** We do not verify the transfer (no bank API, and we are not a bank). The parent's confirmation is the source of truth and the balance is debited on it. If the money did not arrive, parent and teen sort it out directly. The audit trail records who confirmed and when (SYS-01).
 
 **Support needed.**
-- Client: `kaspi://` scheme (iOS `LSApplicationQueriesSchemes`, Android package query), with a fallback if Kaspi is not installed.
+- Client: a bank registry in the app, one entry per bank (display name, iOS URL scheme, Android package, fallback). Adding a bank is one registry entry plus the platform declarations (iOS `LSApplicationQueriesSchemes`, Android `<queries>`), which ships with an app release. The backend is bank-agnostic: the ledger, events and payout FSM never mention a bank, so supporting another bank costs no backend change.
+- Fallback when a bank app is missing or has no usable deep link: open the app by its store listing or package, and show the amount with a copy button.
+- The bank the parent used is not recorded in the MVP. If analytics wants it, add a nullable `payouts.fulfilled_via`.
 - Ledger: only a linked parent can confirm; idempotent on `PAYOUT-{payoutID}`; `ledger_entries` append-only, enforced at the DB layer.
-- Confirm against Kaspi's real scheme whether amount and recipient can be prefilled before fixing UX copy.
+- Verify each bank's real deep-link scheme before implementing; the schemes for Kaspi, Freedom and Forte, and whether amount and recipient can be prefilled, are unverified. Only banks with a working, low-effort integration are added; the rest wait.
 
 ---
 

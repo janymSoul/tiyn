@@ -117,7 +117,7 @@ REQUESTED ──parent confirms──▶ FULFILLED   (debit entry written; paren
      │
      └──teen cancels / parent declines / expires──▶ CANCELLED
 ```
-We never verify the Kaspi transfer (no API, and we are not a bank). Confirmation by the parent is the source of truth; the audit trail records who confirmed and when. A missing transfer is resolved between parent and teen.
+We never verify the bank transfer (no bank API, and we are not a bank), whichever bank the parent uses. Confirmation by the parent is the source of truth; the audit trail records who confirmed and when. A missing transfer is resolved between parent and teen.
 
 **Offers (sync interface):**
 ```go

@@ -1,6 +1,6 @@
 # tiyn — Agent Operating Guide
 
-**Read this first, every time.** `tiyn` is a teen financial-literacy + task app for the Kazakhstan market (parent funds + approves; teen earns via chores and academic milestones; virtual ledger + Kaspi deep-link cash-out). This file is the entry point for any coding agent working in this repo. It tells you *how* to work here; the `docs/` set tells you *what* the system is.
+**Read this first, every time.** `tiyn` is a teen financial-literacy + task app for the Kazakhstan market (parent funds + approves; teen earns via chores and academic milestones; virtual ledger + bank-app deep-link cash-out, Kaspi first). This file is the entry point for any coding agent working in this repo. It tells you *how* to work here; the `docs/` set tells you *what* the system is.
 
 ## Prime directives
 

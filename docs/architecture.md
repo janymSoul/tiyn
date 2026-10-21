@@ -4,10 +4,10 @@
 
 A dual-interface mobile app (Flutter client, Go backend) for the Kazakhstan market:
 
-- **Parents** create tasks and academic milestones, review photo proof, approve/reject/request redo, cancel tasks, and fulfil payouts via a Kaspi deep link.
+- **Parents** create tasks and academic milestones, review photo proof, approve/reject/request redo, cancel tasks, and fulfil payouts through the bank app of their choice via a deep link.
 - **Teens** complete chores and milestones, upload proof, watch a gamified ledger balance grow, and request payouts.
 
-Money never moves through our backend. We keep a **virtual ledger** and orchestrate a manual Kaspi P2P transfer via `kaspi://` deep links. This keeps us out of banking-licence and payment-regulation scope (see PRD §4.3, architecture doc §2). The backend's job is correctness of the ledger, reliability of notifications, and integrity of the audit trail — not payment processing.
+Money never moves through our backend. We keep a **virtual ledger** and orchestrate a manual P2P transfer through the parent's own bank app via deep links. Kaspi comes first; other Kazakhstani banks (Freedom, Forte, and so on) are added when the integration is cheap, as entries in a client-side bank registry. The backend is bank-agnostic. This keeps us out of banking-licence and payment-regulation scope (see PRD §4.3, architecture doc §2). The backend's job is correctness of the ledger, reliability of notifications, and integrity of the audit trail — not payment processing.
 
 ## Shape: modular monolith, event-driven internally
 
