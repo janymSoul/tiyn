@@ -1,12 +1,12 @@
 # tiyn — Agent Operating Guide
 
-**Read this first, every time.** `tiyn` is a teen financial-literacy + task app for the Kazakhstan market (parent funds + approves; teen earns via chores and academic milestones; virtual ledger + Kaspi deep-link cash-out). This file is the entry point for any coding agent working in this repo. It tells you *how* to work here; the `docs/` set tells you *what* the system is.
+**Read this first, every time.** `tiyn` is a teen financial-literacy + task app for the Kazakhstan market (parent funds + approves; teen earns via chores and academic milestones; virtual ledger + bank-app deep-link cash-out, Kaspi first). This file is the entry point for any coding agent working in this repo. It tells you *how* to work here; the `docs/` set tells you *what* the system is.
 
 ## Prime directives
 
 1. **Respect module boundaries.** Code lives under `internal/<module>/`. A module's internals are invisible to other modules by Go's compiler (the `internal/` rule). You may only cross a boundary two ways: a **narrow Go interface** (sync) or a **published domain event** (async). Never import another module's `domain/`, `store/`, or `http/`. Never read or write another module's tables. See `docs/modules.md`.
 
-2. **Transactions are explicit and owned by the service layer.** There is no `@Transactional`. A service method opens exactly one transaction via `execTx`; domain code and repositories never open their own. A state transition and all its side effects (ledger write, outbox event) commit or roll back as one unit. See `docs/transactions.md`.
+2. **Transactions are explicit and owned by the service layer.** A service method opens exactly one transaction via `execTx`; domain code and repositories never open their own. A state transition and all its side effects (ledger write, outbox event) commit or roll back as one unit. See `docs/transactions.md`.
 
 3. **Domain models are finite state machines, and they are pure.** Entities validate their own transitions with no dependency on the database, HTTP, or the event bus. Persistence is explicit and lives outside the domain. See `docs/modules.md` and `docs/conventions.md`.
 
@@ -14,7 +14,8 @@
 
 5. **Code is tested before it is called done.** Pure domain logic → unit tests (fast, no DB). Service + HTTP + outbox → functional tests against a real Postgres (Testcontainers-go). A change without tests is not complete. See `docs/testing.md`.
 
-6. **Design deep modules with narrow interfaces** (Ousterhout, *A Philosophy of Software Design*). A module should expose a small interface that hides a lot of implementation. Push complexity down, not onto callers. Avoid shallow pass-through layers. See `docs/conventions.md`.
+6. **No comments.** Code and SQL must be self-explanatory; rename or extract instead of commenting. The only exception is a short note for a non-intuitive business rule. See `docs/conventions.md`.
+7. **Design deep modules with narrow interfaces**. A module should expose a small interface that hides a lot of implementation. Push complexity down, not onto callers. Avoid shallow pass-through layers. See `docs/conventions.md`.
 
 ## Definition of done
 
@@ -37,7 +38,7 @@ Before you say a task is finished, all of the following must hold:
 | How do I handle transactions, locking, idempotency? | `docs/transactions.md` |
 | How do events and the outbox relay work? | `docs/events-outbox.md` |
 | How do I test this? | `docs/testing.md` |
-| Go style, error handling, APOSD principles, naming? | `docs/conventions.md` |
+| Go style, design principles, error handling, naming? | `docs/conventions.md` |
 
 ## Ask before you assume
 

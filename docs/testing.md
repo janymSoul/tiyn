@@ -68,7 +68,7 @@ type fakeStore struct {
 
 Fakes, not mocks-with-expectations. A fake behaves like a tiny real implementation (an in-memory map); it is less brittle than call-order assertions and reads like the real thing. Use a mocking library only where a fake is genuinely more code than it is worth.
 
-> This is only possible because the service depends on an **interface**, not on `*Store` directly. Define the narrow store interface in the module and have the service accept it. (APOSD: depend on a narrow interface; it is also what makes the code testable.)
+> This is only possible because the service depends on an **interface**, not on `*Store` directly. Define the narrow store interface in the module and have the service accept it. Depending on a narrow interface is also what makes the code testable.
 
 ## 3. Functional tests — real Postgres via Testcontainers
 
@@ -76,12 +76,12 @@ The guarantees that matter most — `FOR UPDATE` serialization, the non-negative
 
 ### Shared container, migrated once
 
-Spin one container per package (or per test binary), run goose migrations against it, and give each test an isolated schema or a truncate-between-tests helper. Spinning a container per test is too slow; sharing one with clean state per test is the balance.
+Spin one container per package (or per test binary), run goose migrations once into a template database, and give each test its own database cloned from it with `CREATE DATABASE ... TEMPLATE`. Spinning a container per test is too slow; sharing one container with a fresh clone per test is the balance. Do not clean state with `TRUNCATE` or `DELETE`: `ledger_entries` is append-only and rejects both by design.
 
 ```go
 func setupDB(t *testing.T) *pgxpool.Pool {
     ctx := context.Background()
-    pg, err := postgres.Run(ctx, "postgres:16-alpine",
+    pg, err := postgres.Run(ctx, "postgres:16",
         postgres.WithDatabase("tiyn_test"),
         postgres.WithUsername("test"), postgres.WithPassword("test"),
         testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),

@@ -6,9 +6,9 @@ This is the most important document for correctness. The ledger is money (virtua
 
 **The transaction boundary lives in the service layer, and nowhere else.** A service method opens exactly one transaction, does all its work inside it, and commits or rolls back. Domain code is pure and opens nothing. Repositories (`store/`) accept a transaction-scoped querier and open nothing. HTTP handlers open nothing.
 
-Go has no transaction propagation (`@Transactional`, `REQUIRES_NEW`, nested transactions do not exist). This is not a limitation to work around; it is why there is exactly one place a transaction can begin or end. Keep it that way.
+There is no transaction propagation and no nested transactions. That is deliberate: there is exactly one place a transaction can begin or end. Keep it that way.
 
-## The `execTx` closure — our `@Transactional`
+## The `execTx` closure
 
 Each module's `store` package provides a transaction runner. The transaction boundary is the closure's scope; everything inside is atomic.
 
@@ -100,9 +100,9 @@ Concurrent cash-outs must not both pass the balance check. Lock the wallet row f
 
 ```sql
 -- name: GetWalletForUpdate :one
-SELECT * FROM wallets WHERE teen_id = $1 FOR UPDATE;
+SELECT * FROM wallets WHERE teen_id = $1 AND currency = $2 FOR UPDATE;
 ```
-The `CHECK (cached_balance_kzt >= 0)` constraint is the immutable backstop; the row lock is what serializes the read-modify-write. This is the PRD's chosen mechanism (architecture doc §3). It is correct at the app's scale; the footnote's high-scale concern is real but distant.
+The service compares the amount with *available* funds (balance minus locked minus open payout request) under that lock and returns a domain error if it does not fit. The `CHECK (balance_amount >= 0)` and `CHECK (locked_amount <= balance_amount)` constraints are the immutable backstop, mapped to the same domain error; the row lock is what serializes the read-modify-write. This is the PRD's chosen mechanism (architecture doc §3). It is correct at the app's scale; the footnote's high-scale concern is real but distant.
 
 ### Task state → optimistic (version column)
 
@@ -111,7 +111,7 @@ Two parents (or a double-tap) approving the same task concurrently should not bo
 ```sql
 -- name: UpdateTaskState :execrows
 UPDATE tasks
-SET state = $2, version = version + 1, approved_by = $3, updated_at = now()
+SET state = $2, version = version + 1, decided_by = $3, updated_at = now()
 WHERE id = $1 AND version = $4;
 ```
 Zero rows affected → someone transitioned it first → return `ErrConcurrentModification`, let the caller retry or report a conflict. Optimistic locking fits state transitions (short, rarely contended) better than holding a lock, and it surfaces the race explicitly.
@@ -122,13 +122,15 @@ Zero rows affected → someone transitioned it first → return `ErrConcurrentMo
 
 Every reward, payout, penalty, and file upload is idempotent. Three layers:
 
-1. **Client-provided key.** The client sends an idempotency key (UUID) or we derive a deterministic one (`REWARD-TASK-{taskID}`, `PAYOUT-{payoutID}`). Same logical operation → same key.
+1. **Client-provided key.** The client sends an idempotency key (UUID) or we derive a deterministic one (`REWARD-TASK-{taskID}`, `PAYOUT-{payoutID}`). Same logical operation → same key. Recurring tasks are one row per occurrence, so `taskID` is already unique per period; never derive a key from a timestamp, since a retry would mint a different key and defeat the guard.
 2. **`UNIQUE` constraint.** An `idempotency_keys` table (or a `UNIQUE` column on the effect table) makes a replay a constraint violation, caught and treated as success. The guard runs *inside* the transaction so the key and the effect commit together — you can never record the key without the effect or vice versa.
 3. **Idempotent event consumers.** Because the outbox is at-least-once, consumers must dedupe on the event's key too. The ledger's `TaskApprovedEvent` consumer uses the event key as the ledger entry's idempotency key — a redelivered event inserts nothing the second time.
 
 ### File-upload idempotency
 
-Per the PRD "Important" note, a retried upload must not create a duplicate object. The media module derives the S3 object key deterministically from the idempotency key, so a retry overwrites the same key rather than creating a new object. No DB uniqueness needed — the object store's key space enforces it.
+Per the PRD "Important" note, a retried upload must not create a duplicate object. The client sends an `Idempotency-Key` header with the submit request; the media module derives the S3 object key deterministically from it, so a retry overwrites the same key rather than creating a new object. No DB uniqueness needed — the object store's key space enforces it.
+
+Ordering for proof submission: **upload first, then transaction.** `media.Storage.Put` runs outside the DB transaction (it is idempotent and safe to repeat); then one `execTx` applies the FSM transition, stores the proof reference, and writes the outbox event. A failure after the upload leaves at most an orphaned object that the retry overwrites. Never hold a DB transaction open across the S3 call.
 
 ## Isolation level
 
