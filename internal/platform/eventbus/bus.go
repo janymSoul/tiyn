@@ -1,6 +1,7 @@
 package eventbus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -48,6 +49,9 @@ type Bus struct {
 }
 
 func New(deadLetters DeadLetterStore, options Options) *Bus {
+	options.HandlerMaxRetries = max(options.HandlerMaxRetries, 0)
+	options.RetryInitialInterval = max(options.RetryInitialInterval, 0)
+	options.RetryMaxInterval = max(options.RetryMaxInterval, options.RetryInitialInterval)
 	return &Bus{deadLetters: deadLetters, options: options, handlers: make(map[string][]registration)}
 }
 
@@ -132,7 +136,10 @@ func invoke(ctx context.Context, handle Handler, msg *message.Message) (err erro
 			err = fmt.Errorf("handler panicked: %v", recovered)
 		}
 	}()
-	delivery := msg.Copy()
+	delivery := message.NewMessage(msg.UUID, bytes.Clone(msg.Payload))
+	for key, value := range msg.Metadata {
+		delivery.Metadata.Set(key, value)
+	}
 	delivery.SetContext(ctx)
 	return handle(delivery)
 }

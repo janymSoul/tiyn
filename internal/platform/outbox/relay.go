@@ -24,7 +24,11 @@ type RelayConfig struct {
 	MaxBackoff time.Duration
 }
 
-const unhandledWarningInterval = time.Minute
+const (
+	unhandledWarningInterval = time.Minute
+	defaultBatchSize         = 50
+	defaultMaxBackoff        = 5 * time.Minute
+)
 
 type Relay struct {
 	store                *db.Store
@@ -35,6 +39,12 @@ type Relay struct {
 }
 
 func NewRelay(store *db.Store, publisher Publisher, config RelayConfig, logger *slog.Logger) *Relay {
+	if config.BatchSize <= 0 {
+		config.BatchSize = defaultBatchSize
+	}
+	if config.MaxBackoff <= 0 {
+		config.MaxBackoff = defaultMaxBackoff
+	}
 	return &Relay{store: store, publisher: publisher, config: config, logger: logger}
 }
 
@@ -47,8 +57,12 @@ type pendingEvent struct {
 }
 
 func (r *Relay) Tick(ctx context.Context, now time.Time) error {
-	r.warnAboutUnhandledEvents(ctx, now)
-	ids, err := r.deliverableIDs(ctx)
+	topics := r.publisher.Topics()
+	if topics == nil {
+		topics = []string{}
+	}
+	r.warnAboutUnhandledEvents(ctx, now, topics)
+	ids, err := r.deliverableIDs(ctx, topics)
 	if err != nil {
 		return err
 	}
@@ -56,26 +70,24 @@ func (r *Relay) Tick(ctx context.Context, now time.Time) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if err := r.deliver(ctx, id); err != nil && ctx.Err() == nil {
+		if err := r.deliver(ctx, id, topics); err != nil && ctx.Err() == nil {
 			r.logDeliveryFailure(id, err)
 		}
 	}
 	return nil
 }
 
-func (r *Relay) warnAboutUnhandledEvents(ctx context.Context, now time.Time) {
+func (r *Relay) warnAboutUnhandledEvents(ctx context.Context, now time.Time, topics []string) {
 	if now.Sub(r.lastUnhandledWarning) < unhandledWarningInterval {
 		return
 	}
-	topics := r.publisher.Topics()
-	if topics == nil {
-		topics = []string{}
-	}
+	r.lastUnhandledWarning = now
 	rows, err := r.store.Pool().Query(ctx,
 		`SELECT event_type, count(*) FROM platform.outbox_events
 		 WHERE published_at IS NULL AND NOT (event_type = ANY($1))
 		 GROUP BY event_type ORDER BY event_type`, topics)
 	if err != nil {
+		r.logUnhandledCheckFailure(ctx, err)
 		return
 	}
 	defer rows.Close()
@@ -83,15 +95,23 @@ func (r *Relay) warnAboutUnhandledEvents(ctx context.Context, now time.Time) {
 		var eventType string
 		var waiting int64
 		if err := rows.Scan(&eventType, &waiting); err != nil {
+			r.logUnhandledCheckFailure(ctx, err)
 			return
 		}
 		r.logger.Warn("outbox events waiting for a handler", "event_type", eventType, "waiting", waiting)
-		r.lastUnhandledWarning = now
+	}
+	if err := rows.Err(); err != nil {
+		r.logUnhandledCheckFailure(ctx, err)
 	}
 }
 
-func (r *Relay) deliverableIDs(ctx context.Context) ([]int64, error) {
-	topics := r.publisher.Topics()
+func (r *Relay) logUnhandledCheckFailure(ctx context.Context, err error) {
+	if ctx.Err() == nil {
+		r.logger.Error("could not check for outbox events without a handler", "err", err)
+	}
+}
+
+func (r *Relay) deliverableIDs(ctx context.Context, topics []string) ([]int64, error) {
 	if len(topics) == 0 {
 		return nil, nil
 	}
@@ -113,9 +133,8 @@ func (r *Relay) deliverableIDs(ctx context.Context) ([]int64, error) {
 	return pgx.CollectRows(rows, pgx.RowTo[int64])
 }
 
-func (r *Relay) deliver(ctx context.Context, id int64) error {
+func (r *Relay) deliver(ctx context.Context, id int64, topics []string) error {
 	txCtx := context.WithoutCancel(ctx)
-	topics := r.publisher.Topics()
 	publishErr := r.store.ExecTx(txCtx, func(tx pgx.Tx) error {
 		event, err := lockForDelivery(txCtx, tx, id, topics)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -163,7 +182,7 @@ func (r *Relay) recordFailure(ctx context.Context, id int64) error {
 			`UPDATE platform.outbox_events
 			 SET attempts = attempts + 1,
 			     next_attempt_at = now() + make_interval(secs => LEAST(power(2, LEAST(attempts, 20)), $2::float8))
-			 WHERE id = $1`, id, r.config.MaxBackoff.Seconds())
+			 WHERE id = $1 AND published_at IS NULL`, id, r.config.MaxBackoff.Seconds())
 		return err
 	})
 }

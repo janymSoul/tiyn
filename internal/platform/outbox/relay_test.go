@@ -342,6 +342,88 @@ func TestEventsAreReportedEvenWhenNoHandlerIsRegisteredAtAll(t *testing.T) {
 	require.Equal(t, 1, capture.count("outbox events waiting for a handler"))
 }
 
+type topicCounter struct {
+	*eventbus.Bus
+	calls atomic.Int32
+}
+
+func (c *topicCounter) Topics() []string {
+	c.calls.Add(1)
+	return c.Bus.Topics()
+}
+
+func TestUnhandledEventCheckRunsAtMostOncePerMinuteEvenWhenNothingIsWaiting(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	h.handle(t, "collect", func(*message.Message) error { return nil })
+	start := time.Now()
+
+	require.NoError(t, h.relay.Tick(context.Background(), start))
+	require.Equal(t, start, outbox.LastUnhandledCheck(h.relay))
+
+	require.NoError(t, h.relay.Tick(context.Background(), start.Add(10*time.Second)))
+	require.Equal(t, start, outbox.LastUnhandledCheck(h.relay))
+
+	require.NoError(t, h.relay.Tick(context.Background(), start.Add(61*time.Second)))
+	require.Equal(t, start.Add(61*time.Second), outbox.LastUnhandledCheck(h.relay))
+}
+
+func TestFailureToCheckForUnhandledEventsIsLogged(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	capture := &logCapture{}
+	h.pool.Close()
+	relay := outbox.NewRelay(h.store, h.bus, outbox.RelayConfig{}, slog.New(capture))
+	h.handle(t, "collect", func(*message.Message) error { return nil })
+
+	_ = relay.Tick(context.Background(), time.Now())
+
+	require.Equal(t, 1, capture.count("could not check for outbox events without a handler"))
+}
+
+func TestTickReadsTheHandlerTopicsOnceNoMatterHowManyEventsItDelivers(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	counter := &topicCounter{Bus: h.bus}
+	relay := outbox.NewRelay(h.store, counter, outbox.RelayConfig{BatchSize: 50, MaxBackoff: time.Minute}, slog.New(slog.DiscardHandler))
+	h.handle(t, "collect", func(*message.Message) error { return nil })
+	for _, key := range []string{"A", "B", "C"} {
+		h.enqueue(t, key)
+	}
+
+	require.NoError(t, relay.Tick(context.Background(), time.Now()))
+
+	require.Equal(t, 3, h.published(t))
+	require.Equal(t, int32(1), counter.calls.Load())
+}
+
+func TestZeroValueRelayConfigStillDeliversAndBacksOffFailures(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	relay := outbox.NewRelay(h.store, h.bus, outbox.RelayConfig{}, slog.New(slog.DiscardHandler))
+	h.handle(t, "collect", func(*message.Message) error { return nil })
+	h.enqueue(t, "OK-1")
+	require.NoError(t, relay.Tick(context.Background(), time.Now()))
+	require.Equal(t, 1, h.published(t))
+
+	h.deadLetters.failing.Store(true)
+	require.NoError(t, h.bus.Handle("poisoned", approvedEvent, func(*message.Message) error { return errors.New("failure") }))
+	h.enqueue(t, "BAD-1")
+	require.NoError(t, relay.Tick(context.Background(), time.Now()))
+
+	require.Equal(t, 1, h.count(t, "platform.outbox_events", "idempotency_key = 'BAD-1' AND attempts = 1 AND next_attempt_at > now()"))
+}
+
+func TestRecordingAFailureNeverTouchesAnAlreadyPublishedEvent(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	h.handle(t, "collect", func(*message.Message) error { return nil })
+	h.enqueue(t, "REWARD-TASK-1")
+	h.tick(t)
+	require.Equal(t, 1, h.published(t))
+	var id int64
+	require.NoError(t, h.pool.QueryRow(context.Background(), `SELECT id FROM platform.outbox_events`).Scan(&id))
+
+	require.NoError(t, outbox.RecordFailureForTest(h.relay, context.Background(), id))
+
+	require.Equal(t, 1, h.count(t, "platform.outbox_events", "attempts = 0 AND published_at IS NOT NULL"))
+}
+
 func TestCleanShutdownDuringDeliveryLogsNoDeliveryError(t *testing.T) {
 	h := newHarness(t, 1, time.Minute)
 	capture := &logCapture{}

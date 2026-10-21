@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"time"
@@ -29,8 +30,11 @@ func Up(ctx context.Context, databaseURL string, modules ...Module) error {
 }
 
 func UpWithLockRetry(ctx context.Context, databaseURL string, period time.Duration, attempts uint64, modules ...Module) error {
-	if period < time.Second {
-		return fmt.Errorf("lock retry period must be at least one second, got %s", period)
+	if period < time.Second || period%time.Second != 0 {
+		return fmt.Errorf("lock retry period must be a whole number of seconds, at least one, got %s", period)
+	}
+	if attempts == 0 {
+		return errors.New("lock retry attempts must be at least one")
 	}
 	db, err := sql.Open("pgx", databaseURL)
 	if err != nil {

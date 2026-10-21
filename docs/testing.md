@@ -72,7 +72,7 @@ Fakes, not mocks-with-expectations. A fake behaves like a tiny real implementati
 
 ### No slow tests
 
-No test waits more than about 2 seconds. Never `time.Sleep` to let something happen: inject the clock (`Relay.Tick(ctx, now)` takes `now`, so a test advances time by minutes instantly), shrink intervals and timeouts through the options the code already exposes (millisecond retry intervals, a 50 ms handler timeout), or wait on a channel the code under test closes. `time.After(...)` is only a ceiling that turns a hang into a failure; it must not elapse in a passing run. Starting the Postgres container costs a few seconds once per package; that is the only fixed cost.
+No test waits more than about 2 seconds. Never `time.Sleep` to let something happen: inject the clock where the code takes one, shrink intervals and timeouts through the options the code already exposes (millisecond retry intervals, a 50 ms handler timeout), write the due time directly (the relay compares `next_attempt_at` with the database clock, so a test sets it with SQL to skip a backoff; `Relay.Tick(ctx, now)` uses `now` only to throttle the unhandled-events warning), or wait on a channel the code under test closes. goose's lock retry period is whole seconds, so migrate tests use the one-second minimum. `time.After(...)` is only a ceiling that turns a hang into a failure; it must not elapse in a passing run. Starting the Postgres container costs a few seconds once per package; that is the only fixed cost.
 
 ## 3. Functional tests — real Postgres via Testcontainers
 

@@ -276,3 +276,55 @@ func TestTopicsListsEveryTopicWithAHandler(t *testing.T) {
 
 	require.ElementsMatch(t, []string{"TopicA", "TopicB"}, bus.Topics())
 }
+
+func TestHandlerMutatingItsPayloadDoesNotAffectRetriesOtherHandlersOrTheDeadLetter(t *testing.T) {
+	bus, deadLetters := newBus(1)
+	mustHandle(t, bus, "mutating", func(m *message.Message) error {
+		for i := range m.Payload {
+			m.Payload[i] = 'X'
+		}
+		return errors.New("failure after mutating")
+	})
+	var seenByNext []string
+	mustHandle(t, bus, "next", func(m *message.Message) error {
+		seenByNext = append(seenByNext, string(m.Payload))
+		return nil
+	})
+	msg := newMessage()
+
+	require.NoError(t, bus.Publish(context.Background(), topic, msg))
+
+	require.Equal(t, []string{`{"reward":100}`}, seenByNext)
+	require.JSONEq(t, `{"reward":100}`, string(msg.Payload))
+	require.JSONEq(t, `{"reward":100}`, string(deadLetters.all()[0].Payload))
+}
+
+func TestRetryAfterAFailureSeesTheOriginalPayload(t *testing.T) {
+	bus, _ := newBus(2)
+	var seen []string
+	mustHandle(t, bus, "mutating", func(m *message.Message) error {
+		seen = append(seen, string(m.Payload))
+		m.Payload[0] = 'X'
+		if len(seen) < 3 {
+			return errors.New("failure")
+		}
+		return nil
+	})
+
+	require.NoError(t, bus.Publish(context.Background(), topic, newMessage()))
+
+	require.Equal(t, []string{`{"reward":100}`, `{"reward":100}`, `{"reward":100}`}, seen)
+}
+
+func TestRetryDelaysDoNotCollapseWhenTheMaximumIsLeftAtZero(t *testing.T) {
+	bus := eventbus.New(&memoryDeadLetters{}, eventbus.Options{
+		HandlerMaxRetries:    2,
+		RetryInitialInterval: 25 * time.Millisecond,
+	})
+	mustHandle(t, bus, "failing", func(*message.Message) error { return errors.New("failure") })
+
+	start := time.Now()
+	require.NoError(t, bus.Publish(context.Background(), topic, newMessage()))
+
+	require.GreaterOrEqual(t, time.Since(start), 45*time.Millisecond)
+}

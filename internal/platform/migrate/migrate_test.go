@@ -82,8 +82,21 @@ func TestRunningMigrationsAgainChangesNothing(t *testing.T) {
 	require.NoError(t, migrate.Up(context.Background(), url, platformmigrations.Module))
 }
 
-func TestLockRetryPeriodBelowOneSecondIsRejected(t *testing.T) {
-	err := migrate.UpWithLockRetry(context.Background(), "postgres://unused", 500*time.Millisecond, 1)
+func TestLockRetrySettingsThatGooseCannotHonourAreRejected(t *testing.T) {
+	cases := map[string]struct {
+		period   time.Duration
+		attempts uint64
+		message  string
+	}{
+		"below one second":   {500 * time.Millisecond, 1, "whole number of seconds"},
+		"fractional seconds": {1500 * time.Millisecond, 1, "whole number of seconds"},
+		"no attempts":        {time.Second, 0, "at least one"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := migrate.UpWithLockRetry(context.Background(), "postgres://unused", c.period, c.attempts)
 
-	require.ErrorContains(t, err, "at least one second")
+			require.ErrorContains(t, err, c.message)
+		})
+	}
 }
