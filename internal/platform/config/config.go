@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const minDBConns = 4
+
 type Config struct {
 	DatabaseURL       string
 	HTTPAddr          string
@@ -17,6 +19,8 @@ type Config struct {
 	DBMaxConns        int
 	RelayMaxBackoff   time.Duration
 	HandlerMaxRetries int
+	RetryInitial      time.Duration
+	RetryMax          time.Duration
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -28,9 +32,14 @@ func Load(getenv func(string) string) (Config, error) {
 		RelayInterval:     durationOr(getenv, "RELAY_INTERVAL", time.Second, &errs),
 		RelayBatchSize:    intAtLeast(getenv, "RELAY_BATCH_SIZE", 50, 1, &errs),
 		HandlerTimeout:    durationOr(getenv, "HANDLER_TIMEOUT", 10*time.Second, &errs),
-		DBMaxConns:        intAtLeast(getenv, "DB_MAX_CONNS", 20, 1, &errs),
+		DBMaxConns:        intAtLeast(getenv, "DB_MAX_CONNS", 20, minDBConns, &errs),
 		RelayMaxBackoff:   durationOr(getenv, "RELAY_MAX_BACKOFF", 5*time.Minute, &errs),
 		HandlerMaxRetries: intAtLeast(getenv, "HANDLER_MAX_RETRIES", 3, 0, &errs),
+		RetryInitial:      durationOr(getenv, "HANDLER_RETRY_INITIAL", 200*time.Millisecond, &errs),
+		RetryMax:          durationOr(getenv, "HANDLER_RETRY_MAX", 5*time.Second, &errs),
+	}
+	if cfg.RetryMax < cfg.RetryInitial {
+		errs = append(errs, errors.New("HANDLER_RETRY_MAX must not be smaller than HANDLER_RETRY_INITIAL"))
 	}
 	if cfg.DatabaseURL == "" {
 		errs = append(errs, errors.New("DATABASE_URL is required"))

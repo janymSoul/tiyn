@@ -16,7 +16,7 @@ services:
       retries: 15
 
   seaweedfs:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs:4.48
     command: server -dir=/data -s3 -s3.port=8333
     ports:
       - "9333:9333"

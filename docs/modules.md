@@ -165,7 +165,7 @@ REQUESTED ──parent confirms──▶ FULFILLED   (debit entry written; paren
      │
      └──teen cancels / parent declines / expires──▶ CANCELLED
 ```
-We never verify the bank transfer (no bank API, and we are not a bank), whichever bank the parent uses. Confirmation by the parent is the source of truth; the audit trail records who confirmed and when. A missing transfer is resolved between parent and teen.
+A payout cancelled by the system (it expired) has no `resolved_by`; one cancelled by the teen or declined by the parent records who did it. Every cancellation records a `cancel_reason`. We never verify the bank transfer (no bank API, and we are not a bank), whichever bank the parent uses. Confirmation by the parent is the source of truth; the audit trail records who confirmed and when. A missing transfer is resolved between parent and teen.
 
 **Offers (sync interface):**
 ```go

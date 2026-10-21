@@ -47,8 +47,8 @@ func run(logger *slog.Logger) error {
 	bus := eventbus.New(eventbus.NewPostgresDeadLetters(pool), eventbus.Options{
 		HandlerMaxRetries:    cfg.HandlerMaxRetries,
 		HandlerTimeout:       cfg.HandlerTimeout,
-		RetryInitialInterval: 200 * time.Millisecond,
-		RetryMaxInterval:     5 * time.Second,
+		RetryInitialInterval: cfg.RetryInitial,
+		RetryMaxInterval:     cfg.RetryMax,
 	})
 
 	relay := outbox.NewRelay(store, bus, outbox.RelayConfig{

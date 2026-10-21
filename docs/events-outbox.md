@@ -121,7 +121,7 @@ Properties, each covered by a test in `internal/platform/outbox`:
 - **One event, one short transaction.** The row is locked with `FOR UPDATE SKIP LOCKED`, delivered, and marked published in the same transaction. A relay never waits behind a row another relay holds, and several relays or overlapping ticks never deliver an event twice concurrently.
 - **Bounded.** Every handler attempt is limited by `HANDLER_TIMEOUT`, so a lock and a connection are never held forever.
 - **Shutdown-safe.** Only the handler call sees the relay's cancellable context. Locking, the `published_at` update and the commit use a detached context, so a SIGTERM that arrives just after a handler succeeded still records the event as delivered instead of causing a redelivery. A clean shutdown logs no delivery error.
-- **No starvation.** The relay selects only events whose type has a registered handler, so a pile of events nobody consumes yet (a module not built or deployed) can neither fill the batch window nor spam the log.
+- **No starvation, but not silent.** The relay selects only events whose type has a registered handler, so a pile of events nobody consumes yet (a module not built or deployed) cannot fill the batch window. Those events are reported instead of ignored: at most once a minute the relay logs a warning per event type with the number waiting (`outbox events waiting for a handler`). When their handler is registered they are delivered in `id` order.
 - **Backoff, never parking.** A failed delivery (the dead-letter write failed, or a database error) is recorded in a *separate* transaction: `attempts` is incremented and `next_attempt_at` is pushed out by `2^attempts` seconds (the exponent is capped at 20 to avoid numeric overflow), limited to `RELAY_MAX_BACKOFF` (default 5 min). The event is retried forever with that backoff and each failure is logged at error level. Nothing is parked automatically: for a ledger, a visibly stuck event is safer than a silently abandoned one.
 - **Not a failure:** cancellation of the relay's own context (shutdown) neither increments `attempts` nor backs off.
 - **Per-aggregate order.** An event is delivered only when no earlier unpublished event of the same aggregate *that has a registered handler* exists, checked both when selecting and again under the row lock, so a relay holding a stale list cannot overtake. A backed-off event therefore holds back its successors (the next task transition) while other aggregates keep flowing. Events whose consumer is not deployed wait on their own and are outside the ordering, so they cannot block later events. Two rules make this sound:
@@ -150,7 +150,8 @@ Inside `CreditTaskReward`, one transaction inserts the ledger entry with `idempo
 - **Transient handler failure:** retried by the dispatcher; the event is delivered normally.
 - **Poison event (a handler that keeps failing):** after the retries the message is in `platform.dead_letters` and the outbox row counts as delivered, so one poison event never blocks the queue. The dead-letter row is the record of the failure. Operators fix the cause, re-enqueue the payload, and set `redriven_at`.
 - **Infrastructure failure (database, the dead-letter write):** the event stays pending and is retried with backoff; see above.
-- **Connection budget:** a delivery holds one pooled connection and a row lock while handlers run, the dead-letter write needs a second, and each handler may use its own. `DB_MAX_CONNS` (default 20) must leave room for the relay, the handlers and HTTP requests. If handlers get long-running or relays multiply, claim rows with a lease (a short transaction that sets `locked_until`) and run handlers outside any transaction.
+- **Connection budget:** a delivery holds one pooled connection and a row lock while handlers run, the dead-letter write needs a second, and each handler may use its own, so `DB_MAX_CONNS` must be at least 4 (enforced) and in practice leave room for the relay, the handlers and HTTP requests (default 20).
+- **Worst-case time one event holds its connection and lock:** per handler, `(HANDLER_MAX_RETRIES + 1) × HANDLER_TIMEOUT + HANDLER_MAX_RETRIES × HANDLER_RETRY_MAX`, plus the dead-letter write; with the defaults about 4 × 10 s + 3 × 5 s = 55 s for a handler that always hangs, summed over the topic's handlers. Tune the three settings together. If handlers get long-running or relays multiply, claim rows with a lease (a short transaction that sets `locked_until`) and run handlers outside any transaction.
 - **Head-of-line blocking (accepted trade-off):** the relay delivers one event at a time, and a retrying handler (up to a few seconds of backoff) delays the events behind it. A slow consumer also slows the other consumers of the same event. Acceptable at MVP volume. If it hurts, deliver different aggregates in parallel, or move to per-consumer delivery (a job queue such as River, or a broker).
 - **Monitoring to add before production:** alert on the age of the oldest pending outbox row, on the number of rows with `attempts > 0`, and on unredriven dead letters. There is no automatic redrive tool yet.
 - **Not a replayable log.** The outbox is the durable producer-side record and published rows are retained, but consumers have no offsets, so replay is manual. If a real replay need appears (new consumer, extraction, incident), move the relay's target to a durable broker such as NATS JetStream or Redpanda. Handlers do not change; events must stay versioned and keyed by aggregate.
@@ -173,6 +174,14 @@ Inside `CreditTaskReward`, one transaction inserts the ledger entry with `idempo
 | `PenaltyAppliedEvent` | ledger | notification | "deduction" → teen |
 
 Event payloads are plain exported structs in the producing module's `events.go`. They are part of the module's **public contract** — changing a payload shape is a contract change; version it (`TaskApprovedEventV2`) rather than silently reshaping.
+
+## Before production
+
+These are known gaps that must be closed before real traffic; none blocks development.
+
+- A `tiyn` command to list and redrive dead letters: re-run the stored handler on the stored payload and set `redriven_at`. It needs the handlers the modules register, so it is built with the first real consumer (ledger). Until then a dead-lettered event, such as a reward credit that failed permanently, is recorded but never applied.
+- Alerts on: the age of the oldest pending outbox row, rows with `attempts > 0`, unredriven dead letters, and the unhandled-events warning.
+- The scheduled CronJob for `tiyn tick` once the first ticker (task expiry) exists.
 
 ## Open decisions (flagged, not yet decided)
 

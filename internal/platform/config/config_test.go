@@ -56,8 +56,30 @@ func TestLoadRejectsNegativeHandlerRetries(t *testing.T) {
 	require.ErrorContains(t, err, "HANDLER_MAX_RETRIES")
 }
 
-func TestLoadStillRejectsZeroForOtherIntegers(t *testing.T) {
-	_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "DB_MAX_CONNS": "0"}))
+func TestLoadRejectsZeroForPositiveIntegers(t *testing.T) {
+	_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "RELAY_BATCH_SIZE": "0"}))
 
-	require.ErrorContains(t, err, "DB_MAX_CONNS")
+	require.ErrorContains(t, err, "RELAY_BATCH_SIZE")
+}
+
+func TestLoadRequiresEnoughConnectionsForTheRelayAndItsHandlers(t *testing.T) {
+	for _, tooFew := range []string{"0", "1", "3"} {
+		_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "DB_MAX_CONNS": tooFew}))
+		require.ErrorContains(t, err, "DB_MAX_CONNS", tooFew)
+	}
+
+	cfg, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "DB_MAX_CONNS": "4"}))
+
+	require.NoError(t, err)
+	require.Equal(t, 4, cfg.DBMaxConns)
+}
+
+func TestLoadReadsRetryIntervalsAndRejectsMaxBelowInitial(t *testing.T) {
+	cfg, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x"}))
+	require.NoError(t, err)
+	require.Equal(t, 200*time.Millisecond, cfg.RetryInitial)
+	require.Equal(t, 5*time.Second, cfg.RetryMax)
+
+	_, err = config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "HANDLER_RETRY_INITIAL": "10s", "HANDLER_RETRY_MAX": "1s"}))
+	require.ErrorContains(t, err, "HANDLER_RETRY_MAX")
 }

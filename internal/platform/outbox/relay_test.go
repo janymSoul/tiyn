@@ -289,6 +289,59 @@ func (c *logCapture) Handle(_ context.Context, record slog.Record) error {
 	return nil
 }
 
+func (c *logCapture) count(message string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, entry := range c.entries {
+		if entry == message {
+			n++
+		}
+	}
+	return n
+}
+
+func TestEventsWaitingForAHandlerAreReportedAtMostOncePerMinute(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	capture := &logCapture{}
+	relay := outbox.NewRelay(h.store, h.bus, outbox.RelayConfig{BatchSize: 50, MaxBackoff: time.Minute}, slog.New(capture))
+	h.handle(t, "collect", func(*message.Message) error { return nil })
+	h.enqueueTyped(t, "OrphanEvent", uuid.New(), "ORPHAN-1")
+	h.enqueueTyped(t, "OrphanEvent", uuid.New(), "ORPHAN-2")
+	start := time.Now()
+	const warning = "outbox events waiting for a handler"
+
+	require.NoError(t, relay.Tick(context.Background(), start))
+	require.NoError(t, relay.Tick(context.Background(), start.Add(30*time.Second)))
+	require.Equal(t, 1, capture.count(warning))
+
+	require.NoError(t, relay.Tick(context.Background(), start.Add(61*time.Second)))
+	require.Equal(t, 2, capture.count(warning))
+}
+
+func TestNothingIsReportedWhenEveryPendingEventHasAHandler(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	capture := &logCapture{}
+	relay := outbox.NewRelay(h.store, h.bus, outbox.RelayConfig{BatchSize: 50, MaxBackoff: time.Minute}, slog.New(capture))
+	h.handle(t, "collect", func(*message.Message) error { return nil })
+	h.enqueue(t, "REWARD-TASK-1")
+
+	require.NoError(t, relay.Tick(context.Background(), time.Now()))
+
+	require.Equal(t, 0, capture.count("outbox events waiting for a handler"))
+}
+
+func TestEventsAreReportedEvenWhenNoHandlerIsRegisteredAtAll(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	capture := &logCapture{}
+	relay := outbox.NewRelay(h.store, h.bus, outbox.RelayConfig{BatchSize: 50, MaxBackoff: time.Minute}, slog.New(capture))
+	h.enqueue(t, "REWARD-TASK-1")
+
+	require.NoError(t, relay.Tick(context.Background(), time.Now()))
+
+	require.Equal(t, 1, capture.count("outbox events waiting for a handler"))
+}
+
 func TestCleanShutdownDuringDeliveryLogsNoDeliveryError(t *testing.T) {
 	h := newHarness(t, 1, time.Minute)
 	capture := &logCapture{}

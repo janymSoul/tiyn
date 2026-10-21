@@ -24,11 +24,14 @@ type RelayConfig struct {
 	MaxBackoff time.Duration
 }
 
+const unhandledWarningInterval = time.Minute
+
 type Relay struct {
-	store     *db.Store
-	publisher Publisher
-	config    RelayConfig
-	logger    *slog.Logger
+	store                *db.Store
+	publisher            Publisher
+	config               RelayConfig
+	logger               *slog.Logger
+	lastUnhandledWarning time.Time
 }
 
 func NewRelay(store *db.Store, publisher Publisher, config RelayConfig, logger *slog.Logger) *Relay {
@@ -43,7 +46,8 @@ type pendingEvent struct {
 	payload        []byte
 }
 
-func (r *Relay) Tick(ctx context.Context, _ time.Time) error {
+func (r *Relay) Tick(ctx context.Context, now time.Time) error {
+	r.warnAboutUnhandledEvents(ctx, now)
 	ids, err := r.deliverableIDs(ctx)
 	if err != nil {
 		return err
@@ -57,6 +61,33 @@ func (r *Relay) Tick(ctx context.Context, _ time.Time) error {
 		}
 	}
 	return nil
+}
+
+func (r *Relay) warnAboutUnhandledEvents(ctx context.Context, now time.Time) {
+	if now.Sub(r.lastUnhandledWarning) < unhandledWarningInterval {
+		return
+	}
+	topics := r.publisher.Topics()
+	if topics == nil {
+		topics = []string{}
+	}
+	rows, err := r.store.Pool().Query(ctx,
+		`SELECT event_type, count(*) FROM platform.outbox_events
+		 WHERE published_at IS NULL AND NOT (event_type = ANY($1))
+		 GROUP BY event_type ORDER BY event_type`, topics)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var eventType string
+		var waiting int64
+		if err := rows.Scan(&eventType, &waiting); err != nil {
+			return
+		}
+		r.logger.Warn("outbox events waiting for a handler", "event_type", eventType, "waiting", waiting)
+		r.lastUnhandledWarning = now
+	}
 }
 
 func (r *Relay) deliverableIDs(ctx context.Context) ([]int64, error) {
