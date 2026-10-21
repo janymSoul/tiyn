@@ -1,0 +1,20 @@
+version: "2"
+sql:
+  - engine: postgresql
+    schema: internal/identity/store/migrations
+    queries: internal/identity/store/queries
+    gen:
+      go:
+        package: gen
+        out: internal/identity/store/gen
+        sql_package: pgx/v5
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              type: time.Time
+              pointer: true

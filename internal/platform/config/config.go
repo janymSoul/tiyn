@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,9 @@ type Config struct {
 	HandlerMaxRetries int
 	RetryInitial      time.Duration
 	RetryMax          time.Duration
+	JWTSecret         string
+	JWTTTL            time.Duration
+	GoogleClientIDs   []string
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -37,6 +41,9 @@ func Load(getenv func(string) string) (Config, error) {
 		HandlerMaxRetries: intAtLeast(getenv, "HANDLER_MAX_RETRIES", 1, 0, &errs),
 		RetryInitial:      durationOr(getenv, "HANDLER_RETRY_INITIAL", 100*time.Millisecond, &errs),
 		RetryMax:          durationOr(getenv, "HANDLER_RETRY_MAX", 500*time.Millisecond, &errs),
+		JWTSecret:         getenv("JWT_SECRET"),
+		JWTTTL:            durationOr(getenv, "JWT_TTL", 7*24*time.Hour, &errs),
+		GoogleClientIDs:   splitList(getenv("GOOGLE_CLIENT_IDS")),
 	}
 	if cfg.RetryMax < cfg.RetryInitial {
 		errs = append(errs, errors.New("HANDLER_RETRY_MAX must not be smaller than HANDLER_RETRY_INITIAL"))
@@ -44,10 +51,26 @@ func Load(getenv func(string) string) (Config, error) {
 	if cfg.DatabaseURL == "" {
 		errs = append(errs, errors.New("DATABASE_URL is required"))
 	}
+	if cfg.JWTSecret == "" {
+		errs = append(errs, errors.New("JWT_SECRET is required"))
+	}
+	if len(cfg.GoogleClientIDs) == 0 {
+		errs = append(errs, errors.New("GOOGLE_CLIENT_IDS is required"))
+	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func splitList(raw string) []string {
+	var items []string
+	for _, item := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			items = append(items, trimmed)
+		}
+	}
+	return items
 }
 
 func stringOr(value, fallback string) string {

@@ -162,6 +162,7 @@ Inside `CreditTaskReward`, one transaction inserts the ledger entry with `idempo
 | Event | Producer | Consumers | Effect |
 |---|---|---|---|
 | `FamilyLinkedEvent` | identity | ledger, notification | seed wallet; welcome push |
+| `FamilyUnlinkedEvent` | identity | task, notification | cancel the teen's open tasks for that parent; tell the teen |
 | `TaskAssignedEvent` | task | notification | "new task / milestone" → teen |
 | `TaskSubmittedEvent` | task | notification | "proof pending" → parent |
 | `TaskApprovedEvent` | task | ledger, notification | credit wallet; "reward credited" → teen |

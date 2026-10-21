@@ -12,6 +12,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"tiyn/internal/identity"
+	idhttp "tiyn/internal/identity/http"
 	"tiyn/internal/platform/config"
 	"tiyn/internal/platform/db"
 	"tiyn/internal/platform/eventbus"
@@ -56,9 +58,19 @@ func run(logger *slog.Logger) error {
 		MaxBackoff: cfg.RelayMaxBackoff,
 	}, logger)
 
+	tokens, err := identity.NewTokenIssuer(cfg.JWTSecret, cfg.JWTTTL, time.Now)
+	if err != nil {
+		return err
+	}
+	googleVerifier, err := identity.NewGoogleVerifier(ctx, cfg.GoogleClientIDs)
+	if err != nil {
+		return err
+	}
+	identityService := identity.NewService(store, tokens, googleVerifier)
+
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpx.NewRouter(pool.Ping),
+		Handler:           httpx.NewRouter(pool.Ping, idhttp.Routes(identityService, logger)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

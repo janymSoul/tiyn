@@ -18,6 +18,7 @@ CREATE TRIGGER users_set_updated_at
 CREATE TABLE identity.family_links (
     parent_id  UUID        NOT NULL REFERENCES identity.users (id),
     teen_id    UUID        NOT NULL REFERENCES identity.users (id),
+    generation INT         NOT NULL DEFAULT 1 CHECK (generation > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     removed_at TIMESTAMPTZ,

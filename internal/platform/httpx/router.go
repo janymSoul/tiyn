@@ -8,7 +8,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-func NewRouter(ready func(ctx context.Context) error) http.Handler {
+func NewRouter(ready func(ctx context.Context) error, mounts ...func(chi.Router)) http.Handler {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID, middleware.Recoverer)
 
@@ -22,5 +22,8 @@ func NewRouter(ready func(ctx context.Context) error) http.Handler {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+	for _, mount := range mounts {
+		mount(router)
+	}
 	return router
 }

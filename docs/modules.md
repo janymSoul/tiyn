@@ -72,9 +72,11 @@ The wallet aggregate is deliberately large: "available funds = balance − locke
 
 **Responsibility.** User accounts (parent, teen), authentication, and family-group linking (PAR-01). Owns the security context that every other request is authorized against.
 
-**Authentication.** Sign-in with Google. The client obtains a Google ID token and sends it to the backend; identity verifies it and issues the app's own JWT. Google is only the proof of identity, so the provider can be swapped or extended (e.g. Apple) without touching other modules. Parents and teens both register by signing in; the role is chosen at first sign-in.
+**Authentication.** Sign-in with Google. The client obtains a Google ID token and sends it to the backend; identity verifies it and issues the app's own JWT. Google is only the proof of identity, so the provider can be swapped or extended (e.g. Apple) without touching other modules. Parents and teens both register by signing in; the role (`PARENT` or `TEEN`) is chosen at first sign-in and an account has exactly one role for life. Signing in again ignores any role in the request and returns the existing account. `GoogleVerifier` is the anti-corruption layer: the real implementation validates the ID token against Google's keys for the configured client ids (`GOOGLE_CLIENT_IDS`, one per platform), and tests use a fake. No email is stored; the display name comes from the request or the Google profile.
 
-**Linking.** Every parent has a permanent **join code** (6 characters, PRD PAR-01) stored on their user row. It uses an alphabet without look-alike characters (no `0/O`, `1/I`) and is generated with a retry on collision. A teen who has signed in enters the parent's code and identity creates the `family_links` row immediately and publishes `FamilyLinkedEvent`. One code can link any number of children, and a teen can enter a second parent's code. The parent can remove a link later. Code attempts are rate-limited at the ingress and failures never reveal whether a code exists. Accepted risk: the code is permanent and reusable, so anyone who learns it can link to that parent. Parent confirmation of each join (a pending-request step) is deliberately deferred; it would add an identity-owned `join_requests` table without changing other modules.
+**Session token.** After a successful sign-in the backend issues its own JWT: HS256, signed with `JWT_SECRET` (at least 32 bytes), issuer `tiyn`, subject = user id, a `role` claim, valid for `JWT_TTL` (default 7 days). Verification pins the algorithm, requires an expiry, the issuer and a known role, so `alg: none` and other-algorithm tokens are rejected. There is no refresh token: when it expires the client signs in with Google again. The token only proves identity; every parent-to-teen action still checks `AreLinked` in the database. Moving to an identity provider (e.g. Keycloak) later changes only `GoogleVerifier`, `TokenIssuer` and the sign-in route.
+
+**Linking.** Every parent has a permanent **join code** (6 characters, PRD PAR-01) stored on their user row. It uses an alphabet without look-alike characters (no `0/O`, `1/I`) and is generated with a retry on collision. A teen who has signed in enters the parent's code and identity creates the `family_links` row immediately and publishes `FamilyLinkedEvent`; entering a code a second time is a no-op. Codes are matched case-insensitively and ignoring surrounding spaces. One code can link any number of children, and a teen can enter a second parent's code. The parent can remove a link later. Code attempts are rate-limited at the ingress and failures never reveal whether a code exists. Accepted risk: the code is permanent and reusable, so anyone who learns it can link to that parent. Parent confirmation of each join (a pending-request step) is deliberately deferred; it would add an identity-owned `join_requests` table without changing other modules.
 
 **Offers (sync interface):**
 ```go
@@ -87,10 +89,25 @@ type FamilyDirectory interface {
     AreLinked(ctx context.Context, parentID, teenID uuid.UUID) (bool, error)
 }
 ```
-Links are soft-deleted (`removed_at`). `AreLinked` and every other lookup must ignore removed links; re-linking a removed pair clears `removed_at` on the existing row.
+Links are soft-deleted (`removed_at`). `AreLinked` and every other lookup must ignore removed links; re-linking a removed pair clears `removed_at` on the existing row and increments its `generation`, which is part of the event key so that a relink produces a new event.
 Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.g. the task module checks a parent may approve a given teen's task). `Authenticator` is used by the HTTP auth middleware.
 
-**Publishes:** `FamilyLinkedEvent{ParentID, TeenID}` (lets other modules react to a new link, e.g. seed a wallet).
+**Publishes:**
+- `FamilyLinkedEvent{ParentID, TeenID}` (lets other modules react to a new link, e.g. seed a wallet). Key `FAMILY-LINKED-{parent}-{teen}-{generation}`.
+- `FamilyUnlinkedEvent{ParentID, TeenID}` (the task module cancels the teen's open tasks for that parent). Key `FAMILY-UNLINKED-{parent}-{teen}-{generation}`.
+
+Both use an aggregate id derived from the (parent, teen) pair, and are written in the transaction that locks the link row, so the events of one pair stay ordered.
+
+**HTTP API.** Errors are `{"error": "<code>"}`; bodies are size-limited and reject unknown fields.
+
+| Route | Auth | Purpose | Errors |
+|---|---|---|---|
+| `POST /auth/google` `{idToken, role?, displayName?}` | none | Sign in or register; returns `{token, user}` | 401 `invalid_identity`, 422 `invalid_role` / `invalid_display_name` |
+| `GET /me` | bearer | The caller's account | 401 `unauthenticated` |
+| `POST /links/join` `{code}` | teen | Link to the parent who owns the code; returns `{parent: {displayName}}` | 403 `forbidden`, 422 `invalid_join_code` (unknown and malformed codes look the same) |
+| `DELETE /links/{teenId}` | parent | Remove the link to a teen; repeating it is harmless (204) | 403 `forbidden`, 404 `not_found`, 400 `invalid_teen_id` |
+
+**Configuration:** `JWT_SECRET`, `JWT_TTL`, `GOOGLE_CLIENT_IDS` (see `.env.example`).
 
 **Owns:** `users` (including the parents' `join_code`), `family_links`. There is no `families` table: a family is simply the set of links between parents and teens, so a teen can have two parents without a new concept.
 

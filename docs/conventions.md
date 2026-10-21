@@ -124,7 +124,7 @@ gofmt -l .            # must be empty
 go vet ./...          # must be clean
 go build ./...        # must compile
 go test -race ./...   # must pass (unit always; functional needs Docker)
-sqlc generate         # after editing db/queries/*.sql
+sqlc generate         # after editing a module's store/queries/*.sql or migrations; the generated store/gen code is committed
 goose ... up          # apply migrations
 ```
 Wire these into a `Makefile` and the GitLab CI pipeline (GitLab is the house CI). CI is the enforcement point for everything in this document.

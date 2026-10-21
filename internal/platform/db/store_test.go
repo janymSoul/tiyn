@@ -111,3 +111,25 @@ func TestExecTxRollsBackWhenItsContextIsCancelledMidTransaction(t *testing.T) {
 	require.Equal(t, 0, count(t, pool, "tx_probe"))
 	require.Equal(t, int32(0), pool.Stat().AcquiredConns())
 }
+
+func TestUniqueViolationConstraintNamesTheViolatedConstraint(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `CREATE TABLE tx_probe (id INT PRIMARY KEY, email TEXT CONSTRAINT tx_probe_email_key UNIQUE)`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `INSERT INTO tx_probe VALUES (1, 'a')`)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `INSERT INTO tx_probe VALUES (2, 'a')`)
+	name, ok := db.UniqueViolationConstraint(err)
+	require.True(t, ok)
+	require.Equal(t, "tx_probe_email_key", name)
+
+	_, err = pool.Exec(ctx, `INSERT INTO tx_probe VALUES (1, 'b')`)
+	name, ok = db.UniqueViolationConstraint(err)
+	require.True(t, ok)
+	require.Equal(t, "tx_probe_pkey", name)
+
+	_, ok = db.UniqueViolationConstraint(errors.New("other"))
+	require.False(t, ok)
+}
