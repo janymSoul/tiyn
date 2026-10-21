@@ -82,7 +82,7 @@ tiyn/
     platform/                # cross-cutting, owned by no bounded context
       db/                    # pgxpool setup, execTx helper, isUniqueViolation
       outbox/                # relay, outbox helpers
-      eventbus/              # Watermill setup, topic naming, DLQ middleware
+      eventbus/              # in-process dispatcher: handlers, retries, dead letters
       httpx/                 # chi middleware: auth, request-id, recover, logging
       config/                # env loading
       migrations/            # platform schema: shared currency type, updated_at trigger, outbox

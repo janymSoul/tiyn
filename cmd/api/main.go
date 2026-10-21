@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ThreeDotsLabs/watermill"
 	"golang.org/x/sync/errgroup"
 
 	"tiyn/internal/platform/config"
@@ -45,18 +44,17 @@ func run(logger *slog.Logger) error {
 	defer pool.Close()
 	store := db.NewStore(pool)
 
-	bus, err := eventbus.New(eventbus.NewDeadLetters(pool), eventbus.Options{
+	bus := eventbus.New(eventbus.NewPostgresDeadLetters(pool), eventbus.Options{
 		HandlerMaxRetries:    cfg.HandlerMaxRetries,
 		RetryInitialInterval: 200 * time.Millisecond,
 		RetryMaxInterval:     5 * time.Second,
-		Logger:               watermill.NewSlogLogger(logger),
 	})
-	if err != nil {
-		return err
-	}
-	defer bus.Close()
 
-	relay := outbox.NewRelay(store, bus, cfg.RelayBatchSize, cfg.RelayMaxAttempts, logger)
+	relay := outbox.NewRelay(store, bus, outbox.RelayConfig{
+		BatchSize:       cfg.RelayBatchSize,
+		DeliveryTimeout: cfg.RelayDeliveryTimeout,
+		MaxBackoff:      cfg.RelayMaxBackoff,
+	}, logger)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -65,13 +63,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.Go(func() error { return bus.Run(groupCtx) })
 	group.Go(func() error {
-		select {
-		case <-bus.Running():
-		case <-groupCtx.Done():
-			return nil
-		}
 		scheduler.Loop(groupCtx, cfg.RelayInterval, relay, logger)
 		return nil
 	})

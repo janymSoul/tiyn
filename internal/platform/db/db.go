@@ -41,8 +41,9 @@ func (s *Store) ExecTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+
 	if err := fn(tx); err != nil {
-		_ = tx.Rollback(ctx)
 		return err
 	}
 	return tx.Commit(ctx)

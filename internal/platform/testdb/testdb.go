@@ -24,14 +24,15 @@ const (
 )
 
 var (
-	adminURL    string
-	unavailable string
-	cloneCount  atomic.Int64
+	adminURL   string
+	skipReason string
+	failReason string
+	cloneCount atomic.Int64
 )
 
 func Main(m *testing.M, modules ...migrate.Module) {
 	if os.Getenv("TIYN_SKIP_FUNCTIONAL") != "" {
-		unavailable = "TIYN_SKIP_FUNCTIONAL is set"
+		skipReason = "TIYN_SKIP_FUNCTIONAL is set"
 		os.Exit(m.Run())
 	}
 
@@ -44,7 +45,12 @@ func Main(m *testing.M, modules ...migrate.Module) {
 	)
 	cancel()
 	if err != nil {
-		unavailable = fmt.Sprintf("postgres container unavailable: %v", err)
+		reason := fmt.Sprintf("postgres container unavailable: %v", err)
+		if os.Getenv("CI") != "" {
+			failReason = reason
+		} else {
+			skipReason = reason
+		}
 		os.Exit(m.Run())
 	}
 
@@ -55,7 +61,7 @@ func Main(m *testing.M, modules ...migrate.Module) {
 	}()
 
 	if err := prepare(container, modules); err != nil {
-		unavailable = fmt.Sprintf("prepare template database: %v", err)
+		failReason = fmt.Sprintf("prepare template database: %v", err)
 	}
 	code = m.Run()
 }
@@ -81,8 +87,11 @@ func prepare(container *postgres.PostgresContainer, modules []migrate.Module) er
 
 func New(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	if unavailable != "" {
-		t.Skip(unavailable)
+	if failReason != "" {
+		t.Fatal(failReason)
+	}
+	if skipReason != "" {
+		t.Skip(skipReason)
 	}
 	ctx := context.Background()
 	name := fmt.Sprintf("test_%d", cloneCount.Add(1))

@@ -7,94 +7,137 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
-	"github.com/ThreeDotsLabs/watermill/message/router/middleware"
-	"github.com/ThreeDotsLabs/watermill/pubsub/gochannel"
 )
 
 var ErrNoHandler = errors.New("no handler registered for topic")
 
-const deadLetterTopic = "dead_letters"
+type Handler = message.NoPublishHandlerFunc
+
+type DeadLetter struct {
+	Topic       string
+	MessageUUID string
+	Payload     []byte
+	Metadata    map[string]string
+	Reason      string
+}
+
+type DeadLetterStore interface {
+	Add(ctx context.Context, letter DeadLetter) error
+}
 
 type Options struct {
 	HandlerMaxRetries    int
 	RetryInitialInterval time.Duration
 	RetryMaxInterval     time.Duration
-	Logger               watermill.LoggerAdapter
+}
+
+type registration struct {
+	name   string
+	handle Handler
 }
 
 type Bus struct {
-	pubsub *gochannel.GoChannel
-	router *message.Router
+	deadLetters DeadLetterStore
+	options     Options
 
-	mu     sync.RWMutex
-	topics map[string]struct{}
+	mu       sync.RWMutex
+	handlers map[string][]registration
 }
 
-func New(deadLetters message.Publisher, opts Options) (*Bus, error) {
-	logger := opts.Logger
-	if logger == nil {
-		logger = watermill.NopLogger{}
-	}
-	router, err := message.NewRouter(message.RouterConfig{}, logger)
-	if err != nil {
-		return nil, fmt.Errorf("create router: %w", err)
-	}
-	poison, err := middleware.PoisonQueue(deadLetters, deadLetterTopic)
-	if err != nil {
-		return nil, fmt.Errorf("create poison queue: %w", err)
-	}
-	retry := middleware.Retry{
-		MaxRetries:      opts.HandlerMaxRetries,
-		InitialInterval: opts.RetryInitialInterval,
-		MaxInterval:     opts.RetryMaxInterval,
-		Multiplier:      2,
-		Logger:          logger,
-	}
-	router.AddMiddleware(poison, retry.Middleware, middleware.Recoverer)
-
-	return &Bus{
-		pubsub: gochannel.NewGoChannel(gochannel.Config{BlockPublishUntilSubscriberAck: true}, logger),
-		router: router,
-		topics: make(map[string]struct{}),
-	}, nil
+func New(deadLetters DeadLetterStore, options Options) *Bus {
+	return &Bus{deadLetters: deadLetters, options: options, handlers: make(map[string][]registration)}
 }
 
-func (b *Bus) Handle(handlerName, topic string, handler message.NoPublishHandlerFunc) {
+func (b *Bus) Handle(name, topic string, handler Handler) error {
 	b.mu.Lock()
-	b.topics[topic] = struct{}{}
-	b.mu.Unlock()
-	b.router.AddNoPublisherHandler(handlerName, topic, b.pubsub, handler)
+	defer b.mu.Unlock()
+	for _, existing := range b.handlers[topic] {
+		if existing.name == name {
+			return fmt.Errorf("handler %q is already registered for %s", name, topic)
+		}
+	}
+	b.handlers[topic] = append(b.handlers[topic], registration{name: name, handle: handler})
+	return nil
 }
 
-func (b *Bus) Publish(topic string, messages ...*message.Message) error {
-	b.mu.RLock()
-	_, registered := b.topics[topic]
-	b.mu.RUnlock()
-	if !registered {
+func (b *Bus) Publish(ctx context.Context, topic string, msg *message.Message) error {
+	registrations := b.registrations(topic)
+	if len(registrations) == 0 {
 		return fmt.Errorf("%w: %s", ErrNoHandler, topic)
 	}
-	return b.pubsub.Publish(topic, messages...)
+	for _, registration := range registrations {
+		if err := b.dispatch(ctx, topic, registration, msg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (b *Bus) Run(ctx context.Context) error {
-	done := make(chan error, 1)
-	go func() { done <- b.router.Run(ctx) }()
+func (b *Bus) registrations(topic string) []registration {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return append([]registration(nil), b.handlers[topic]...)
+}
 
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		closeErr := b.router.Close()
-		return errors.Join(<-done, closeErr)
+func (b *Bus) dispatch(ctx context.Context, topic string, registration registration, msg *message.Message) error {
+	handleErr := b.handleWithRetries(ctx, registration.handle, msg)
+	if handleErr == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return b.deadLetters.Add(ctx, newDeadLetter(topic, registration.name, msg, handleErr))
+}
+
+func (b *Bus) handleWithRetries(ctx context.Context, handle Handler, msg *message.Message) error {
+	interval := b.options.RetryInitialInterval
+	for attempt := 0; ; attempt++ {
+		err := invoke(ctx, handle, msg)
+		if err == nil || attempt >= b.options.HandlerMaxRetries {
+			return err
+		}
+		if err := sleep(ctx, interval); err != nil {
+			return err
+		}
+		interval = min(interval*2, b.options.RetryMaxInterval)
 	}
 }
 
-func (b *Bus) Running() <-chan struct{} {
-	return b.router.Running()
+func invoke(ctx context.Context, handle Handler, msg *message.Message) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("handler panicked: %v", recovered)
+		}
+	}()
+	delivery := msg.Copy()
+	delivery.SetContext(ctx)
+	return handle(delivery)
 }
 
-func (b *Bus) Close() error {
-	return errors.Join(b.router.Close(), b.pubsub.Close())
+func sleep(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func newDeadLetter(topic, handlerName string, msg *message.Message, cause error) DeadLetter {
+	metadata := make(map[string]string, len(msg.Metadata)+1)
+	for key, value := range msg.Metadata {
+		metadata[key] = value
+	}
+	metadata["handler"] = handlerName
+	return DeadLetter{
+		Topic:       topic,
+		MessageUUID: msg.UUID,
+		Payload:     msg.Payload,
+		Metadata:    metadata,
+		Reason:      cause.Error(),
+	}
 }

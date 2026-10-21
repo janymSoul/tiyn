@@ -131,7 +131,7 @@ One such black-box test per PRD user scenario (Scenario 1: milestone; Scenario 2
 
 - **S3 / media:** the `media.PresignService` interface is faked in service tests; functional tests can run against a SeaweedFS container (same S3 API) if upload behavior is under test, otherwise fake it — we never handle bytes, so there is little to test beyond key derivation (which is a unit test).
 - **FCM / push:** the notification module's FCM client is behind an interface; assert "a push with this payload to this device" against a fake. Never call real FCM in tests.
-- **Watermill bus:** in unit tests, fake the publisher. In functional tests, use the real `gochannel` bus so subscribe/publish wiring is exercised.
+- **Event bus:** in unit tests, fake the dead-letter store (`eventbus.DeadLetterStore`) and drive `Bus.Publish` directly. In functional tests, use the real bus, relay and Postgres so retries, dead letters, ordering and backoff are exercised.
 
 ## Coverage expectations
 

@@ -73,3 +73,41 @@ func count(t *testing.T, pool interface {
 	require.NoError(t, pool.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&n))
 	return n
 }
+
+func TestExecTxRollsBackAndReleasesTheConnectionWhenFnPanics(t *testing.T) {
+	pool := testdb.New(t)
+	store := db.NewStore(pool)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `CREATE TABLE tx_probe (id INT PRIMARY KEY)`)
+	require.NoError(t, err)
+
+	require.Panics(t, func() {
+		_ = store.ExecTx(ctx, func(tx pgx.Tx) error {
+			_, _ = tx.Exec(ctx, `INSERT INTO tx_probe VALUES (1)`)
+			panic("boom")
+		})
+	})
+
+	require.Equal(t, 0, count(t, pool, "tx_probe"))
+	require.Equal(t, int32(0), pool.Stat().AcquiredConns())
+}
+
+func TestExecTxRollsBackWhenItsContextIsCancelledMidTransaction(t *testing.T) {
+	pool := testdb.New(t)
+	store := db.NewStore(pool)
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := pool.Exec(context.Background(), `CREATE TABLE tx_probe (id INT PRIMARY KEY)`)
+	require.NoError(t, err)
+
+	err = store.ExecTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO tx_probe VALUES (1)`); err != nil {
+			return err
+		}
+		cancel()
+		return ctx.Err()
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 0, count(t, pool, "tx_probe"))
+	require.Equal(t, int32(0), pool.Stat().AcquiredConns())
+}

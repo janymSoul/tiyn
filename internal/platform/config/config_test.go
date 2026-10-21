@@ -20,7 +20,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	require.Equal(t, ":8080", cfg.HTTPAddr)
 	require.Equal(t, time.Second, cfg.RelayInterval)
 	require.Equal(t, 50, cfg.RelayBatchSize)
-	require.Equal(t, 5, cfg.RelayMaxAttempts)
+	require.Equal(t, 30*time.Second, cfg.RelayDeliveryTimeout)
+	require.Equal(t, 5*time.Minute, cfg.RelayMaxBackoff)
 }
 
 func TestLoadRequiresDatabaseURL(t *testing.T) {

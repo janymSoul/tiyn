@@ -267,7 +267,7 @@ Keeping the sync graph this thin is deliberate: it is the set of edges you must 
 
 When a module must become its own service:
 1. Its sync interface becomes a network API (gRPC/REST); callers swap the in-process impl for a client.
-2. Its event subscriptions/publications swap the Watermill GoChannel backend for Google Pub/Sub — handler code is unchanged.
+2. Its event subscriptions/publications swap the in-process dispatcher for a broker publisher and a Watermill router — handler code is unchanged.
 3. Its tables move with it; because there were no cross-context FKs, nothing in other schemas breaks.
 4. Its idempotency guarantees already assume at-least-once, so network redelivery changes nothing.
 
