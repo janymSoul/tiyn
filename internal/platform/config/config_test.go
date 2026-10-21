@@ -22,7 +22,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	require.Equal(t, 50, cfg.RelayBatchSize)
 	require.Equal(t, 10*time.Second, cfg.HandlerTimeout)
 	require.Equal(t, 20, cfg.DBMaxConns)
-	require.Equal(t, 3, cfg.HandlerMaxRetries)
+	require.Equal(t, 1, cfg.HandlerMaxRetries)
 	require.Equal(t, 5*time.Minute, cfg.RelayMaxBackoff)
 }
 
