@@ -134,9 +134,8 @@ func (r *Relay) deliverableIDs(ctx context.Context, topics []string) ([]int64, e
 }
 
 func (r *Relay) deliver(ctx context.Context, id int64, topics []string) error {
-	txCtx := context.WithoutCancel(ctx)
-	publishErr := r.store.ExecTx(txCtx, func(tx pgx.Tx) error {
-		event, err := lockForDelivery(txCtx, tx, id, topics)
+	publishErr := r.store.ExecTx(ctx, func(tx pgx.Tx) error {
+		event, err := lockForDelivery(ctx, tx, id, topics)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -146,7 +145,7 @@ func (r *Relay) deliver(ctx context.Context, id int64, topics []string) error {
 		if err := r.publisher.Publish(ctx, event.eventType, toMessage(event)); err != nil {
 			return err
 		}
-		_, err = tx.Exec(txCtx, `UPDATE platform.outbox_events SET published_at = now() WHERE id = $1`, id)
+		_, err = tx.Exec(ctx, `UPDATE platform.outbox_events SET published_at = now() WHERE id = $1`, id)
 		return err
 	})
 	if publishErr == nil || ctx.Err() != nil {

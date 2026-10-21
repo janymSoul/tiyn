@@ -502,23 +502,6 @@ func TestOrphanEventsAreDeliveredOnceTheirHandlerIsRegistered(t *testing.T) {
 	require.Equal(t, 1, h.published(t))
 }
 
-func TestEventIsMarkedPublishedWhenShutdownArrivesRightAfterTheHandlerSucceeds(t *testing.T) {
-	h := newHarness(t, 1, time.Second)
-	ctx, cancel := context.WithCancel(context.Background())
-	var calls atomic.Int32
-	h.handle(t, "succeeds-then-shutdown", func(*message.Message) error {
-		calls.Add(1)
-		cancel()
-		return nil
-	})
-	h.enqueue(t, "REWARD-TASK-1")
-
-	require.NoError(t, h.relay.Tick(ctx, time.Now()))
-
-	require.Equal(t, int32(1), calls.Load())
-	require.Equal(t, 1, h.published(t))
-}
-
 func TestDuplicateDeadLetterForTheSameMessageAndHandlerIsStoredOnce(t *testing.T) {
 	h := newHarness(t, 0, time.Second)
 	store := eventbus.NewPostgresDeadLetters(h.pool)

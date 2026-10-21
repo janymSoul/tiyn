@@ -96,9 +96,8 @@ func (r *Relay) Tick(ctx context.Context, _ time.Time) error {
 }
 
 func (r *Relay) deliver(ctx context.Context, id int64) error {
-    txCtx := context.WithoutCancel(ctx)
-    publishErr := r.store.ExecTx(txCtx, func(tx pgx.Tx) error {
-        event, err := lockForDelivery(txCtx, tx, id)
+    publishErr := r.store.ExecTx(ctx, func(tx pgx.Tx) error {
+        event, err := lockForDelivery(ctx, tx, id)
         if errors.Is(err, pgx.ErrNoRows) {
             return nil
         }
@@ -106,7 +105,7 @@ func (r *Relay) deliver(ctx context.Context, id int64) error {
         if err := r.publisher.Publish(ctx, event.eventType, toMessage(event)); err != nil {
             return err
         }
-        _, err = tx.Exec(txCtx, `UPDATE platform.outbox_events SET published_at = now() WHERE id = $1`, id)
+        _, err = tx.Exec(ctx, `UPDATE platform.outbox_events SET published_at = now() WHERE id = $1`, id)
         return err
     })
     if publishErr == nil || ctx.Err() != nil {
@@ -120,7 +119,7 @@ Properties, each covered by a test in `internal/platform/outbox`:
 
 - **One event, one short transaction.** The row is locked with `FOR UPDATE SKIP LOCKED`, delivered, and marked published in the same transaction. A relay never waits behind a row another relay holds, and several relays or overlapping ticks never deliver an event twice concurrently.
 - **Bounded.** Every handler attempt is limited by `HANDLER_TIMEOUT`, so a lock and a connection are never held forever.
-- **Shutdown-safe.** Only the handler call sees the relay's cancellable context. Locking, the `published_at` update and the commit use a detached context, so a SIGTERM that arrives just after a handler succeeded still records the event as delivered instead of causing a redelivery. A clean shutdown logs no delivery error.
+- **Shutdown.** The whole delivery, including the final `UPDATE` and commit, uses the relay's context. A SIGTERM that arrives in the few milliseconds between a handler succeeding and the commit makes the transaction roll back, so the event is delivered once more after restart. That repeat is harmless because handlers are idempotent, and the alternative (a second, detached context for the commit) was judged not worth its complexity. A clean shutdown logs no delivery error.
 - **No starvation, but not silent.** The relay selects only events whose type has a registered handler, so a pile of events nobody consumes yet (a module not built or deployed) cannot fill the batch window. Those events are reported instead of ignored: at most once a minute the relay logs a warning per event type with the number waiting (`outbox events waiting for a handler`). When their handler is registered they are delivered in `id` order.
 - **Backoff, never parking.** A failed delivery (the dead-letter write failed, or a database error) is recorded in a *separate* transaction: `attempts` is incremented and `next_attempt_at` is pushed out by `2^attempts` seconds (the exponent is capped at 20 to avoid numeric overflow), limited to `RELAY_MAX_BACKOFF` (default 5 min). The event is retried forever with that backoff and each failure is logged at error level. Nothing is parked automatically: for a ledger, a visibly stuck event is safer than a silently abandoned one.
 - **Not a failure:** cancellation of the relay's own context (shutdown) neither increments `attempts` nor backs off.
