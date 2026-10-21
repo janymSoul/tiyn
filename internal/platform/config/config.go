@@ -26,11 +26,11 @@ func Load(getenv func(string) string) (Config, error) {
 		HTTPAddr:          stringOr(getenv("HTTP_ADDR"), ":8080"),
 		ShutdownTimeout:   durationOr(getenv, "SHUTDOWN_TIMEOUT", 15*time.Second, &errs),
 		RelayInterval:     durationOr(getenv, "RELAY_INTERVAL", time.Second, &errs),
-		RelayBatchSize:    intOr(getenv, "RELAY_BATCH_SIZE", 50, &errs),
+		RelayBatchSize:    intAtLeast(getenv, "RELAY_BATCH_SIZE", 50, 1, &errs),
 		HandlerTimeout:    durationOr(getenv, "HANDLER_TIMEOUT", 10*time.Second, &errs),
-		DBMaxConns:        intOr(getenv, "DB_MAX_CONNS", 20, &errs),
+		DBMaxConns:        intAtLeast(getenv, "DB_MAX_CONNS", 20, 1, &errs),
 		RelayMaxBackoff:   durationOr(getenv, "RELAY_MAX_BACKOFF", 5*time.Minute, &errs),
-		HandlerMaxRetries: nonNegativeIntOr(getenv, "HANDLER_MAX_RETRIES", 3, &errs),
+		HandlerMaxRetries: intAtLeast(getenv, "HANDLER_MAX_RETRIES", 3, 0, &errs),
 	}
 	if cfg.DatabaseURL == "" {
 		errs = append(errs, errors.New("DATABASE_URL is required"))
@@ -61,27 +61,14 @@ func durationOr(getenv func(string) string, key string, fallback time.Duration, 
 	return value
 }
 
-func nonNegativeIntOr(getenv func(string) string, key string, fallback int, errs *[]error) int {
+func intAtLeast(getenv func(string) string, key string, fallback, minimum int, errs *[]error) int {
 	raw := getenv(key)
 	if raw == "" {
 		return fallback
 	}
 	value, err := strconv.Atoi(raw)
-	if err != nil || value < 0 {
-		*errs = append(*errs, fmt.Errorf("%s must be zero or a positive integer, got %q", key, raw))
-		return fallback
-	}
-	return value
-}
-
-func intOr(getenv func(string) string, key string, fallback int, errs *[]error) int {
-	raw := getenv(key)
-	if raw == "" {
-		return fallback
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil || value <= 0 {
-		*errs = append(*errs, fmt.Errorf("%s must be a positive integer, got %q", key, raw))
+	if err != nil || value < minimum {
+		*errs = append(*errs, fmt.Errorf("%s must be an integer of at least %d, got %q", key, minimum, raw))
 		return fallback
 	}
 	return value

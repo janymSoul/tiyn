@@ -490,6 +490,36 @@ func TestOrderingIsEnforcedAgainWhenTheEventIsLockedNotOnlyWhenSelected(t *testi
 	require.Equal(t, 0, h.published(t))
 }
 
+func TestEventWithoutAHandlerDoesNotBlockLaterEventsOfTheSameAggregate(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	var received []string
+	h.handle(t, "collect", func(msg *message.Message) error {
+		received = append(received, msg.Metadata.Get("idempotency_key"))
+		return nil
+	})
+	aggregate := uuid.New()
+	h.enqueueTyped(t, "TaskSubmittedEvent", aggregate, "SUBMITTED-1")
+	h.enqueueFor(t, aggregate, "APPROVED-1")
+
+	h.tick(t)
+
+	require.Equal(t, []string{"APPROVED-1"}, received)
+	require.Equal(t, 1, h.count(t, "platform.outbox_events", "idempotency_key = 'SUBMITTED-1' AND published_at IS NULL"))
+}
+
+func TestBackoffStillAdvancesAfterThousandsOfAttempts(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	h.deadLetters.failing.Store(true)
+	h.handle(t, "poisoned", func(*message.Message) error { return errors.New("failure") })
+	h.enqueue(t, "REWARD-TASK-1")
+	_, err := h.pool.Exec(context.Background(), `UPDATE platform.outbox_events SET attempts = 5000`)
+	require.NoError(t, err)
+
+	h.tick(t)
+
+	require.Equal(t, 1, h.count(t, "platform.outbox_events", "attempts = 5001 AND next_attempt_at > now()"))
+}
+
 func TestEventsAreDeliveredInInsertionOrder(t *testing.T) {
 	h := newHarness(t, 1, time.Second)
 	var received []string

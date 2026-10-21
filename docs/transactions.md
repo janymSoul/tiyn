@@ -143,4 +143,5 @@ Default (`READ COMMITTED`) + explicit row locks is correct for every flow here; 
 - [ ] Aggregate loaded with the correct lock (`FOR UPDATE` for money, version check for state).
 - [ ] FSM transition is a pure domain method returning an error on an illegal move.
 - [ ] Any cross-module effect is an outbox event written in the same transaction — never a write to another module's table.
+- [ ] The event's `aggregate_id` is the id of a row this transaction updates or locks, so events of one aggregate are ordered (`docs/events-outbox.md`).
 - [ ] No `execTx` nested inside another.
