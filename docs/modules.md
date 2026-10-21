@@ -24,9 +24,9 @@ If you find yourself wanting to JOIN across two modules' tables, that is the sig
 
 **Responsibility.** User accounts (parent, teen), authentication, and family-group linking (PAR-01). Owns the security context that every other request is authorized against.
 
-**Authentication.** Sign-in with Google. The client obtains a Google ID token and sends it to the backend; identity verifies it and issues the app's own JWT. Google is only the proof of identity, so the provider can be swapped or extended (e.g. Apple) without touching other modules. A parent registers directly; a teen can only register through an invite.
+**Authentication.** Sign-in with Google. The client obtains a Google ID token and sends it to the backend; identity verifies it and issues the app's own JWT. Google is only the proof of identity, so the provider can be swapped or extended (e.g. Apple) without touching other modules. Parents and teens both register by signing in; the role is chosen at first sign-in.
 
-**Linking.** A parent issues an **invite**: a single-use, expiring code (6-character alphanumeric, PRD PAR-01) that identifies the issuing parent. It is shared as a link containing the code, with manual code entry as a fallback. When a teen registers with a valid invite, identity creates the teen account and the `family_links` row in one transaction and burns the invite. The parent can remove a link later. Code attempts are rate-limited at the ingress and failures never reveal whether a code exists. A wrong guess has no invite row to count against, so there is no per-code lockout; the single-use, expiring, parent-bound code limits the exposure.
+**Linking.** Every parent has a permanent **join code** (6 characters, PRD PAR-01) stored on their user row. It uses an alphabet without look-alike characters (no `0/O`, `1/I`) and is generated with a retry on collision. A teen who has signed in enters the parent's code and identity creates the `family_links` row immediately and publishes `FamilyLinkedEvent`. One code can link any number of children, and a teen can enter a second parent's code. The parent can remove a link later. Code attempts are rate-limited at the ingress and failures never reveal whether a code exists. Accepted risk: the code is permanent and reusable, so anyone who learns it can link to that parent. Parent confirmation of each join (a pending-request step) is deliberately deferred; it would add an identity-owned `join_requests` table without changing other modules.
 
 **Offers (sync interface):**
 ```go
@@ -44,7 +44,7 @@ Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.
 
 **Publishes:** `FamilyLinkedEvent{ParentID, TeenID}` (lets other modules react to a new link, e.g. seed a wallet).
 
-**Owns:** `users`, `family_links`, `invites`. There is no `families` table: a family is simply the set of links between parents and teens, so a teen can have two parents without a new concept.
+**Owns:** `users` (including the parents' `join_code`), `family_links`. There is no `families` table: a family is simply the set of links between parents and teens, so a teen can have two parents without a new concept.
 
 ---
 

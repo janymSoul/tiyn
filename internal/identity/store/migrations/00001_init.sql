@@ -5,6 +5,7 @@ CREATE TABLE identity.users (
     id           UUID PRIMARY KEY,
     google_sub   TEXT        NOT NULL UNIQUE,
     role         TEXT        NOT NULL,
+    join_code    TEXT UNIQUE,
     display_name TEXT        NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -29,22 +30,6 @@ CREATE TRIGGER family_links_set_updated_at
     FOR EACH ROW EXECUTE FUNCTION platform.set_updated_at();
 
 CREATE INDEX family_links_active_teen_idx ON identity.family_links (teen_id) WHERE removed_at IS NULL;
-
-CREATE TABLE identity.invites (
-    id         UUID PRIMARY KEY,
-    parent_id  UUID        NOT NULL REFERENCES identity.users (id),
-    code_hash  TEXT        NOT NULL UNIQUE,
-    expires_at TIMESTAMPTZ NOT NULL,
-    used_at    TIMESTAMPTZ,
-    used_by    UUID REFERENCES identity.users (id),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CHECK ((used_at IS NULL) = (used_by IS NULL))
-);
-
-CREATE TRIGGER invites_set_updated_at
-    BEFORE UPDATE ON identity.invites
-    FOR EACH ROW EXECUTE FUNCTION platform.set_updated_at();
 
 -- +goose Down
 DROP SCHEMA identity CASCADE;

@@ -26,23 +26,22 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 ## UC-01 Sign in and link a teen to a family
 
 **Flow.**
-1. Parent signs in with Google; identity verifies the Google ID token and issues the app JWT (first sign-in creates the parent account).
-2. Parent taps "Invite teen"; identity creates an invite (single-use, expiring, bound to this parent) and returns a link containing the code, plus the 6-character code for manual entry.
-3. Parent sends the link to the teen (messenger, SMS, in person).
-4. Teen opens the link or enters the code, signs in with Google, and registers. Identity validates the invite, creates the teen account and the `family_links` row in one transaction, and burns the invite.
+1. Parent signs in with Google; identity verifies the Google ID token and issues the app JWT (first sign-in creates the parent account and its permanent join code).
+2. Parent shares their join code with the teen (shown in the app; sent in a messenger, SMS, or told in person).
+3. Teen signs in with Google (first sign-in creates the teen account) and enters the code.
+4. Identity finds the parent by code and creates the `family_links` row.
 5. `FamilyLinkedEvent{ParentID, TeenID}` is published.
 
-**Alternates.** Wrong, expired, or used code → generic "invalid invite" (no hint which). Repeated failures → rate limit per device/IP. A teen who already has an account and opens an invite → link to the new parent (supports a second parent). Parent removes a link later → teen's tasks are cancelled, wallet history is kept.
+**Alternates.** Unknown code → generic "invalid code". Repeated failures → rate limit per device/IP. Teen already linked to this parent → no-op. A teen entering a second parent's code → links to that parent too. Parent removes a link later → teen's tasks are cancelled, wallet history is kept.
 
 **Support needed.**
-- identity: Google ID token verification, `invites` (hashed code, TTL, single-use; attempts are rate-limited at the ingress), `FamilyDirectory.AreLinked`.
+- identity: Google ID token verification, `users.join_code` (permanent, unique, no look-alike characters; attempts are rate-limited at the ingress), `FamilyDirectory.AreLinked`.
 - ledger consumes the event → creates the teen's wallet (idempotent: unique `teen_id`). notification consumes it → welcome push.
-- Link opened with the app not installed: Firebase Dynamic Links is discontinued, so use a third-party deferred-deep-link service (e.g. Branch) or fall back to manual code entry after install.
 
 **Open.**
 - **Age and consent.** Teens are 11–17. Confirm whether under-14s can hold a Google account in Kazakhstan, and what parental consent the data-protection law requires. Likely needs an ADR.
 - **Apple.** Not in MVP: Google only. The provider-agnostic identity design allows adding Sign in with Apple later. Revisit if iOS App Store review requires it.
-- **Parent confirmation of a join.** Single-use + expiry already limits a leaked link. Decide whether the parent must also confirm each join (safer, one more tap).
+- **Parent confirmation of a join.** Deferred. The join code is permanent and reusable, so anyone who learns it can link to that parent. The accepted risk is low for a family app; if it grows, add a pending-request step (identity-owned `join_requests`).
 
 ---
 
@@ -208,5 +207,4 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 ## Decisions still open
 
 1. Age and consent rules for teen accounts (UC-01).
-2. Whether the parent confirms each join (UC-01).
-3. Which Kazakhstan hosting provider offers managed Postgres, S3-compatible storage, and Kubernetes. Whether Google sign-in and FCM (which pass tokens through Google, not stored personal data) satisfy the data law: confirm with counsel.
+2. Which Kazakhstan hosting provider offers managed Postgres, S3-compatible storage, and Kubernetes. Whether Google sign-in and FCM (which pass tokens through Google, not stored personal data) satisfy the data law: confirm with counsel.
