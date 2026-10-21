@@ -23,8 +23,7 @@ Before you say a task is finished, all of the following must hold:
 
 - [ ] Code compiles: `go build ./...`
 - [ ] Formatted and vetted: `gofmt -l .` clean, `go vet ./...` clean
-- [ ] Unit tests pass: `go test ./internal/...`
-- [ ] Functional tests pass: `go test ./test/...` (requires Docker for Testcontainers)
+- [ ] Tests pass with the race detector: `go test -race ./...` (functional tests start Postgres through Testcontainers and need Docker; `TIYN_SKIP_FUNCTIONAL=1` skips them)
 - [ ] No module imports another module's internals (verify by inspection; the compiler blocks `internal/` leaks but not sibling-package reaches)
 - [ ] No new cross-context foreign keys in migrations
 - [ ] New cross-module effects go through an event, not a direct DB write

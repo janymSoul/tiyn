@@ -97,7 +97,7 @@ func (r *Relay) recordFailure(ctx context.Context, id int64, cause error) error 
 }
 ```
 
-Each event is delivered in its own short transaction, so a slow handler holds a lock on one row only, not a batch. A failed delivery rolls that transaction back (the row stays pending), and the failure is then recorded in a *separate* transaction, so the attempts counter survives the rollback. At the cap the row gets `failed_at` and is published to `<topic>.DLQ`, which stops a poison event from retrying forever.
+Each event is delivered in its own short transaction, so a slow handler holds a lock on one row only, not a batch. A failed delivery rolls that transaction back (the row stays pending), and the failure is then recorded in a *separate* transaction, so the attempts counter survives the rollback. At the cap the row gets `failed_at`, which takes it out of the pending index so it stops being retried and stops blocking later events. A relay-level failure means the bus itself refused the event (no handler registered for its topic, or the bus is closed); handler failures never reach the relay, see "Consumer failure handling".
 
 `FOR UPDATE SKIP LOCKED` lets the relay take a batch without blocking, and makes it safe to scale to multiple relay instances later. Ordering by `id` keeps one aggregate's events in order: the outbox insert is the last step of a command, after the aggregate's row lock, so a later transition always gets a higher `id`. `created_at` is the transaction start time and must not be used for ordering. Order across aggregates is not guaranteed. The `UNIQUE (event_type, idempotency_key)` constraint rejects a producer that enqueues the same event twice, so events that can legitimately repeat (e.g. a task submitted again after a redo) need the attempt number in their key.
 
@@ -110,16 +110,16 @@ Start with polling (every ~1s). It is simple, observable, and correct. pgx suppo
 Watermill abstracts pub/sub behind `Publisher`/`Subscriber`. In-process today:
 
 ```go
-pubsub := gochannel.NewGoChannel(gochannel.Config{
-    // Publish returns only after every subscriber handler has acked. The relay marks
-    // a row published only then, so a crash or handler failure leaves it pending and
-    // it is redelivered. GoChannel itself persists nothing; the outbox row is the
-    // durable copy until all handlers have acked.
-    BlockPublishUntilSubscriberAck: true,
-}, watermillLogger)
-// publisher := pubsub  (the relay publishes here)
-// subscriber := pubsub (modules subscribe here)
+pubsub := gochannel.NewGoChannel(gochannel.Config{BlockPublishUntilSubscriberAck: true}, logger)
 ```
+
+`internal/platform/eventbus` wraps this GoChannel and a Watermill router into a `Bus`. Modules register handlers with `bus.Handle(name, topic, fn)`; the relay publishes through `bus.Publish`. Three properties of GoChannel shape the wrapper, and each was verified in its source:
+
+- **`Publish` blocks until every handler acks, but never returns a handler error.** A nacked message is resent forever, so a failing handler would stall the relay on that event. The bus therefore wraps every handler in router middleware (recover panics, retry with backoff, then dead-letter) so a handler outcome is always an ack.
+- **`Publish` returns immediately when no handler is subscribed.** The relay would mark such an event published with nobody having received it. `Bus.Publish` refuses a topic with no registered handler (`ErrNoHandler`), the event stays pending, and it is parked with `failed_at` after the attempts cap. Handlers must be registered before the relay starts.
+- **`Router.Run` does not stop when its context is cancelled** if it has no handlers. `Bus.Run` closes the router on cancellation, otherwise graceful shutdown hangs.
+
+GoChannel persists nothing. The outbox row is the durable copy until all handlers have acked: a crash while a handler runs leaves the row pending, and it is redelivered.
 
 Each consuming module subscribes to the topics it cares about at boot and runs handlers. The **handler signature and logic do not change** when we later swap `gochannel` for `googlecloud.NewPublisher/Subscriber` (Google Pub/Sub) during module extraction — only the wiring in `cmd/` changes. That swap-without-rewrite property is the whole reason Watermill is here rather than raw Go channels.
 
@@ -147,8 +147,9 @@ A redelivered `TaskApprovedEvent` inserts the same key, hits the `UNIQUE` constr
 
 ### Consumer failure handling
 
-- Handler returns an error → `Publish` returns an error in the relay → the row stays pending, `attempts` is bumped, and the next tick redelivers it. Redelivery goes to all subscribers of the topic, which is safe because every consumer is idempotent. Keep handlers short and deterministic.
-- Poison events: after `maxAttempts` the relay sets `failed_at` (so the row leaves the pending index and stops blocking later events), logs it, and publishes it to `<topic>.DLQ` for inspection. Operators re-drive by clearing `failed_at`.
+- A handler that returns an error (or panics) is retried inside the bus with exponential backoff, up to `HANDLER_MAX_RETRIES`. A handler that fails once and then succeeds delivers the event normally. Retries re-run the handler, which is safe because every consumer is idempotent. Keep handlers short and deterministic.
+- Poison events: when retries are exhausted the message is written to `platform.dead_letters` (topic, payload, metadata, reason) and acked. Dead letters are durable, unlike an in-memory dead-letter topic, and the relay moves on, so one poison event never blocks the queue. The outbox row counts as delivered; the dead-letter row is the record of the failure. Operators fix the cause and redrive by re-enqueueing the payload, then set `redriven_at`.
+- Relay-level failures (the bus refused the event) are separate: `attempts` is bumped in its own transaction and `failed_at` is set at the cap. Operators clear `failed_at` to retry.
 - Trade-off: because `Publish` blocks on acks, a slow consumer delays the relay for that event, and the relay's per-event transaction holds that one row's lock meanwhile. Keep handler work short; handlers use their own transactions on their own tables, so there is no lock conflict. Acceptable at MVP scale. If it hurts, add a per-consumer delivery table or move to a durable broker (see below).
 - **Not a replayable log.** The outbox is the durable producer-side record and published rows are retained, but consumers have no offsets, so replay is manual. If a real replay need appears (new consumer, extraction, incident), move the relay's target to a durable broker such as NATS JetStream or Redpanda via the Watermill swap. Handlers do not change; events must stay versioned and keyed by aggregate.
 
