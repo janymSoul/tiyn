@@ -1,6 +1,6 @@
 # Events & the Transactional Outbox
 
-This is the piece with no Spring Modulith equivalent out of the box — in Spring you'd get the event-publication registry for free; here we build it from the transactional outbox pattern plus Watermill. It is what gives us **at-least-once** cross-module delivery (PRD footnote [d]).
+Cross-module events are built on the transactional outbox pattern plus Watermill. This is what gives us **at-least-once** cross-module delivery (PRD footnote [d]).
 
 ## Why an outbox at all
 
@@ -9,13 +9,13 @@ The naive approach — publish to the event bus right after committing the DB tr
 The outbox closes the gap by making the event part of the transaction:
 
 1. The business change and an `outbox_events` row are written **in the same DB transaction**. They commit atomically — either both or neither.
-2. A separate **relay** polls `outbox_events` and publishes undelivered rows to the bus, marking them delivered.
+2. A separate **relay** polls `platform.outbox_events` and publishes undelivered rows to the bus, marking them delivered.
 3. If the relay crashes mid-publish, the row is still `pending` and gets republished → **at-least-once**, never zero. Duplicates are possible, which is why consumers are idempotent.
 
 ## The outbox table
 
 ```sql
-CREATE TABLE outbox_events (
+CREATE TABLE platform.outbox_events (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     event_type    TEXT        NOT NULL,          -- "TaskApprovedEvent"
     aggregate_id  UUID        NOT NULL,          -- for tracing / partitioning
@@ -23,9 +23,11 @@ CREATE TABLE outbox_events (
     idempotency_key TEXT      NOT NULL,          -- carried to the consumer
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     published_at  TIMESTAMPTZ,                   -- NULL = pending
-    attempts      INT         NOT NULL DEFAULT 0
+    attempts      INT         NOT NULL DEFAULT 0,
+    failed_at     TIMESTAMPTZ,                   -- set after max attempts; parked for inspection
+    UNIQUE (event_type, idempotency_key)
 );
-CREATE INDEX idx_outbox_pending ON outbox_events (created_at) WHERE published_at IS NULL;
+CREATE INDEX outbox_events_pending_idx ON platform.outbox_events (id) WHERE published_at IS NULL AND failed_at IS NULL;
 ```
 
 The partial index keeps the relay's "find pending" query cheap as the table grows. Delivered rows are retained for audit (SYS-01 spirit) and can be archived/pruned by a separate job, never by the relay.
@@ -36,7 +38,7 @@ Producers never call the bus directly. They write an outbox row inside their tra
 
 ```sql
 -- name: InsertOutboxEvent :exec
-INSERT INTO outbox_events (event_type, aggregate_id, payload, idempotency_key)
+INSERT INTO platform.outbox_events (event_type, aggregate_id, payload, idempotency_key)
 VALUES ($1, $2, $3, $4);
 ```
 
@@ -52,13 +54,13 @@ func From(eventType string, aggregateID uuid.UUID, idemKey string, payload any) 
 
 ## The relay (publisher side)
 
-A single goroutine started at boot. It polls pending rows, publishes each to Watermill, and marks it published. One relay instance only — concurrency is bounded by `FOR UPDATE SKIP LOCKED` so it is safe to run more than one if needed later.
+A `Ticker` (see `docs/modules.md`, "Time-driven work"). Each tick polls pending rows, publishes each to Watermill, and marks it published. The relay runs as an in-process loop (about 1 s) in the API pods, not from the CronJob, because the CronJob's one-minute granularity would delay event delivery (see `docs/modules.md`). Concurrency is bounded by `FOR UPDATE SKIP LOCKED`, so several relays or overlapping ticks are safe.
 
 ```go
 func (r *Relay) tick(ctx context.Context) error {
     return r.store.execTx(ctx, func(q *db.Queries) error {
-        rows, err := q.LockPendingOutbox(ctx, batchSize) // SELECT ... WHERE published_at IS NULL
-        if err != nil {                                   // ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED
+        rows, err := q.LockPendingOutbox(ctx, batchSize) // SELECT ... WHERE published_at IS NULL AND failed_at IS NULL
+        if err != nil {                                   // ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED
             return err
         }
         for _, row := range rows {
@@ -77,7 +79,7 @@ func (r *Relay) tick(ctx context.Context) error {
 }
 ```
 
-`FOR UPDATE SKIP LOCKED` lets the relay take a batch without blocking, and makes it safe to scale to multiple relay instances later. Ordering by `created_at` gives per-aggregate ordering in practice; if strict per-aggregate ordering is ever required, partition the query by `aggregate_id`.
+`FOR UPDATE SKIP LOCKED` lets the relay take a batch without blocking, and makes it safe to scale to multiple relay instances later. Ordering by `id` keeps one aggregate's events in order: the outbox insert is the last step of a command, after the aggregate's row lock, so a later transition always gets a higher `id`. `created_at` is the transaction start time and must not be used for ordering. Order across aggregates is not guaranteed. The `UNIQUE (event_type, idempotency_key)` constraint rejects a producer that enqueues the same event twice, so events that can legitimately repeat (e.g. a task submitted again after a redo) need the attempt number in their key.
 
 ### Poll vs. LISTEN/NOTIFY
 
@@ -88,7 +90,13 @@ Start with polling (every ~1s). It is simple, observable, and correct. pgx suppo
 Watermill abstracts pub/sub behind `Publisher`/`Subscriber`. In-process today:
 
 ```go
-pubsub := gochannel.NewGoChannel(gochannel.Config{}, watermillLogger)
+pubsub := gochannel.NewGoChannel(gochannel.Config{
+    // Publish returns only after every subscriber handler has acked. The relay marks
+    // a row published only then, so a crash or handler failure leaves it pending and
+    // it is redelivered. GoChannel itself persists nothing; the outbox row is the
+    // durable copy until all handlers have acked.
+    BlockPublishUntilSubscriberAck: true,
+}, watermillLogger)
 // publisher := pubsub  (the relay publishes here)
 // subscriber := pubsub (modules subscribe here)
 ```
@@ -119,25 +127,31 @@ A redelivered `TaskApprovedEvent` inserts the same key, hits the `UNIQUE` constr
 
 ### Consumer failure handling
 
-- Handler returns an error → the message is nacked → Watermill redelivers (per backend retry config). Keep handlers short and deterministic.
-- Poison messages (always fail) must not block the topic forever. Configure a retry middleware with a cap, then route to a dead-letter topic (`<topic>.DLQ`) for inspection. (This mirrors the user's RabbitMQ `*.DLQ` convention.)
+- Handler returns an error → `Publish` returns an error in the relay → the row stays pending, `attempts` is bumped, and the next tick redelivers it. Redelivery goes to all subscribers of the topic, which is safe because every consumer is idempotent. Keep handlers short and deterministic.
+- Poison events: after `maxAttempts` the relay sets `failed_at` (so the row leaves the pending index and stops blocking later events), logs it, and publishes it to `<topic>.DLQ` for inspection. Operators re-drive by clearing `failed_at`.
+- Trade-off: because `Publish` blocks on acks, a slow consumer delays the relay for that event, and the relay's transaction (holding `SKIP LOCKED` row locks on the outbox batch) stays open meanwhile. Keep the batch small and handler work short; handlers use their own transactions on their own tables, so there is no lock conflict. Acceptable at MVP scale. If it hurts, add a per-consumer delivery table or move to a durable broker (see below).
+- **Not a replayable log.** The outbox is the durable producer-side record and published rows are retained, but consumers have no offsets, so replay is manual. If a real replay need appears (new consumer, extraction, incident), move the relay's target to a durable broker such as NATS JetStream or Redpanda via the Watermill swap. Handlers do not change; events must stay versioned and keyed by aggregate.
 
 ## Event catalogue (MVP)
 
 | Event | Producer | Consumers | Effect |
 |---|---|---|---|
 | `FamilyLinkedEvent` | identity | ledger, notification | seed wallet; welcome push |
+| `TaskAssignedEvent` | task | notification | "new task / milestone" → teen |
 | `TaskSubmittedEvent` | task | notification | "proof pending" → parent |
 | `TaskApprovedEvent` | task | ledger, notification | credit wallet; "reward credited" → teen |
 | `TaskRejectedEvent` | task | notification | "rejected" → teen |
 | `TaskRedoRequestedEvent` | task | notification | "redo" → teen |
+| `TaskCancelledEvent` | task | notification | "cancelled" → teen |
+| `TaskExpiredEvent` | task | notification | "deadline passed" → teen |
 | `PayoutRequestedEvent` | ledger | notification | high-priority "payout request" → parent |
 | `PayoutFulfilledEvent` | ledger | notification | "paid" → teen |
+| `PayoutCancelledEvent` | ledger | notification | "request cancelled / declined / expired" → teen |
 | `PenaltyAppliedEvent` | ledger | notification | "deduction" → teen |
 
 Event payloads are plain exported structs in the producing module's `events.go`. They are part of the module's **public contract** — changing a payload shape is a contract change; version it (`TaskApprovedEventV2`) rather than silently reshaping.
 
 ## Open decisions (flagged, not yet decided)
 
-- **Relay lifecycle under Cloud Run scale-to-zero.** If the API instance scales to zero, the in-process relay stops and events sit pending until the next request wakes an instance. Options: (a) min-instances=1 on the API service, (b) a separate always-on relay worker, (c) a Cloud Scheduler → endpoint that drains the outbox. Decide before production; for local/dev the in-process goroutine is fine.
+- **Relay under scale-to-zero.** Decided: Kubernetes, with the relay as an in-process loop in always-running API pods. If the deployment ever scales the API to zero, events would sit pending until the next request; revisit then.
 - **Ordering guarantees.** MVP assumes per-aggregate ordering is "good enough" via `created_at`. If a flow needs strict ordering, partition the relay query by `aggregate_id` and document it.

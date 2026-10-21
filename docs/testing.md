@@ -68,7 +68,7 @@ type fakeStore struct {
 
 Fakes, not mocks-with-expectations. A fake behaves like a tiny real implementation (an in-memory map); it is less brittle than call-order assertions and reads like the real thing. Use a mocking library only where a fake is genuinely more code than it is worth.
 
-> This is only possible because the service depends on an **interface**, not on `*Store` directly. Define the narrow store interface in the module and have the service accept it. (APOSD: depend on a narrow interface; it is also what makes the code testable.)
+> This is only possible because the service depends on an **interface**, not on `*Store` directly. Define the narrow store interface in the module and have the service accept it. Depending on a narrow interface is also what makes the code testable.
 
 ## 3. Functional tests — real Postgres via Testcontainers
 

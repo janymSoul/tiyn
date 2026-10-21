@@ -4,10 +4,10 @@ The system is five bounded contexts. Each is a deep module: a small interface ov
 
 ## The two — and only two — ways modules interact
 
-1. **Synchronous:** Module A depends on an **interface** that Module B exports (e.g. `media.PresignService`). A receives the concrete implementation by constructor injection, wired in `cmd/api/main.go`. A imports *only* B's exported interface and event types — never B's `domain/`, `store/`, or `http/`.
+1. **Synchronous:** Module A depends on an **interface** that Module B exports (e.g. `media.Storage`). A receives the concrete implementation by constructor injection, wired in `cmd/api/main.go`. A imports *only* B's exported interface and event types — never B's `domain/`, `store/`, or `http/`.
 2. **Asynchronous:** Module A publishes a domain event; Module B subscribes. A and B do not know about each other at all. This is the default for anything that is a *reaction* ("when a task is approved, credit the ledger and notify").
 
-Prefer async for reactions and side effects; use sync only when the caller genuinely needs a result back *now* (e.g. "give me a pre-signed upload URL").
+Prefer async for reactions and side effects; use sync only when the caller genuinely needs a result back *now* (e.g. "store this proof image and give me its object key").
 
 ## Hard rules (these are what make later extraction mechanical)
 
@@ -22,7 +22,11 @@ If you find yourself wanting to JOIN across two modules' tables, that is the sig
 
 ## 1. Identity & Family
 
-**Responsibility.** User accounts (parent, teen), authentication (JWT issue + verify), and family-group linking via a 6-digit alphanumeric code (PAR-01). Owns the security context that every other request is authorized against.
+**Responsibility.** User accounts (parent, teen), authentication, and family-group linking (PAR-01). Owns the security context that every other request is authorized against.
+
+**Authentication.** Sign-in with Google. The client obtains a Google ID token and sends it to the backend; identity verifies it and issues the app's own JWT. Google is only the proof of identity, so the provider can be swapped or extended (e.g. Apple) without touching other modules. A parent registers directly; a teen can only register through an invite.
+
+**Linking.** A parent issues an **invite**: a single-use, expiring code (6-character alphanumeric, PRD PAR-01) that identifies the issuing parent. It is shared as a link containing the code, with manual code entry as a fallback. When a teen registers with a valid invite, identity creates the teen account and the `family_links` row in one transaction and burns the invite. The parent can remove a link later. Code attempts are rate-limited and failures never reveal whether a code exists.
 
 **Offers (sync interface):**
 ```go
@@ -35,91 +39,125 @@ type FamilyDirectory interface {
     AreLinked(ctx context.Context, parentID, teenID uuid.UUID) (bool, error)
 }
 ```
+Links are soft-deleted (`removed_at`). `AreLinked` and every other lookup must ignore removed links; re-linking a removed pair clears `removed_at` on the existing row.
 Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.g. the task module checks a parent may approve a given teen's task). `Authenticator` is used by the HTTP auth middleware.
 
 **Publishes:** `FamilyLinkedEvent{ParentID, TeenID}` (lets other modules react to a new link, e.g. seed a wallet).
 
-**Owns:** `users`, `families`, `family_links`, `link_codes`.
+**Owns:** `users`, `family_links`, `invites`. There is no `families` table: a family is simply the set of links between parents and teens, so a teen can have two parents without a new concept.
 
 ---
 
 ## 2. Task & Milestone
 
-**Responsibility.** The lifecycle of chores and academic milestones (PAR-02, PAR-03, TEN-02): creation, submission with proof, parental review. This is the primary **state machine** in the system.
+**Responsibility.** The lifecycle of chores and academic milestones (PAR-02, PAR-03, TEN-02): creation, submission with proof, parental review, cancellation and expiry. This is the primary **state machine** in the system.
+
+A milestone is a task with `kind = MILESTONE`: same FSM, same review flow, different grouping in the teen UI. One table, one FSM.
+
+**Tasks inside a milestone.** A task may belong to a milestone through a nullable `milestone_id` (a self-reference within the task module). Each such task has its own reward and goes through its own review; the milestone is approved separately, with its own proof and reward, and does not auto-complete when its tasks are done. Rules enforced in the service: one level only (a milestone's tasks cannot themselves be milestones or hold tasks), a task's deadline is not later than its milestone's, the milestone must be `ASSIGNED` when a task is added, and tasks inside a milestone are one-time, never recurring (also enforced by a CHECK). Cancelling a milestone cancels its open tasks in the same transaction, each emitting `TaskCancelledEvent`; cancelling a task does not affect the milestone. Expiry does not cascade, since a task's deadline never exceeds its milestone's. Progress ("3 of 5 approved") is computed from the tasks.
 
 **Task FSM:**
 ```
-DRAFT ──create──▶ ASSIGNED ──submit(proofURL)──▶ SUBMITTED
-                                                     │
-                      ┌──────────────────────────────┼─────────────────────┐
-                      ▼ approve                       ▼ reject               ▼ request_redo
-                  APPROVED                         REJECTED              ASSIGNED
-                  (terminal for                    (terminal)           (back to work)
-                   one-time tasks;
-                   recurring tasks
-                   re-arm to ASSIGNED)
+ create ──▶ ASSIGNED ──submit(proof)──▶ SUBMITTED ──approve──▶ APPROVED   (terminal)
+               ▲  │                        │  │
+               │  │                        │  └────reject───▶ REJECTED   (terminal)
+               │  │                        │
+               │  │                        └─request_redo─┐
+               │  └────────────────────────────────────────┘ (back to ASSIGNED)
+               │
+               ├── expire (system, deadline passed) ──▶ EXPIRED     (terminal)
+               └── cancel (parent, from ASSIGNED or SUBMITTED) ──▶ CANCELLED (terminal)
 ```
-Guards live in the domain: you can only `submit` from `ASSIGNED`, only `approve`/`reject`/`request_redo` from `SUBMITTED`. Invalid transitions return `ErrInvalidTransition`.
+There is no `DRAFT`: a task is created directly in `ASSIGNED`. Guards live in the domain: `submit` only from `ASSIGNED`; `approve`/`reject`/`request_redo` only from `SUBMITTED`; `expire` only from `ASSIGNED` (a task submitted before its deadline stays approvable however slow the review); `cancel` from `ASSIGNED` or `SUBMITTED`. Invalid transitions return `ErrInvalidTransition`.
 
-**Offers (sync interface):** none required by other modules today. Keep it that way unless a real need appears — a module that offers nothing synchronous is maximally decoupled.
+**Recurrence: one row per occurrence.** A recurring task (daily/weekly) is a *series*; each period is its own `tasks` row with `series_id` and `occurrence_date` and a `UNIQUE (series_id, occurrence_date)` constraint. Terminal states never "re-arm" — the next period is a new row. This keeps history, makes the reward key (`REWARD-TASK-{taskID}`) naturally unique per occurrence, and makes materialising the next occurrence idempotent. Period boundaries are computed in the series' own timezone (`task_series.timezone`) and stored in UTC. A missed occurrence expires; it carries no automatic penalty (penalties are manual, PAR-04).
+
+**Proof submission.** The client sends the image (or text) in the submit request with an `Idempotency-Key`. The task service passes the bytes to `media.Storage.Put` first (idempotent by key), then runs one transaction that applies the FSM transition, stores `task_proofs`, and writes the outbox event. If the transaction fails, a retry re-puts to the same object key (overwrite, no duplicate) and tries the transition again.
+
+**Offers (sync interface):**
+```go
+type PendingReader interface {
+    // PendingReward is the sum of rewards of the teen's SUBMITTED tasks.
+    PendingReward(ctx context.Context, teenID uuid.UUID) (kzt int64, err error)
+}
+```
+Used by the dashboard handler to show "Pending" funds (TEN-01). Pending is task-owned data, so the task module answers it; the ledger never reads task tables.
 
 **Publishes:**
-- `TaskSubmittedEvent{TaskID, TeenID, ProofURL}` → notification (tell the parent), 
-- `TaskApprovedEvent{TaskID, TeenID, RewardKZT, IdempotencyKey}` → ledger (credit), notification (tell the teen). *This is the central event of the system* (architecture doc calls it `TaskCompletedEvent`; we name it `TaskApprovedEvent` for precision).
-- `TaskRejectedEvent`, `TaskRedoRequestedEvent` → notification.
+- `TaskAssignedEvent{TaskID, TeenID, Kind, RewardAmount, Currency}` → notification (tell the teen: "new task / milestone").
+- `TaskSubmittedEvent{TaskID, TeenID, ProofRef}` → notification (tell the parent).
+- `TaskApprovedEvent{TaskID, TeenID, RewardAmount, Currency, IdempotencyKey}` → ledger (credit), notification (tell the teen). *This is the central event of the system* (architecture doc calls it `TaskCompletedEvent`; we name it `TaskApprovedEvent` for precision).
+- `TaskRejectedEvent`, `TaskRedoRequestedEvent`, `TaskCancelledEvent`, `TaskExpiredEvent` → notification.
 
-**Depends on:** `identity.FamilyDirectory` (authorize that the approver parents this teen), `media.PresignService` (issue the proof-upload URL at submission start).
+**Time-driven work** (`Ticker`, see below): expire `ASSIGNED` tasks past their deadline; materialise the next occurrence of each recurring series.
 
-**Owns:** `tasks`, `milestones`, `task_proofs`. Uses an **optimistic version column** on `tasks` to detect concurrent transitions (see `docs/transactions.md`).
+**Depends on:** `identity.FamilyDirectory` (authorize that the caller parents this teen), `media.Storage` (store the proof image).
+
+**Owns:** `tasks`, `task_series`, `task_proofs`, `idempotency_keys`. Uses an **optimistic version column** on `tasks` to detect concurrent transitions (see `docs/transactions.md`).
 
 ---
 
 ## 3. Ledger & Wallet
 
-**Responsibility.** The append-only transaction journal and the derived wallet balance (TEN-01, SYS-01). Credits from approved tasks, debits from payouts and penalties (PAR-04), payout holds, and savings-goal locks (TEN-04). This module is the financial source of truth.
+**Responsibility.** The append-only transaction journal and the derived wallet balance (TEN-01, SYS-01). Credits from approved tasks, debits from payouts and penalties (PAR-04), payout requests, and savings-goal locks (TEN-04). This module is the financial source of truth.
 
-**Design:** double-entry-style append-only `ledger_entries` (never updated or deleted — corrections are compensating entries). A `wallets` row caches the balance with `CHECK (cached_balance_kzt >= 0)` and is mutated only under `SELECT … FOR UPDATE` (pessimistic lock). Every credit/debit carries an idempotency key with a `UNIQUE` constraint.
+**Money representation.** Amounts are `BIGINT` in minor units (tiyn for KZT) and always travel with a `currency` (a Postgres domain `platform.currency`, currently restricted to `KZT`). Allowing another currency is a one-line change to that domain plus the product work around it (wallet per currency, no cross-currency sums, payouts only in the currency the parent can transfer). Payouts and wallets are KZT today because payouts are Kaspi transfers in tenge. A goal priced in another currency would be a display conversion at an exchange rate, not a second ledger currency, and is not built.
 
-**Payout FSM (held funds):**
+**Design:** double-entry-style append-only `ledger_entries` (never updated or deleted — corrections are compensating entries). A `wallets` row per teen and currency caches the balance with `CHECK (balance_amount >= 0)` and is mutated only under `SELECT … FOR UPDATE` (pessimistic lock). Every credit/debit carries an idempotency key with a `UNIQUE` constraint.
+
+**Available balance.** What a teen may request or lock is
+`available = approved balance − sum(open REQUESTED payouts) − funds locked in savings goals`.
+Requesting a payout does not debit anything; it only reduces *available* (computed under the wallet lock). A teen may have **at most one** open request, enforced by a partial unique index on `payouts (teen_id) WHERE state = 'REQUESTED'`. The debit entry is written when the parent confirms.
+
+**Payout FSM:**
 ```
-REQUESTED ──parent fulfils──▶ FULFILLED        (funds debited on fulfilment confirmation)
+REQUESTED ──parent confirms──▶ FULFILLED   (debit entry written; parent's word is trusted)
      │
-     └──cancel/expire──▶ CANCELLED             (hold released)
+     └──teen cancels / parent declines / expires──▶ CANCELLED
 ```
+We never verify the Kaspi transfer (no API, and we are not a bank). Confirmation by the parent is the source of truth; the audit trail records who confirmed and when. A missing transfer is resolved between parent and teen.
 
 **Offers (sync interface):**
 ```go
 type BalanceReader interface {
-    Balance(ctx context.Context, teenID uuid.UUID) (Balance, error) // approved + pending
+    Balance(ctx context.Context, teenID uuid.UUID) (Balance, error) // Approved, Locked, Available
 }
 ```
-(The teen dashboard reads balance; expose read-only. All *writes* arrive via events or payout commands, never a generic "setBalance".)
+(Read-only. "Pending" is not here; it comes from `task.PendingReader`. All *writes* arrive via events or payout commands, never a generic "setBalance".)
 
-**Publishes:** `PayoutRequestedEvent{PayoutID, TeenID, ParentID, AmountKZT}` → notification. `PayoutFulfilledEvent`, `PenaltyAppliedEvent`.
+**Publishes:** `PayoutRequestedEvent{PayoutID, TeenID, ParentID, Amount, Currency}` → notification. `PayoutFulfilledEvent`, `PayoutCancelledEvent`, `PenaltyAppliedEvent`.
 
 **Subscribes:** `TaskApprovedEvent` → credit the teen's wallet (idempotent on the event's key). `FamilyLinkedEvent` → create the teen's wallet.
 
-**Owns:** `ledger_entries`, `wallets`, `payouts`, `savings_goals`, `idempotency_keys`.
+**Time-driven work** (`Ticker`): cancel `REQUESTED` payouts older than the expiry window.
+
+**Owns:** `ledger_entries`, `wallets`, `payouts`, `savings_goals`. The ledger needs no separate idempotency table: `ledger_entries.idempotency_key` and `payouts.idempotency_key` are `UNIQUE` and are the guard.
+
+**Savings goals.** A goal stores its target only. The amount saved is derived: the sum of `locked_delta` over the ledger entries whose `ref_id` is the goal, so goals and the wallet's locked amount cannot drift apart.
 
 ---
 
 ## 4. Media Storage
 
-**Responsibility.** S3 client wrapper (SYS-02). Issues 15-minute pre-signed PUT URLs for proof uploads and GET URLs for review. The backend never handles image bytes.
+**Responsibility.** S3 client wrapper (SYS-02). Receives proof images from the task service, validates and sanitises them, stores them, and issues short-lived pre-signed GET URLs for review. Proof images pass through the backend (see "Why bytes pass through" below).
 
 **Offers (sync interface):**
 ```go
-type PresignService interface {
-    // PresignUpload returns a PUT URL for a new proof object. The uploadKey is
-    // derived deterministically from an idempotency key so a retried request
-    // cannot create a duplicate object (PRD "Important" note).
-    PresignUpload(ctx context.Context, idemKey string, contentType string) (Upload, error)
+type Storage interface {
+    // Put validates (content-type allowlist, size cap), strips metadata such as
+    // EXIF/GPS, and stores the image. The object key is a deterministic function
+    // of scope + idemKey, so a retried Put overwrites the same object instead of
+    // creating a duplicate (PRD "Important" note).
+    Put(ctx context.Context, scope, idemKey, contentType string, body io.Reader) (objectKey string, err error)
+    // PresignView returns a short-lived GET URL for parent review.
     PresignView(ctx context.Context, objectKey string) (url string, err error)
 }
 ```
-Called by the task module when a teen begins a submission.
+Called by the task module on submission and review.
 
-**Idempotent upload:** the object key is a deterministic function of the idempotency key (e.g. `proofs/{familyID}/{sha256(idemKey)}`). A retried presign for the same key returns a URL to the same object — a failed upload that retries never produces two objects.
+**Idempotent upload:** object key = `proofs/{scope}/{sha256(idemKey)}`. A retry for the same key hits the same object. If the later DB transaction fails, the object is orphaned only until the retry overwrites it; a periodic sweep of unreferenced objects can be added if it ever matters.
+
+**Why bytes pass through.** The teen client never sees S3, never holds an object key, and cannot submit a key for an object that was never uploaded. The server can enforce type and size and strip location metadata from photos of minors. Cost: image bytes use API bandwidth and memory, and the platform's request-size limit applies (set the ingress body limit accordingly). Clients compress before sending, so a few MB per request is expected. If scale demands it, switching to pre-signed PUT is a change inside this module plus the task submit path.
 
 **Owns:** no DB tables of its own in MVP (object keys are referenced by the task module as plain strings). If upload bookkeeping is later needed, it owns its own `media_objects` table.
 
@@ -131,13 +169,34 @@ Called by the task module when a teen begins a submission.
 
 **Responsibility.** Asynchronous push delivery to FCM/APNs (SYS-03). Purely reactive: it subscribes to domain events and turns them into localized push messages. The *only* module that knows about FCM.
 
-**Offers (sync interface):** none. It is a pure consumer.
+**Offers (sync interface):** none for domain callers. It exposes an endpoint for clients to register/refresh a device token and locale.
 
-**Subscribes:** `TaskSubmittedEvent` (→ parent: "Proof pending"), `TaskApprovedEvent` (→ teen: "Reward credited"), `TaskRejectedEvent`/`TaskRedoRequestedEvent` (→ teen), `PayoutRequestedEvent` (→ parent: high-priority "Payout request"), `PayoutFulfilledEvent` (→ teen). `FamilyLinkedEvent` (→ welcome).
+**Subscribes:** `TaskAssignedEvent` (→ teen), `TaskSubmittedEvent` (→ parent: "Proof pending"), `TaskApprovedEvent` (→ teen: "Reward credited"), `TaskRejectedEvent`/`TaskRedoRequestedEvent`/`TaskCancelledEvent`/`TaskExpiredEvent` (→ teen), `PayoutRequestedEvent` (→ parent: high-priority "Payout request"), `PayoutFulfilledEvent`/`PayoutCancelledEvent` (→ teen), `PenaltyAppliedEvent` (→ teen), `FamilyLinkedEvent` (→ welcome).
 
-**Localization:** picks RU/KK copy per the recipient's locale (read from a projection it maintains from `FamilyLinkedEvent`/identity, or carried on the event — decide when implementing; prefer carrying `locale` on the event to avoid a sync call back to identity).
+**Localization:** picks RU/KK copy per the recipient's locale, which the client sends with its device token. Events carry only IDs, so no call back into identity is needed.
 
 **Owns:** `device_tokens`, and any notification outbox/dedup table it needs to be idempotent (a device must not get the same push twice from a redelivered event).
+
+---
+
+## Time-driven work
+
+Some state changes happen because time passes, not because a request arrives: expiring overdue tasks, creating the next occurrence of a recurring task, cancelling stale payout requests, and publishing the outbox. No request wakes the process for these, so something must.
+
+Each module with such work exposes a small interface and the composition root wires them together:
+```go
+type Ticker interface {
+    // Tick performs all work due at `now`. It must be idempotent and safe to run
+    // concurrently with itself (batches use FOR UPDATE SKIP LOCKED; transitions
+    // are guarded by the FSM and version column).
+    Tick(ctx context.Context, now time.Time) error
+}
+```
+**Decision: a Kubernetes CronJob runs the same binary.** `tiyn tick` is a one-shot subcommand: it runs all domain tickers once and exits. A CronJob invokes it every minute with `concurrencyPolicy: Forbid` and an `activeDeadlineSeconds` shorter than the schedule interval. No HTTP endpoint is exposed and no extra service is needed.
+
+**The outbox relay is the exception.** A CronJob's one-minute granularity would delay every event (reward credit, pushes) by up to a minute, which is too slow for the approve → credit → notify path. The relay therefore runs as an in-process loop (about 1 s) inside the API pods, which are always running on Kubernetes. The CronJob handles only work where minute-level precision is fine: task expiry, recurrence, payout expiry.
+
+Because every `Tick` is idempotent and concurrency-safe, overlapping runs, a retried Job, or several API replicas all running the relay are harmless. The code stays platform-agnostic: the same `Ticker`s can be driven by an in-process loop (local dev) or any other scheduler if the platform changes.
 
 ---
 
@@ -146,8 +205,9 @@ Called by the task module when a teen begins a submission.
 ```
 http middleware ──▶ identity.Authenticator
 task.service ──▶ identity.FamilyDirectory
-task.service ──▶ media.PresignService
+task.service ──▶ media.Storage
 http (dashboard) ──▶ ledger.BalanceReader
+http (dashboard) ──▶ task.PendingReader
 ```
 No cycles. All other relationships are event-driven (dashed, via the bus): task→ledger, task→notification, ledger→notification, identity→ledger, identity→notification.
 

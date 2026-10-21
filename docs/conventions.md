@@ -1,8 +1,8 @@
 # Conventions & Design Principles
 
-The house style. Grounded in Ousterhout's *A Philosophy of Software Design* (APOSD) and idiomatic Go. When the two conflict, idiomatic Go wins on surface syntax; APOSD wins on module shape.
+The house style. Idiomatic Go for surface syntax; the design principles below for module shape. When they conflict, Go idioms win on syntax and the design principles win on module shape.
 
-## APOSD, applied to this codebase
+## Design principles
 
 ### Deep modules, narrow interfaces
 
@@ -28,13 +28,15 @@ The house style. Grounded in Ousterhout's *A Philosophy of Software Design* (APO
 ### Define errors out of existence
 
 - Design APIs so error cases don't arise. Example: a duplicate idempotency key is **not an error** — `ApproveTask` treats a replay as success (idempotent), so callers never handle a "already approved" error.
-- Recurring-task re-arming is handled inside the FSM, not by making the caller check "is this recurring?" and re-create it.
+- Recurring tasks are one row per occurrence, created by the task module's ticker, so callers never check "is this recurring?".
 
-### Comments explain *why* and *what's non-obvious*
+### No comments by default
 
-- Minimal comments on *what* the code does (the code says that). Comment the *why*: why pessimistic here and optimistic there, why this event carries `locale`, why rollback-after-commit is ignored.
-- Every exported type and function has a doc comment (Go convention), but it describes contract and intent, not mechanics.
-- A query's SQL comment states its locking choice: `-- locks the wallet row; see docs/transactions.md`.
+- **Do not write comments.** Code, SQL, and migrations must be self-explanatory through naming and structure. If a comment seems necessary, first try renaming or extracting a well-named function, constant, or type.
+- **Only exception:** a business rule that is not intuitive from the code and that a reader could not reasonably infer (e.g. why a missed occurrence carries no penalty, why a payout does not debit until the parent confirms). State the rule in one short line.
+- No doc comments on exported identifiers just because Go linters suggest them; configure the linter accordingly. No comments restating what code does, section dividers, commented-out code, or TODOs without a linked issue.
+- Locking and transaction choices are expressed in names (`GetWalletForUpdate`, `UpdateTaskState` with a version check), not comments.
+- Code samples in `docs/` may be annotated to teach; that does not carry into the codebase.
 
 ### General-purpose over special-purpose
 
@@ -57,6 +59,7 @@ The house style. Grounded in Ousterhout's *A Philosophy of Software Design* (APO
 tiyn/
   cmd/
     api/main.go              # composition root: wire modules, start HTTP + relay
+    tiyn/main.go             # CLI: `tick` (CronJob one-shot), `migrate`
   internal/
     identity/  task/  ledger/  media/  notification/
                              # each: service.go, <module>.go (iface), events.go,
@@ -67,8 +70,10 @@ tiyn/
       eventbus/              # Watermill setup, topic naming, DLQ middleware
       httpx/                 # chi middleware: auth, request-id, recover, logging
       config/                # env loading
+      migrations/            # platform schema: shared currency type, updated_at trigger, outbox
+                             # every module keeps its goose migrations in internal/<module>/store/migrations;
+                             # each has its own goose version table, platform is applied first
   db/
-    migrations/              # goose; subdirs or prefixes per module, no cross-context FKs
     queries/                 # sqlc source .sql, per module
   test/
     functional/              # cross-module PRD-scenario acceptance tests
@@ -82,7 +87,7 @@ tiyn/
 - Files: `service.go`, `service_test.go`; one FSM per file in `domain/` (`task.go`, `payout.go`).
 - Events: `<Noun><PastTenseVerb>Event` — `TaskApprovedEvent`, `PayoutRequestedEvent`. Past tense: events are facts that already happened.
 - Commands (service method inputs): `<Verb><Noun>Cmd` — `ApproveTaskCmd`.
-- Money: integer **tenge** (or minor units if we ever need sub-tenge — decide once and never mix). Never floats for money. Name fields `...KZT` to make the unit explicit.
+- Money: `BIGINT` in **minor units** (tiyn for KZT; 20,000 KZT is stored as 2,000,000), always paired with a `currency`. Never floats. Fields are named `Amount`/`...Amount` with a separate `Currency`; conversion to display units happens only at the API edge.
 
 ## Scope discipline
 
