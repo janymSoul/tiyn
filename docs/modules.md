@@ -18,6 +18,54 @@ Prefer async for reactions and side effects; use sync only when the caller genui
 
 If you find yourself wanting to JOIN across two modules' tables, that is the signal that either the boundary is wrong or the data should travel in an event. Ask before reaching across.
 
+## Domain model (DDD)
+
+We apply Domain-Driven Design pragmatically: strategic DDD everywhere (bounded contexts, a context map, one language), tactical DDD (aggregates, value objects, domain events) where there are real rules to protect. The rules for writing it are in `docs/conventions.md`.
+
+**Bounded contexts and the context map.** Each module below is a bounded context with its own model; the same word can mean different things in different contexts (a "user" in identity is an account, in notification it is just a recipient with device tokens). Contexts relate in two ways:
+- **Published language:** the events in `docs/events-outbox.md` are the shared language between contexts. Task is upstream of ledger and notification; ledger is upstream of notification; identity is upstream of ledger and notification. Downstream contexts translate events into their own model and never depend on the upstream's internals.
+- **Customer/supplier:** the few synchronous interfaces (`FamilyDirectory`, `BalanceReader`, `PendingReader`, `media.Storage`) are narrow contracts owned by the supplier.
+- **Anti-corruption layer:** external systems (Google ID tokens, FCM, S3, bank apps) sit behind an interface in the module that uses them. Their types and vocabulary never enter `domain/`.
+
+**Aggregates.** An aggregate is a cluster of objects that must be consistent together. Only its root is loaded and saved; other aggregates are referenced by ID.
+
+| Context | Aggregate (root) | Contains | Invariants it protects | Concurrency |
+|---|---|---|---|---|
+| identity | `User` | join code | one Google subject, one user; a parent has one join code | unique constraints |
+| identity | `FamilyLink` | parent id, teen id, removed flag | a parent and a teen are linked at most once; a link is not to oneself | primary key |
+| task | `Task` | proofs | legal state transitions; tasks in a milestone are one-time and for the same teen | version column |
+| task | `TaskSeries` | recurrence rule | one occurrence per period | unique `(series, date)` |
+| ledger | `Wallet` | ledger entries (append-only), payouts, savings goals | balance never negative; locked never above balance; at most one open payout; one reward per task; one debit per payout | wallet row `FOR UPDATE` |
+| notification | `DeviceToken` | token, platform, locale | a token belongs to one user | unique token |
+
+The wallet aggregate is deliberately large: "available funds = balance − locked − open payout request" spans payouts, goals and entries, so they share one consistency boundary and one lock.
+
+**Rule of thumb:** one transaction changes one aggregate. Documented exceptions inside a single context: cancelling a milestone also cancels its open tasks, and a payout request touches the wallet and its payout together (same aggregate). Across contexts there is never one transaction; use an event.
+
+**Ubiquitous language.** Use these words in code, SQL, API names, events and docs, and do not invent synonyms.
+
+| Term | Meaning |
+|---|---|
+| Parent / Teen | The two roles. A parent funds and approves; a teen earns. |
+| Join code | A parent's permanent code a teen enters to link to that parent. |
+| Link | The relation between one parent and one teen. |
+| Task | A piece of work with a reward and a deadline. |
+| Milestone | A task of kind milestone; larger goal with its own proof and reward. A task may belong to one. |
+| Series / Occurrence | A recurring rule and one concrete task generated from it for a period. |
+| Proof | What the teen submits to show a task is done (image or text). |
+| Reward | The amount the teen earns when a task is approved. |
+| Approve / Reject / Request redo / Cancel / Expire | The parent's review decisions, and the system's deadline outcome. |
+| Wallet | A teen's account in one currency. |
+| Balance | Money the teen has earned and not yet paid out. |
+| Locked | Part of the balance set aside in savings goals. |
+| Available | Balance minus locked minus the open payout request; what can be requested or locked. |
+| Pending | Rewards of tasks submitted and not yet decided. Owned by task, not ledger. |
+| Ledger entry | One immutable line in the wallet's history. |
+| Payout | A teen's request to cash out; the parent fulfils it in their bank app and confirms. |
+| Penalty | A parent's manual deduction. |
+| Savings goal | A target the teen sets aside part of the balance for. |
+| Domain event | A past-tense fact one context publishes, e.g. `TaskApprovedEvent`. |
+
 ---
 
 ## 1. Identity & Family
@@ -117,7 +165,7 @@ REQUESTED ──parent confirms──▶ FULFILLED   (debit entry written; paren
      │
      └──teen cancels / parent declines / expires──▶ CANCELLED
 ```
-We never verify the bank transfer (no bank API, and we are not a bank), whichever bank the parent uses. Confirmation by the parent is the source of truth; the audit trail records who confirmed and when. A missing transfer is resolved between parent and teen.
+A payout cancelled by the system (it expired) has no `resolved_by`; one cancelled by the teen or declined by the parent records who did it. Every cancellation records a `cancel_reason`. We never verify the bank transfer (no bank API, and we are not a bank), whichever bank the parent uses. Confirmation by the parent is the source of truth; the audit trail records who confirmed and when. A missing transfer is resolved between parent and teen.
 
 **Offers (sync interface):**
 ```go
@@ -194,7 +242,7 @@ type Ticker interface {
     Tick(ctx context.Context, now time.Time) error
 }
 ```
-**Decision: a Kubernetes CronJob runs the same binary.** `tiyn tick` is a one-shot subcommand: it runs all domain tickers once and exits. A CronJob invokes it every minute with `concurrencyPolicy: Forbid` and an `activeDeadlineSeconds` shorter than the schedule interval. No HTTP endpoint is exposed and no extra service is needed.
+**Decision: a Kubernetes CronJob runs the same binary.** `tiyn tick` is a one-shot subcommand: it runs all domain tickers once and exits. It currently has none registered and only logs that; do not deploy the CronJob until the first ticker (task expiry) exists. A CronJob invokes it every minute with `concurrencyPolicy: Forbid` and an `activeDeadlineSeconds` shorter than the schedule interval. No HTTP endpoint is exposed and no extra service is needed.
 
 **The outbox relay is the exception.** A CronJob's one-minute granularity would delay every event (reward credit, pushes) by up to a minute, which is too slow for the approve → credit → notify path. The relay therefore runs as an in-process loop (about 1 s) inside the API pods, which are always running on Kubernetes. The CronJob handles only work where minute-level precision is fine: task expiry, recurrence, payout expiry.
 
@@ -219,7 +267,7 @@ Keeping the sync graph this thin is deliberate: it is the set of edges you must 
 
 When a module must become its own service:
 1. Its sync interface becomes a network API (gRPC/REST); callers swap the in-process impl for a client.
-2. Its event subscriptions/publications swap the Watermill GoChannel backend for Google Pub/Sub — handler code is unchanged.
+2. Its event subscriptions/publications swap the in-process dispatcher for a broker publisher and a Watermill router — handler code is unchanged.
 3. Its tables move with it; because there were no cross-context FKs, nothing in other schemas breaks.
 4. Its idempotency guarantees already assume at-least-once, so network redelivery changes nothing.
 

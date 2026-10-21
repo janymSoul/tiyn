@@ -15,7 +15,8 @@
 5. **Code is tested before it is called done.** Pure domain logic → unit tests (fast, no DB). Service + HTTP + outbox → functional tests against a real Postgres (Testcontainers-go). A change without tests is not complete. See `docs/testing.md`.
 
 6. **No comments.** Code and SQL must be self-explanatory; rename or extract instead of commenting. The only exception is a short note for a non-intuitive business rule. See `docs/conventions.md`.
-7. **Design deep modules with narrow interfaces**. A module should expose a small interface that hides a lot of implementation. Push complexity down, not onto callers. Avoid shallow pass-through layers. See `docs/conventions.md`.
+7. **Model the domain with DDD, pragmatically.** A module is a bounded context with its own language. Business rules live in aggregates in `domain/`; an aggregate is the consistency boundary and normally one transaction changes one aggregate. Name things in the ubiquitous language (see the glossary in `docs/modules.md`). Use the tactical patterns where there are real invariants (task, wallet, payout) and plain code where there are none. See `docs/conventions.md`.
+8. **Design deep modules with narrow interfaces**. A module should expose a small interface that hides a lot of implementation. Push complexity down, not onto callers. Avoid shallow pass-through layers. See `docs/conventions.md`.
 
 ## Definition of done
 
@@ -23,8 +24,7 @@ Before you say a task is finished, all of the following must hold:
 
 - [ ] Code compiles: `go build ./...`
 - [ ] Formatted and vetted: `gofmt -l .` clean, `go vet ./...` clean
-- [ ] Unit tests pass: `go test ./internal/...`
-- [ ] Functional tests pass: `go test ./test/...` (requires Docker for Testcontainers)
+- [ ] Tests pass with the race detector: `go test -race ./...` (functional tests start Postgres through Testcontainers and need Docker; `TIYN_SKIP_FUNCTIONAL=1` skips them)
 - [ ] No module imports another module's internals (verify by inspection; the compiler blocks `internal/` leaks but not sibling-package reaches)
 - [ ] No new cross-context foreign keys in migrations
 - [ ] New cross-module effects go through an event, not a direct DB write

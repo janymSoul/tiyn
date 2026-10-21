@@ -5,7 +5,7 @@
 *.out
 # Compiled main binaries (cmd/<name> built in place)
 /cmd/api/api
-/cmd/relay/relay
+/cmd/tiyn/tiyn
 
 # Test & coverage artifacts
 *.test

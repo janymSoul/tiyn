@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: tiyn
+      POSTGRES_PASSWORD: tiyn
+      POSTGRES_DB: tiyn
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tiyn -d tiyn"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    command: server -dir=/data -s3 -s3.port=8333
+    ports:
+      - "9333:9333"
+      - "8333:8333"
+    volumes:
+      - seaweedfs-data:/data
+
+volumes:
+  postgres-data:
+  seaweedfs-data:

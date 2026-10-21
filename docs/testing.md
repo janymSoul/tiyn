@@ -70,6 +70,10 @@ Fakes, not mocks-with-expectations. A fake behaves like a tiny real implementati
 
 > This is only possible because the service depends on an **interface**, not on `*Store` directly. Define the narrow store interface in the module and have the service accept it. Depending on a narrow interface is also what makes the code testable.
 
+### No slow tests
+
+No test waits more than about 2 seconds. Never `time.Sleep` to let something happen: inject the clock where the code takes one, shrink intervals and timeouts through the options the code already exposes (millisecond retry intervals, a 50 ms handler timeout), write the due time directly (the relay compares `next_attempt_at` with the database clock, so a test sets it with SQL to skip a backoff; `Relay.Tick(ctx, now)` uses `now` only to throttle the unhandled-events warning), or wait on a channel the code under test closes. goose's lock retry period is whole seconds, so migrate tests use the one-second minimum. `time.After(...)` is only a ceiling that turns a hang into a failure; it must not elapse in a passing run. Starting the Postgres container costs a few seconds once per package; that is the only fixed cost.
+
 ## 3. Functional tests — real Postgres via Testcontainers
 
 The guarantees that matter most — `FOR UPDATE` serialization, the non-negative check constraint, idempotency uniqueness, transaction atomicity — **cannot** be proven with a mock. They are database behavior. So functional tests run against a real Postgres 16 container.
@@ -131,7 +135,7 @@ One such black-box test per PRD user scenario (Scenario 1: milestone; Scenario 2
 
 - **S3 / media:** the `media.PresignService` interface is faked in service tests; functional tests can run against a SeaweedFS container (same S3 API) if upload behavior is under test, otherwise fake it — we never handle bytes, so there is little to test beyond key derivation (which is a unit test).
 - **FCM / push:** the notification module's FCM client is behind an interface; assert "a push with this payload to this device" against a fake. Never call real FCM in tests.
-- **Watermill bus:** in unit tests, fake the publisher. In functional tests, use the real `gochannel` bus so subscribe/publish wiring is exercised.
+- **Event bus:** in unit tests, fake the dead-letter store (`eventbus.DeadLetterStore`) and drive `Bus.Publish` directly. In functional tests, use the real bus, relay and Postgres so retries, dead letters, ordering and backoff are exercised.
 
 ## Coverage expectations
 
