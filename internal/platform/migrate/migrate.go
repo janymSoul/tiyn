@@ -7,6 +7,7 @@ import (
 	"io/fs"
 
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -37,7 +38,12 @@ func upModule(ctx context.Context, db *sql.DB, module Module) error {
 	if err != nil {
 		return err
 	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations, goose.WithTableName("goose_"+module.Name))
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return err
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations,
+		goose.WithTableName("goose_"+module.Name), goose.WithSessionLocker(locker))
 	if err != nil {
 		return err
 	}

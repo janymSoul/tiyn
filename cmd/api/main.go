@@ -37,7 +37,7 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL, cfg.DBMaxConns)
 	if err != nil {
 		return err
 	}
@@ -46,14 +46,14 @@ func run(logger *slog.Logger) error {
 
 	bus := eventbus.New(eventbus.NewPostgresDeadLetters(pool), eventbus.Options{
 		HandlerMaxRetries:    cfg.HandlerMaxRetries,
+		HandlerTimeout:       cfg.HandlerTimeout,
 		RetryInitialInterval: 200 * time.Millisecond,
 		RetryMaxInterval:     5 * time.Second,
 	})
 
 	relay := outbox.NewRelay(store, bus, outbox.RelayConfig{
-		BatchSize:       cfg.RelayBatchSize,
-		DeliveryTimeout: cfg.RelayDeliveryTimeout,
-		MaxBackoff:      cfg.RelayMaxBackoff,
+		BatchSize:  cfg.RelayBatchSize,
+		MaxBackoff: cfg.RelayMaxBackoff,
 	}, logger)
 
 	server := &http.Server{

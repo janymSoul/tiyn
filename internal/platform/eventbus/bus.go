@@ -16,6 +16,7 @@ type Handler = message.NoPublishHandlerFunc
 
 type DeadLetter struct {
 	Topic       string
+	Handler     string
 	MessageUUID string
 	Payload     []byte
 	Metadata    map[string]string
@@ -28,6 +29,7 @@ type DeadLetterStore interface {
 
 type Options struct {
 	HandlerMaxRetries    int
+	HandlerTimeout       time.Duration
 	RetryInitialInterval time.Duration
 	RetryMaxInterval     time.Duration
 }
@@ -59,6 +61,16 @@ func (b *Bus) Handle(name, topic string, handler Handler) error {
 	}
 	b.handlers[topic] = append(b.handlers[topic], registration{name: name, handle: handler})
 	return nil
+}
+
+func (b *Bus) Topics() []string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	topics := make([]string, 0, len(b.handlers))
+	for topic := range b.handlers {
+		topics = append(topics, topic)
+	}
+	return topics
 }
 
 func (b *Bus) Publish(ctx context.Context, topic string, msg *message.Message) error {
@@ -94,7 +106,7 @@ func (b *Bus) dispatch(ctx context.Context, topic string, registration registrat
 func (b *Bus) handleWithRetries(ctx context.Context, handle Handler, msg *message.Message) error {
 	interval := b.options.RetryInitialInterval
 	for attempt := 0; ; attempt++ {
-		err := invoke(ctx, handle, msg)
+		err := b.attempt(ctx, handle, msg)
 		if err == nil || attempt >= b.options.HandlerMaxRetries {
 			return err
 		}
@@ -103,6 +115,15 @@ func (b *Bus) handleWithRetries(ctx context.Context, handle Handler, msg *messag
 		}
 		interval = min(interval*2, b.options.RetryMaxInterval)
 	}
+}
+
+func (b *Bus) attempt(ctx context.Context, handle Handler, msg *message.Message) error {
+	if b.options.HandlerTimeout <= 0 {
+		return invoke(ctx, handle, msg)
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, b.options.HandlerTimeout)
+	defer cancel()
+	return invoke(attemptCtx, handle, msg)
 }
 
 func invoke(ctx context.Context, handle Handler, msg *message.Message) (err error) {
@@ -135,6 +156,7 @@ func newDeadLetter(topic, handlerName string, msg *message.Message, cause error)
 	metadata["handler"] = handlerName
 	return DeadLetter{
 		Topic:       topic,
+		Handler:     handlerName,
 		MessageUUID: msg.UUID,
 		Payload:     msg.Payload,
 		Metadata:    metadata,

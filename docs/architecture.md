@@ -62,7 +62,7 @@ internal/<module>/
 | HTTP router | `chi` | Minimal, idiomatic, stdlib-compatible `http.Handler`; no framework lock-in. |
 | DB driver | `pgx/v5` (via `pgxpool`) | Fastest, most complete Postgres driver; first-class `FOR UPDATE`, listen/notify. |
 | Query layer | `sqlc` | Generates type-safe Go from hand-written SQL. We control every query, including locking. No ORM — see below. |
-| Migrations | `goose` | Simple, versioned, SQL-first; one migration dir per module. |
+| Migrations | `goose` | Simple, versioned, SQL-first; one migration dir per module, one version table per module, serialised by a Postgres advisory lock so concurrent `tiyn migrate` runs are safe. |
 | Events | Small in-process dispatcher (`eventbus`) over the Watermill message type | Synchronous delivery with retries and durable dead letters; handlers keep the Watermill signature so a broker can replace it on extraction. |
 | Validation | `go-playground/validator` | Struct-tag DTO validation at the HTTP edge. |
 | Auth | `golang-jwt/jwt/v5` + chi middleware | JWT issue/verify in the identity module; middleware injects the security context. |

@@ -229,3 +229,50 @@ func TestHandlerContextCarriesThePublishContext(t *testing.T) {
 
 	require.ErrorIs(t, seen, context.Canceled)
 }
+
+func TestHandlerExceedingItsTimeoutIsRetriedThenDeadLettered(t *testing.T) {
+	deadLetters := &memoryDeadLetters{}
+	bus := eventbus.New(deadLetters, eventbus.Options{
+		HandlerMaxRetries:    1,
+		HandlerTimeout:       20 * time.Millisecond,
+		RetryInitialInterval: time.Millisecond,
+		RetryMaxInterval:     time.Millisecond,
+	})
+	calls := 0
+	mustHandle(t, bus, "hung", func(m *message.Message) error {
+		calls++
+		<-m.Context().Done()
+		return m.Context().Err()
+	})
+
+	err := bus.Publish(context.Background(), topic, newMessage())
+
+	require.NoError(t, err)
+	require.Equal(t, 2, calls)
+	require.Len(t, deadLetters.all(), 1)
+	require.Equal(t, "hung", deadLetters.all()[0].Handler)
+	require.Contains(t, deadLetters.all()[0].Reason, "deadline exceeded")
+}
+
+func TestHandlerTimeoutOfZeroMeansNoTimeout(t *testing.T) {
+	bus, _ := newBus(0)
+	var deadline bool
+	mustHandle(t, bus, "observer", func(m *message.Message) error {
+		_, deadline = m.Context().Deadline()
+		return nil
+	})
+
+	require.NoError(t, bus.Publish(context.Background(), topic, newMessage()))
+
+	require.False(t, deadline)
+}
+
+func TestTopicsListsEveryTopicWithAHandler(t *testing.T) {
+	bus, _ := newBus(0)
+	require.Empty(t, bus.Topics())
+	require.NoError(t, bus.Handle("a", "TopicA", func(*message.Message) error { return nil }))
+	require.NoError(t, bus.Handle("b", "TopicA", func(*message.Message) error { return nil }))
+	require.NoError(t, bus.Handle("c", "TopicB", func(*message.Message) error { return nil }))
+
+	require.ElementsMatch(t, []string{"TopicA", "TopicB"}, bus.Topics())
+}

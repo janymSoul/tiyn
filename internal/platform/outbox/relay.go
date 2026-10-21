@@ -12,17 +12,16 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"tiyn/internal/platform/db"
-	"tiyn/internal/platform/eventbus"
 )
 
 type Publisher interface {
 	Publish(ctx context.Context, topic string, msg *message.Message) error
+	Topics() []string
 }
 
 type RelayConfig struct {
-	BatchSize       int
-	DeliveryTimeout time.Duration
-	MaxBackoff      time.Duration
+	BatchSize  int
+	MaxBackoff time.Duration
 }
 
 type Relay struct {
@@ -53,7 +52,7 @@ func (r *Relay) Tick(ctx context.Context, _ time.Time) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if err := r.deliver(ctx, id); err != nil {
+		if err := r.deliver(ctx, id); err != nil && ctx.Err() == nil {
 			r.logDeliveryFailure(id, err)
 		}
 	}
@@ -61,16 +60,21 @@ func (r *Relay) Tick(ctx context.Context, _ time.Time) error {
 }
 
 func (r *Relay) deliverableIDs(ctx context.Context) ([]int64, error) {
+	topics := r.publisher.Topics()
+	if len(topics) == 0 {
+		return nil, nil
+	}
 	rows, err := r.store.Pool().Query(ctx,
 		`SELECT o.id FROM platform.outbox_events o
 		 WHERE o.published_at IS NULL
 		   AND o.next_attempt_at <= now()
+		   AND o.event_type = ANY($2)
 		   AND NOT EXISTS (
 		       SELECT 1 FROM platform.outbox_events earlier
 		       WHERE earlier.aggregate_id = o.aggregate_id
 		         AND earlier.id < o.id
 		         AND earlier.published_at IS NULL)
-		 ORDER BY o.id LIMIT $1`, r.config.BatchSize)
+		 ORDER BY o.id LIMIT $1`, r.config.BatchSize, topics)
 	if err != nil {
 		return nil, fmt.Errorf("select deliverable outbox ids: %w", err)
 	}
@@ -78,37 +82,28 @@ func (r *Relay) deliverableIDs(ctx context.Context) ([]int64, error) {
 }
 
 func (r *Relay) deliver(ctx context.Context, id int64) error {
-	publishErr := r.store.ExecTx(ctx, func(tx pgx.Tx) error {
-		event, err := lockForDelivery(ctx, tx, id)
+	txCtx := context.WithoutCancel(ctx)
+	publishErr := r.store.ExecTx(txCtx, func(tx pgx.Tx) error {
+		event, err := lockForDelivery(txCtx, tx, id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		deliveryCtx, cancel := context.WithTimeout(ctx, r.config.DeliveryTimeout)
-		defer cancel()
-		if err := r.publisher.Publish(deliveryCtx, event.eventType, toMessage(event)); err != nil {
+		if err := r.publisher.Publish(ctx, event.eventType, toMessage(event)); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE platform.outbox_events SET published_at = now() WHERE id = $1`, id)
+		_, err = tx.Exec(txCtx, `UPDATE platform.outbox_events SET published_at = now() WHERE id = $1`, id)
 		return err
 	})
-	if publishErr == nil || !countsAsFailure(ctx, publishErr) {
+	if publishErr == nil || ctx.Err() != nil {
 		return publishErr
 	}
 	return errors.Join(publishErr, r.recordFailure(ctx, id))
 }
 
-func countsAsFailure(parent context.Context, err error) bool {
-	return parent.Err() == nil && !errors.Is(err, eventbus.ErrNoHandler)
-}
-
 func (r *Relay) logDeliveryFailure(id int64, err error) {
-	if errors.Is(err, eventbus.ErrNoHandler) {
-		r.logger.Warn("outbox event has no handler yet", "outbox_id", id, "err", err)
-		return
-	}
 	r.logger.Error("outbox delivery failed", "outbox_id", id, "err", err)
 }
 
@@ -118,6 +113,11 @@ func lockForDelivery(ctx context.Context, tx pgx.Tx, id int64) (pendingEvent, er
 		`SELECT id, event_type, aggregate_id::text, idempotency_key, payload
 		 FROM platform.outbox_events
 		 WHERE id = $1 AND published_at IS NULL AND next_attempt_at <= now()
+		   AND NOT EXISTS (
+		       SELECT 1 FROM platform.outbox_events earlier
+		       WHERE earlier.aggregate_id = outbox_events.aggregate_id
+		         AND earlier.id < outbox_events.id
+		         AND earlier.published_at IS NULL)
 		 FOR UPDATE SKIP LOCKED`, id).
 		Scan(&event.id, &event.eventType, &event.aggregateID, &event.idempotencyKey, &event.payload)
 	return event, err

@@ -129,3 +129,33 @@ func databaseURL(database string) string {
 	parsed.Path = "/" + database
 	return parsed.String()
 }
+
+func NewEmptyDatabaseURL(t *testing.T) string {
+	t.Helper()
+	if failReason != "" {
+		t.Fatal(failReason)
+	}
+	if skipReason != "" {
+		t.Skip(skipReason)
+	}
+	ctx := context.Background()
+	name := fmt.Sprintf("empty_%d", cloneCount.Add(1))
+
+	admin, err := pgxpool.New(ctx, adminURL)
+	if err != nil {
+		t.Fatalf("connect admin: %v", err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanup, err := pgxpool.New(ctx, adminURL)
+		if err != nil {
+			return
+		}
+		defer cleanup.Close()
+		_, _ = cleanup.Exec(ctx, fmt.Sprintf("DROP DATABASE %s WITH (FORCE)", name))
+	})
+	return databaseURL(name)
+}

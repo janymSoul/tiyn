@@ -22,9 +22,10 @@ func (d *PostgresDeadLetters) Add(ctx context.Context, letter DeadLetter) error 
 		return fmt.Errorf("marshal dead letter metadata: %w", err)
 	}
 	_, err = d.pool.Exec(ctx,
-		`INSERT INTO platform.dead_letters (topic, message_uuid, payload, metadata, reason)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		letter.Topic, letter.MessageUUID, letter.Payload, metadata, letter.Reason)
+		`INSERT INTO platform.dead_letters (topic, handler, message_uuid, payload, metadata, reason)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (message_uuid, handler) DO NOTHING`,
+		letter.Topic, letter.Handler, letter.MessageUUID, letter.Payload, metadata, letter.Reason)
 	if err != nil {
 		return fmt.Errorf("insert dead letter: %w", err)
 	}

@@ -62,17 +62,19 @@ bus.Publish(ctx, "TaskApprovedEvent", msg)
 
 `Publish` is synchronous and in-process. For each handler registered for the topic, in registration order, it:
 
-1. runs the handler with the publish context attached to the message, on a copy of the message, recovering panics;
-2. retries a failing handler with exponential backoff (`HANDLER_MAX_RETRIES`);
-3. after the last retry, writes the message to `platform.dead_letters` (topic, payload, metadata including the handler name, reason) and moves on.
+1. runs the handler on a copy of the message, with a context derived from the publish context and limited to `HANDLER_TIMEOUT` (default 10 s) per attempt, recovering panics;
+2. retries a failing handler, including one that timed out, with exponential backoff (`HANDLER_MAX_RETRIES`, zero means no retries);
+3. after the last retry, writes the message to `platform.dead_letters` (topic, handler, payload, metadata, reason) and moves on. The row is unique per `(message_uuid, handler)`, so a redelivery never duplicates it.
+
+A hung handler is therefore an ordinary failure: cut off, retried, and finally dead-lettered, never an endless loop. Handlers must honour `msg.Context()` (pass it to database calls); Go cannot kill a goroutine that ignores its context.
 
 `Publish` returns an error in exactly three cases, and in each the event must stay pending:
 
 - no handler is registered for the topic (`ErrNoHandler`);
-- the context was cancelled or timed out (shutdown, delivery timeout) — a failure during shutdown is never dead-lettered;
+- the publish context itself was cancelled (shutdown) — a failure during shutdown is never dead-lettered;
 - the failure could not be recorded (the dead-letter write failed).
 
-It returns nil when every handler succeeded or its failure was durably recorded. There are no goroutines, no router to start, and no startup-ordering requirement: handlers must be registered before events can be delivered, and the relay refuses to deliver until they are, so a deploy that registers a handler late loses nothing.
+It returns nil when every handler succeeded or its failure was durably recorded. `Topics()` lists the topics that have a handler. There are no goroutines, no router to start, and no startup-ordering requirement: the relay only picks events whose type has a registered handler, so an event whose consumer is not deployed yet simply waits.
 
 Handlers keep the Watermill `message.Message` type and the `func(*message.Message) error` signature. When a module is extracted or a durable broker is needed, the relay's target changes to a broker publisher and handlers run under a Watermill router; handler code does not change.
 
@@ -84,6 +86,7 @@ A `Ticker` (see `docs/modules.md`, "Time-driven work"). The relay runs as an in-
 func (r *Relay) Tick(ctx context.Context, _ time.Time) error {
     ids, err := r.deliverableIDs(ctx)
     ...
+    // deliverableIDs: pending, due, handler registered for the type, no earlier unpublished event of the aggregate
     for _, id := range ids {
         if err := r.deliver(ctx, id); err != nil {
             r.logDeliveryFailure(id, err)
@@ -93,21 +96,20 @@ func (r *Relay) Tick(ctx context.Context, _ time.Time) error {
 }
 
 func (r *Relay) deliver(ctx context.Context, id int64) error {
-    publishErr := r.store.ExecTx(ctx, func(tx pgx.Tx) error {
-        event, err := lockForDelivery(ctx, tx, id)
+    txCtx := context.WithoutCancel(ctx)
+    publishErr := r.store.ExecTx(txCtx, func(tx pgx.Tx) error {
+        event, err := lockForDelivery(txCtx, tx, id)
         if errors.Is(err, pgx.ErrNoRows) {
             return nil
         }
         ...
-        deliveryCtx, cancel := context.WithTimeout(ctx, r.config.DeliveryTimeout)
-        defer cancel()
-        if err := r.publisher.Publish(deliveryCtx, event.eventType, toMessage(event)); err != nil {
+        if err := r.publisher.Publish(ctx, event.eventType, toMessage(event)); err != nil {
             return err
         }
-        _, err = tx.Exec(ctx, `UPDATE platform.outbox_events SET published_at = now() WHERE id = $1`, id)
+        _, err = tx.Exec(txCtx, `UPDATE platform.outbox_events SET published_at = now() WHERE id = $1`, id)
         return err
     })
-    if publishErr == nil || !countsAsFailure(ctx, publishErr) {
+    if publishErr == nil || ctx.Err() != nil {
         return publishErr
     }
     return errors.Join(publishErr, r.recordFailure(ctx, id))
@@ -117,10 +119,12 @@ func (r *Relay) deliver(ctx context.Context, id int64) error {
 Properties, each covered by a test in `internal/platform/outbox`:
 
 - **One event, one short transaction.** The row is locked with `FOR UPDATE SKIP LOCKED`, delivered, and marked published in the same transaction. A relay never waits behind a row another relay holds, and several relays or overlapping ticks never deliver an event twice concurrently.
-- **Bounded.** `RELAY_DELIVERY_TIMEOUT` (default 30 s) cuts off a hung handler, so a lock and a connection are never held forever.
-- **Backoff, never parking.** A failed delivery (dead-letter write failed, timeout, database error) is recorded in a *separate* transaction: `attempts` is incremented and `next_attempt_at` is pushed out by `2^attempts` seconds, capped at `RELAY_MAX_BACKOFF` (default 5 min). The event is retried forever with that backoff and each failure is logged at error level. Nothing is parked automatically: for a ledger, a visibly stuck event is safer than a silently abandoned one.
-- **Not counted as failures:** cancellation of the relay's own context (shutdown) and `ErrNoHandler` (a deploy in progress). Neither increments `attempts` nor backs off; a missing handler is logged at warn level and the event is delivered as soon as a handler exists.
-- **Per-aggregate order.** An event is delivered only when no earlier unpublished event of the same aggregate exists. A backed-off event therefore holds back its successors (the next task transition) while other aggregates keep flowing. Order across aggregates is not guaranteed. `created_at` is the transaction start time and is never used for ordering; `id` is assigned at insert, after the aggregate's row lock, so a later transition always gets a higher `id`.
+- **Bounded.** Every handler attempt is limited by `HANDLER_TIMEOUT`, so a lock and a connection are never held forever.
+- **Shutdown-safe.** Only the handler call sees the relay's cancellable context. Locking, the `published_at` update and the commit use a detached context, so a SIGTERM that arrives just after a handler succeeded still records the event as delivered instead of causing a redelivery. A clean shutdown logs no delivery error.
+- **No starvation.** The relay selects only events whose type has a registered handler, so a pile of events nobody consumes yet (a module not built or deployed) can neither fill the batch window nor spam the log.
+- **Backoff, never parking.** A failed delivery (the dead-letter write failed, or a database error) is recorded in a *separate* transaction: `attempts` is incremented and `next_attempt_at` is pushed out by `2^attempts` seconds, capped at `RELAY_MAX_BACKOFF` (default 5 min). The event is retried forever with that backoff and each failure is logged at error level. Nothing is parked automatically: for a ledger, a visibly stuck event is safer than a silently abandoned one.
+- **Not a failure:** cancellation of the relay's own context (shutdown) neither increments `attempts` nor backs off.
+- **Per-aggregate order.** An event is delivered only when no earlier unpublished event of the same aggregate exists, checked both when selecting and again under the row lock, so a relay holding a stale list cannot overtake. A backed-off event therefore holds back its successors (the next task transition) while other aggregates keep flowing. Order across aggregates is not guaranteed. `created_at` is the transaction start time and is never used for ordering; `id` is assigned at insert, after the aggregate's row lock, so a later transition always gets a higher `id`.
 - **Idempotent redelivery.** If the process dies after a handler succeeded but before `published_at` is saved, the event is delivered again. Handlers must be idempotent (below).
 
 ### Poll vs. LISTEN/NOTIFY
@@ -143,7 +147,8 @@ Inside `CreditTaskReward`, one transaction inserts the ledger entry with `idempo
 
 - **Transient handler failure:** retried by the dispatcher; the event is delivered normally.
 - **Poison event (a handler that keeps failing):** after the retries the message is in `platform.dead_letters` and the outbox row counts as delivered, so one poison event never blocks the queue. The dead-letter row is the record of the failure. Operators fix the cause, re-enqueue the payload, and set `redriven_at`.
-- **Infrastructure failure (database, timeout):** the event stays pending and is retried with backoff; see above.
+- **Infrastructure failure (database, the dead-letter write):** the event stays pending and is retried with backoff; see above.
+- **Connection budget:** a delivery holds one pooled connection and a row lock while handlers run, the dead-letter write needs a second, and each handler may use its own. `DB_MAX_CONNS` (default 20) must leave room for the relay, the handlers and HTTP requests. If handlers get long-running or relays multiply, claim rows with a lease (a short transaction that sets `locked_until`) and run handlers outside any transaction.
 - **Head-of-line blocking (accepted trade-off):** the relay delivers one event at a time, and a retrying handler (up to a few seconds of backoff) delays the events behind it. A slow consumer also slows the other consumers of the same event. Acceptable at MVP volume. If it hurts, deliver different aggregates in parallel, or move to per-consumer delivery (a job queue such as River, or a broker).
 - **Monitoring to add before production:** alert on the age of the oldest pending outbox row, on the number of rows with `attempts > 0`, and on unredriven dead letters. There is no automatic redrive tool yet.
 - **Not a replayable log.** The outbox is the durable producer-side record and published rows are retained, but consumers have no offsets, so replay is manual. If a real replay need appears (new consumer, extraction, incident), move the relay's target to a durable broker such as NATS JetStream or Redpanda. Handlers do not change; events must stay versioned and keyed by aggregate.
@@ -170,4 +175,5 @@ Event payloads are plain exported structs in the producing module's `events.go`.
 ## Open decisions (flagged, not yet decided)
 
 - **Relay under scale-to-zero.** Decided: Kubernetes, with the relay as an in-process loop in always-running API pods. If the deployment ever scales the API to zero, events would sit pending until the next request; revisit then.
+- **Per-handler progress.** When one handler of a topic fails infrastructure-wise, the whole event is retried and the handlers that already succeeded run again; their idempotency makes that safe. Tracking per-handler completion is part of the same upgrade as below.
 - **Delivery model beyond the MVP.** The synchronous dispatcher is the simplest thing that is correct. Candidates for later, if head-of-line blocking or replay becomes a real need: River (Postgres job queue, per-consumer retries and a dashboard), Watermill's SQL pub/sub, or a broker (NATS JetStream, Redpanda). The `Bus.Handle` / `Bus.Publish` seam is the only code that would change.

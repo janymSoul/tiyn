@@ -20,7 +20,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	require.Equal(t, ":8080", cfg.HTTPAddr)
 	require.Equal(t, time.Second, cfg.RelayInterval)
 	require.Equal(t, 50, cfg.RelayBatchSize)
-	require.Equal(t, 30*time.Second, cfg.RelayDeliveryTimeout)
+	require.Equal(t, 10*time.Second, cfg.HandlerTimeout)
+	require.Equal(t, 20, cfg.DBMaxConns)
+	require.Equal(t, 3, cfg.HandlerMaxRetries)
 	require.Equal(t, 5*time.Minute, cfg.RelayMaxBackoff)
 }
 
@@ -39,4 +41,23 @@ func TestLoadReportsEveryInvalidValue(t *testing.T) {
 
 	require.ErrorContains(t, err, "RELAY_INTERVAL")
 	require.ErrorContains(t, err, "RELAY_BATCH_SIZE")
+}
+
+func TestLoadAcceptsZeroHandlerRetries(t *testing.T) {
+	cfg, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "HANDLER_MAX_RETRIES": "0"}))
+
+	require.NoError(t, err)
+	require.Equal(t, 0, cfg.HandlerMaxRetries)
+}
+
+func TestLoadRejectsNegativeHandlerRetries(t *testing.T) {
+	_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "HANDLER_MAX_RETRIES": "-1"}))
+
+	require.ErrorContains(t, err, "HANDLER_MAX_RETRIES")
+}
+
+func TestLoadStillRejectsZeroForOtherIntegers(t *testing.T) {
+	_, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "DB_MAX_CONNS": "0"}))
+
+	require.ErrorContains(t, err, "DB_MAX_CONNS")
 }

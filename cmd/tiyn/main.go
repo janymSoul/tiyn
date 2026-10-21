@@ -13,7 +13,6 @@ import (
 	"tiyn/internal/ledger"
 	"tiyn/internal/notification"
 	"tiyn/internal/platform/config"
-	"tiyn/internal/platform/db"
 	"tiyn/internal/platform/migrate"
 	platformmigrations "tiyn/internal/platform/migrations"
 	"tiyn/internal/platform/scheduler"
@@ -43,7 +42,7 @@ func run(logger *slog.Logger, args []string) error {
 	case "migrate":
 		return migrate.Up(ctx, cfg.DatabaseURL, migrationModules()...)
 	case "tick":
-		return tick(ctx, logger, cfg)
+		return tick(ctx, logger)
 	default:
 		return fmt.Errorf("unknown command %q, usage: tiyn <migrate|tick>", args[0])
 	}
@@ -59,14 +58,11 @@ func migrationModules() []migrate.Module {
 	}
 }
 
-func tick(ctx context.Context, logger *slog.Logger, cfg config.Config) error {
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
-	if err != nil {
-		return err
-	}
-	defer pool.Close()
-
+func tick(ctx context.Context, logger *slog.Logger) error {
 	tickers := []scheduler.Ticker{}
-	logger.Info("running tickers", "count", len(tickers))
+	if len(tickers) == 0 {
+		logger.Warn("no tickers registered, nothing to do")
+		return nil
+	}
 	return scheduler.RunOnce(ctx, time.Now(), tickers...)
 }

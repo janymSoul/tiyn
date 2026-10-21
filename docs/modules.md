@@ -242,7 +242,7 @@ type Ticker interface {
     Tick(ctx context.Context, now time.Time) error
 }
 ```
-**Decision: a Kubernetes CronJob runs the same binary.** `tiyn tick` is a one-shot subcommand: it runs all domain tickers once and exits. A CronJob invokes it every minute with `concurrencyPolicy: Forbid` and an `activeDeadlineSeconds` shorter than the schedule interval. No HTTP endpoint is exposed and no extra service is needed.
+**Decision: a Kubernetes CronJob runs the same binary.** `tiyn tick` is a one-shot subcommand: it runs all domain tickers once and exits. It currently has none registered and only logs that; do not deploy the CronJob until the first ticker (task expiry) exists. A CronJob invokes it every minute with `concurrencyPolicy: Forbid` and an `activeDeadlineSeconds` shorter than the schedule interval. No HTTP endpoint is exposed and no extra service is needed.
 
 **The outbox relay is the exception.** A CronJob's one-minute granularity would delay every event (reward credit, pushes) by up to a minute, which is too slow for the approve → credit → notify path. The relay therefore runs as an in-process loop (about 1 s) inside the API pods, which are always running on Kubernetes. The CronJob handles only work where minute-level precision is fine: task expiry, recurrence, payout expiry.
 

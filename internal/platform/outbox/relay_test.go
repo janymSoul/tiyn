@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -47,13 +48,14 @@ type harness struct {
 	relay       *outbox.Relay
 }
 
-func newHarness(t *testing.T, handlerMaxRetries int, deliveryTimeout time.Duration) *harness {
+func newHarness(t *testing.T, handlerMaxRetries int, handlerTimeout time.Duration) *harness {
 	t.Helper()
 	pool := testdb.New(t)
 	store := db.NewStore(pool)
 	deadLetters := &flakyDeadLetters{inner: eventbus.NewPostgresDeadLetters(pool)}
 	bus := eventbus.New(deadLetters, eventbus.Options{
 		HandlerMaxRetries:    handlerMaxRetries,
+		HandlerTimeout:       handlerTimeout,
 		RetryInitialInterval: time.Millisecond,
 		RetryMaxInterval:     5 * time.Millisecond,
 	})
@@ -62,11 +64,7 @@ func newHarness(t *testing.T, handlerMaxRetries int, deliveryTimeout time.Durati
 		store:       store,
 		bus:         bus,
 		deadLetters: deadLetters,
-		relay: outbox.NewRelay(store, bus, outbox.RelayConfig{
-			BatchSize:       50,
-			DeliveryTimeout: deliveryTimeout,
-			MaxBackoff:      time.Minute,
-		}, slog.New(slog.DiscardHandler)),
+		relay:       outbox.NewRelay(store, bus, outbox.RelayConfig{BatchSize: 50, MaxBackoff: time.Minute}, slog.New(slog.DiscardHandler)),
 	}
 }
 
@@ -84,9 +82,14 @@ func (h *harness) enqueue(t *testing.T, key string) uuid.UUID {
 
 func (h *harness) enqueueFor(t *testing.T, aggregateID uuid.UUID, key string) {
 	t.Helper()
+	h.enqueueTyped(t, approvedEvent, aggregateID, key)
+}
+
+func (h *harness) enqueueTyped(t *testing.T, eventType string, aggregateID uuid.UUID, key string) {
+	t.Helper()
 	err := h.store.ExecTx(context.Background(), func(tx pgx.Tx) error {
 		return outbox.Insert(context.Background(), tx, outbox.Event{
-			Type:           approvedEvent,
+			Type:           eventType,
 			AggregateID:    aggregateID,
 			IdempotencyKey: key,
 			Payload:        map[string]string{"key": key},
@@ -271,29 +274,130 @@ func TestCancelledContextDuringDeliveryIsNotCountedAsAFailure(t *testing.T) {
 	require.Equal(t, 1, h.published(t))
 }
 
-func TestHungHandlerIsCutOffByTheDeliveryTimeoutAndReleasesItsLock(t *testing.T) {
-	h := newHarness(t, 0, 100*time.Millisecond)
+type logCapture struct {
+	mu      sync.Mutex
+	entries []string
+}
+
+func (c *logCapture) Enabled(context.Context, slog.Level) bool { return true }
+func (c *logCapture) WithAttrs([]slog.Attr) slog.Handler       { return c }
+func (c *logCapture) WithGroup(string) slog.Handler            { return c }
+func (c *logCapture) Handle(_ context.Context, record slog.Record) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = append(c.entries, record.Message)
+	return nil
+}
+
+func TestCleanShutdownDuringDeliveryLogsNoDeliveryError(t *testing.T) {
+	h := newHarness(t, 1, time.Minute)
+	capture := &logCapture{}
+	relay := outbox.NewRelay(h.store, h.bus, outbox.RelayConfig{BatchSize: 50, MaxBackoff: time.Minute}, slog.New(capture))
+	started := make(chan struct{})
+	h.handle(t, "blocking", func(msg *message.Message) error {
+		close(started)
+		<-msg.Context().Done()
+		return msg.Context().Err()
+	})
+	h.enqueue(t, "REWARD-TASK-1")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- relay.Tick(ctx, time.Now()) }()
+	<-started
+
+	cancel()
+	require.NoError(t, <-done)
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	require.Empty(t, capture.entries)
+}
+
+func TestHungHandlerIsCutOffRetriedAndDeadLetteredWithoutHoldingLocks(t *testing.T) {
+	h := newHarness(t, 1, 50*time.Millisecond)
 	var calls atomic.Int32
 	h.handle(t, "hung", func(msg *message.Message) error {
-		if calls.Add(1) == 1 {
-			<-msg.Context().Done()
-			return msg.Context().Err()
-		}
-		return nil
+		calls.Add(1)
+		<-msg.Context().Done()
+		return msg.Context().Err()
 	})
 	h.enqueue(t, "REWARD-TASK-1")
 
 	h.tick(t)
 
-	require.Equal(t, 0, h.published(t))
-	require.Equal(t, 1, h.pendingWithAttempts(t, 1))
-	require.Equal(t, 0, h.count(t, "platform.dead_letters", "TRUE"))
+	require.Equal(t, int32(2), calls.Load())
+	require.Equal(t, 1, h.published(t))
+	require.Equal(t, 1, h.count(t, "platform.dead_letters", "handler = 'hung' AND reason LIKE '%deadline exceeded%'"))
 	tx, err := h.pool.Begin(context.Background())
 	require.NoError(t, err)
 	defer tx.Rollback(context.Background())
 	var id int64
 	require.NoError(t, tx.QueryRow(context.Background(),
 		`SELECT id FROM platform.outbox_events FOR UPDATE NOWAIT`).Scan(&id))
+}
+
+func TestEventsWithoutAHandlerDoNotStarveEventsThatHaveOne(t *testing.T) {
+	h := newHarness(t, 1, time.Second)
+	var received atomic.Int32
+	h.handle(t, "collect", func(*message.Message) error { received.Add(1); return nil })
+	for i := range 60 {
+		h.enqueueTyped(t, "OrphanEvent", uuid.New(), "ORPHAN-"+strconv.Itoa(i))
+	}
+	h.enqueue(t, "REWARD-TASK-1")
+
+	h.tick(t)
+
+	require.Equal(t, int32(1), received.Load())
+	require.Equal(t, 1, h.published(t))
+	require.Equal(t, 60, h.count(t, "platform.outbox_events", "published_at IS NULL AND attempts = 0"))
+}
+
+func TestOrphanEventsAreDeliveredOnceTheirHandlerIsRegistered(t *testing.T) {
+	h := newHarness(t, 1, time.Second)
+	h.handle(t, "collect", func(*message.Message) error { return nil })
+	h.enqueueTyped(t, "OrphanEvent", uuid.New(), "ORPHAN-1")
+	h.tick(t)
+	require.Equal(t, 0, h.published(t))
+
+	var received atomic.Int32
+	require.NoError(t, h.bus.Handle("late", "OrphanEvent", func(*message.Message) error { received.Add(1); return nil }))
+	h.tick(t)
+
+	require.Equal(t, int32(1), received.Load())
+	require.Equal(t, 1, h.published(t))
+}
+
+func TestEventIsMarkedPublishedWhenShutdownArrivesRightAfterTheHandlerSucceeds(t *testing.T) {
+	h := newHarness(t, 1, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	var calls atomic.Int32
+	h.handle(t, "succeeds-then-shutdown", func(*message.Message) error {
+		calls.Add(1)
+		cancel()
+		return nil
+	})
+	h.enqueue(t, "REWARD-TASK-1")
+
+	require.NoError(t, h.relay.Tick(ctx, time.Now()))
+
+	require.Equal(t, int32(1), calls.Load())
+	require.Equal(t, 1, h.published(t))
+}
+
+func TestDuplicateDeadLetterForTheSameMessageAndHandlerIsStoredOnce(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	store := eventbus.NewPostgresDeadLetters(h.pool)
+	letter := eventbus.DeadLetter{
+		Topic: approvedEvent, Handler: "ledger", MessageUUID: "7", Payload: []byte("{}"),
+		Metadata: map[string]string{}, Reason: "failure",
+	}
+
+	require.NoError(t, store.Add(context.Background(), letter))
+	require.NoError(t, store.Add(context.Background(), letter))
+	letter.Handler = "notification"
+	require.NoError(t, store.Add(context.Background(), letter))
+
+	require.Equal(t, 2, h.count(t, "platform.dead_letters", "message_uuid = '7'"))
 }
 
 func TestFailedEventIsNotRetriedBeforeItsBackoffElapses(t *testing.T) {
@@ -369,6 +473,23 @@ func TestEventsOfOneAggregateStayInOrderWhenAnEarlierOneIsBackedOff(t *testing.T
 	require.Equal(t, []string{"Y-1", "X-1", "X-2"}, got())
 }
 
+func TestOrderingIsEnforcedAgainWhenTheEventIsLockedNotOnlyWhenSelected(t *testing.T) {
+	h := newHarness(t, 0, time.Second)
+	var received atomic.Int32
+	h.handle(t, "collect", func(*message.Message) error { received.Add(1); return nil })
+	aggregate := uuid.New()
+	h.enqueueFor(t, aggregate, "X-1")
+	h.enqueueFor(t, aggregate, "X-2")
+	var secondID int64
+	require.NoError(t, h.pool.QueryRow(context.Background(),
+		`SELECT id FROM platform.outbox_events WHERE idempotency_key = 'X-2'`).Scan(&secondID))
+
+	require.NoError(t, outbox.DeliverForTest(h.relay, context.Background(), secondID))
+
+	require.Equal(t, int32(0), received.Load())
+	require.Equal(t, 0, h.published(t))
+}
+
 func TestEventsAreDeliveredInInsertionOrder(t *testing.T) {
 	h := newHarness(t, 1, time.Second)
 	var received []string
@@ -411,9 +532,7 @@ func TestConcurrentRelaysDeliverEachEventOnce(t *testing.T) {
 	for _, key := range keys {
 		h.enqueue(t, key)
 	}
-	other := outbox.NewRelay(h.store, h.bus, outbox.RelayConfig{
-		BatchSize: 50, DeliveryTimeout: time.Second, MaxBackoff: time.Minute,
-	}, slog.New(slog.DiscardHandler))
+	other := outbox.NewRelay(h.store, h.bus, outbox.RelayConfig{BatchSize: 50, MaxBackoff: time.Minute}, slog.New(slog.DiscardHandler))
 
 	var wg sync.WaitGroup
 	for _, relay := range []*outbox.Relay{h.relay, other} {
