@@ -30,12 +30,12 @@ func TestMigrationWaitsWhileAnotherRunnerHoldsTheMigrationLock(t *testing.T) {
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
-	go func() { done <- migrate.Up(ctx, url, platformmigrations.Module) }()
+	go func() { done <- migrate.UpWithLockRetry(ctx, url, time.Second, 30, platformmigrations.Module) }()
 
 	select {
 	case err := <-done:
 		t.Fatalf("migration ran while another runner held the lock: %v", err)
-	case <-time.After(time.Second):
+	case <-time.After(300 * time.Millisecond):
 	}
 
 	_, err = holder.Exec(ctx, "SELECT pg_advisory_unlock($1)", lock.DefaultLockID)
@@ -43,7 +43,7 @@ func TestMigrationWaitsWhileAnotherRunnerHoldsTheMigrationLock(t *testing.T) {
 	select {
 	case err := <-done:
 		require.NoError(t, err)
-	case <-time.After(30 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("migration did not run after the lock was released")
 	}
 }
@@ -58,7 +58,7 @@ func TestConcurrentMigrationRunsAllSucceedAndApplyEachMigrationOnce(t *testing.T
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs[i] = migrate.Up(context.Background(), url, platformmigrations.Module)
+			errs[i] = migrate.UpWithLockRetry(context.Background(), url, time.Second, 30, platformmigrations.Module)
 		}()
 	}
 	wg.Wait()
@@ -80,4 +80,10 @@ func TestRunningMigrationsAgainChangesNothing(t *testing.T) {
 
 	require.NoError(t, migrate.Up(context.Background(), url, platformmigrations.Module))
 	require.NoError(t, migrate.Up(context.Background(), url, platformmigrations.Module))
+}
+
+func TestLockRetryPeriodBelowOneSecondIsRejected(t *testing.T) {
+	err := migrate.UpWithLockRetry(context.Background(), "postgres://unused", 500*time.Millisecond, 1)
+
+	require.ErrorContains(t, err, "at least one second")
 }

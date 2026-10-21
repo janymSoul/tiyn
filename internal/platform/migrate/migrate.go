@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"time"
 
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
@@ -18,7 +19,19 @@ type Module struct {
 	Dir  string
 }
 
+const (
+	defaultLockRetryPeriod   = 5 * time.Second
+	defaultLockRetryAttempts = 60
+)
+
 func Up(ctx context.Context, databaseURL string, modules ...Module) error {
+	return UpWithLockRetry(ctx, databaseURL, defaultLockRetryPeriod, defaultLockRetryAttempts, modules...)
+}
+
+func UpWithLockRetry(ctx context.Context, databaseURL string, period time.Duration, attempts uint64, modules ...Module) error {
+	if period < time.Second {
+		return fmt.Errorf("lock retry period must be at least one second, got %s", period)
+	}
 	db, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -26,19 +39,19 @@ func Up(ctx context.Context, databaseURL string, modules ...Module) error {
 	defer db.Close()
 
 	for _, module := range modules {
-		if err := upModule(ctx, db, module); err != nil {
+		if err := upModule(ctx, db, module, period, attempts); err != nil {
 			return fmt.Errorf("migrate %s: %w", module.Name, err)
 		}
 	}
 	return nil
 }
 
-func upModule(ctx context.Context, db *sql.DB, module Module) error {
+func upModule(ctx context.Context, db *sql.DB, module Module, period time.Duration, attempts uint64) error {
 	migrations, err := fs.Sub(module.FS, module.Dir)
 	if err != nil {
 		return err
 	}
-	locker, err := lock.NewPostgresSessionLocker()
+	locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(uint64(period/time.Second), attempts))
 	if err != nil {
 		return err
 	}

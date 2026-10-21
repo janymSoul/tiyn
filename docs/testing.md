@@ -70,6 +70,10 @@ Fakes, not mocks-with-expectations. A fake behaves like a tiny real implementati
 
 > This is only possible because the service depends on an **interface**, not on `*Store` directly. Define the narrow store interface in the module and have the service accept it. Depending on a narrow interface is also what makes the code testable.
 
+### No slow tests
+
+No test waits more than about 2 seconds. Never `time.Sleep` to let something happen: inject the clock (`Relay.Tick(ctx, now)` takes `now`, so a test advances time by minutes instantly), shrink intervals and timeouts through the options the code already exposes (millisecond retry intervals, a 50 ms handler timeout), or wait on a channel the code under test closes. `time.After(...)` is only a ceiling that turns a hang into a failure; it must not elapse in a passing run. Starting the Postgres container costs a few seconds once per package; that is the only fixed cost.
+
 ## 3. Functional tests — real Postgres via Testcontainers
 
 The guarantees that matter most — `FOR UPDATE` serialization, the non-negative check constraint, idempotency uniqueness, transaction atomicity — **cannot** be proven with a mock. They are database behavior. So functional tests run against a real Postgres 16 container.
