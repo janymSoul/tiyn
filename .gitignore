@@ -1,0 +1,42 @@
+# Binaries & build output
+/bin/
+/dist/
+*.exe
+*.out
+# Compiled main binaries (cmd/<name> built in place)
+/cmd/api/api
+/cmd/relay/relay
+
+# Test & coverage artifacts
+*.test
+coverage.out
+coverage.html
+*.cover
+profile.out
+
+# Go workspace file (per-developer, not committed)
+go.work
+go.work.sum
+
+# Environment & secrets — never commit (config comes from env/Vault)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+
+# Local tooling caches
+/.cache/
+
+# IDE / editor — keep shared .vscode settings, ignore personal/local ones
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+*.code-workspace
+
+# OS cruft
+.DS_Store
+Thumbs.db
