@@ -42,6 +42,21 @@ The house style. Idiomatic Go for surface syntax; the design principles below fo
 
 - Prefer a slightly more general interface that serves several callers over a narrow one per caller — *when* it doesn't complicate the common case. Don't over-generalize speculatively (see "no speculative design" below); generalize when the second caller appears.
 
+## Domain-driven design (applied pragmatically)
+
+DDD gives us a shared language and the consistency boundaries; it is not a reason to add layers. The vocabulary and the aggregate map are in `docs/modules.md`; these are the coding rules.
+
+- **Ubiquitous language.** Names in `domain/`, SQL, API paths and events come from the glossary in `docs/modules.md`. If the code and the business use different words for one thing, rename the code. Prefer the business's verb (`Approve`, `RequestPayout`, `FulfilPayout`) over generic ones (`Update`, `Process`, `SetState`).
+- **Aggregates are in `domain/`, pure.** An aggregate root enforces its own invariants through methods that express a business operation (`task.Approve(parentID, now)`), not setters. State changes only through those methods, so an invalid state cannot be constructed. No exported mutable fields where an invariant exists.
+- **Construct valid, stay valid.** Constructors (`NewTask`, `NewMoney`) validate and return an error; there is no half-built object. Rehydrating from the database goes through a separate `Rehydrate` that trusts stored data.
+- **Value objects** for anything defined by its value: `Money` (amount in minor units plus currency, with arithmetic that refuses to mix currencies), `JoinCode`, `IdempotencyKey`, state types. They are immutable, compared by value, and validated at creation.
+- **One aggregate per transaction.** A service loads one aggregate through its repository, calls a domain method, saves it, and writes the outbox events in the same transaction. Other aggregates are referenced by ID only, and never navigated. Documented exceptions (`docs/modules.md`) stay inside one context.
+- **Domain events come from the aggregate.** A domain method returns the events that happened (`TaskApprovedEvent`); the service writes them to the outbox. Events are named in the past tense, are facts, carry IDs and small values, and are part of the module's public contract in `events.go`.
+- **Repositories are the `store/` package, one per aggregate root.** They load and save whole aggregates and hide SQL; no query returns a partial aggregate for the domain to modify. Reads for screens (dashboards, lists) may be separate query methods that return plain read models, since they change nothing.
+- **Domain services** only for logic that spans several aggregates of one context and belongs to none of them. If it fits an aggregate, put it there.
+- **Anti-corruption layer.** External systems (Google, FCM, S3, bank apps) are wrapped behind an interface owned by the module that needs them, translating to and from domain types. Their DTOs never reach `domain/`.
+- **Be pragmatic.** Use the tactical patterns where there are rules to protect: task, wallet, payout, join code. Plain data handling is fine where there are none, such as device tokens or the delivered log. Do not add a layer, interface or pattern whose only purpose is to look like DDD.
+
 ## Go idioms (non-negotiable)
 
 - **Formatting:** `gofmt` / `goimports`. CI fails on unformatted code. No debate about style.

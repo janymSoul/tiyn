@@ -15,7 +15,8 @@
 5. **Code is tested before it is called done.** Pure domain logic → unit tests (fast, no DB). Service + HTTP + outbox → functional tests against a real Postgres (Testcontainers-go). A change without tests is not complete. See `docs/testing.md`.
 
 6. **No comments.** Code and SQL must be self-explanatory; rename or extract instead of commenting. The only exception is a short note for a non-intuitive business rule. See `docs/conventions.md`.
-7. **Design deep modules with narrow interfaces**. A module should expose a small interface that hides a lot of implementation. Push complexity down, not onto callers. Avoid shallow pass-through layers. See `docs/conventions.md`.
+7. **Model the domain with DDD, pragmatically.** A module is a bounded context with its own language. Business rules live in aggregates in `domain/`; an aggregate is the consistency boundary and normally one transaction changes one aggregate. Name things in the ubiquitous language (see the glossary in `docs/modules.md`). Use the tactical patterns where there are real invariants (task, wallet, payout) and plain code where there are none. See `docs/conventions.md`.
+8. **Design deep modules with narrow interfaces**. A module should expose a small interface that hides a lot of implementation. Push complexity down, not onto callers. Avoid shallow pass-through layers. See `docs/conventions.md`.
 
 ## Definition of done
 
