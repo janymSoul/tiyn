@@ -26,7 +26,7 @@ If you find yourself wanting to JOIN across two modules' tables, that is the sig
 
 **Authentication.** Sign-in with Google. The client obtains a Google ID token and sends it to the backend; identity verifies it and issues the app's own JWT. Google is only the proof of identity, so the provider can be swapped or extended (e.g. Apple) without touching other modules. A parent registers directly; a teen can only register through an invite.
 
-**Linking.** A parent issues an **invite**: a single-use, expiring code (6-character alphanumeric, PRD PAR-01) that identifies the issuing parent. It is shared as a link containing the code, with manual code entry as a fallback. When a teen registers with a valid invite, identity creates the teen account and the `family_links` row in one transaction and burns the invite. The parent can remove a link later. Code attempts are rate-limited and failures never reveal whether a code exists.
+**Linking.** A parent issues an **invite**: a single-use, expiring code (6-character alphanumeric, PRD PAR-01) that identifies the issuing parent. It is shared as a link containing the code, with manual code entry as a fallback. When a teen registers with a valid invite, identity creates the teen account and the `family_links` row in one transaction and burns the invite. The parent can remove a link later. Code attempts are rate-limited at the ingress and failures never reveal whether a code exists. A wrong guess has no invite row to count against, so there is no per-code lockout; the single-use, expiring, parent-bound code limits the exposure.
 
 **Offers (sync interface):**
 ```go
@@ -108,6 +108,8 @@ Used by the dashboard handler to show "Pending" funds (TEN-01). Pending is task-
 **Available balance.** What a teen may request or lock is
 `available = approved balance − sum(open REQUESTED payouts) − funds locked in savings goals`.
 Requesting a payout does not debit anything; it only reduces *available* (computed under the wallet lock). A teen may have **at most one** open request, enforced by a partial unique index on `payouts (teen_id) WHERE state = 'REQUESTED'`. The debit entry is written when the parent confirms.
+
+**Debit checks.** Every debit (payout confirmation, penalty, goal lock) first compares the amount with available funds under the wallet lock and returns a domain error (HTTP 422) if it does not fit. The wallet `CHECK`s (`balance_amount >= 0`, `locked_amount <= balance_amount`) are a backstop, not the user-facing rule: a debit larger than available but smaller than the balance (funds locked in a goal) would only trip the second one. The store maps those constraint violations to the same domain error.
 
 **Payout FSM:**
 ```

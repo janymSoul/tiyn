@@ -27,7 +27,7 @@ CREATE TABLE task.tasks (
     id              UUID PRIMARY KEY,
     series_id       UUID REFERENCES task.task_series (id),
     occurrence_date DATE,
-    milestone_id    UUID REFERENCES task.tasks (id),
+    milestone_id    UUID,
     parent_id       UUID              NOT NULL,
     teen_id         UUID              NOT NULL,
     kind            TEXT              NOT NULL,
@@ -45,6 +45,8 @@ CREATE TABLE task.tasks (
     created_at      TIMESTAMPTZ       NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ       NOT NULL DEFAULT now(),
     UNIQUE (series_id, occurrence_date),
+    UNIQUE (id, teen_id),
+    FOREIGN KEY (milestone_id, teen_id) REFERENCES task.tasks (id, teen_id),
     CHECK ((series_id IS NULL) = (occurrence_date IS NULL)),
     CHECK (milestone_id IS NULL OR series_id IS NULL),
     CHECK (milestone_id <> id)

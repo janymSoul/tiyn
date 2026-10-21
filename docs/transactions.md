@@ -102,7 +102,7 @@ Concurrent cash-outs must not both pass the balance check. Lock the wallet row f
 -- name: GetWalletForUpdate :one
 SELECT * FROM wallets WHERE teen_id = $1 AND currency = $2 FOR UPDATE;
 ```
-The `CHECK (balance_amount >= 0)` constraint is the immutable backstop; the row lock is what serializes the read-modify-write. This is the PRD's chosen mechanism (architecture doc §3). It is correct at the app's scale; the footnote's high-scale concern is real but distant.
+The service compares the amount with *available* funds (balance minus locked minus open payout request) under that lock and returns a domain error if it does not fit. The `CHECK (balance_amount >= 0)` and `CHECK (locked_amount <= balance_amount)` constraints are the immutable backstop, mapped to the same domain error; the row lock is what serializes the read-modify-write. This is the PRD's chosen mechanism (architecture doc §3). It is correct at the app's scale; the footnote's high-scale concern is real but distant.
 
 ### Task state → optimistic (version column)
 

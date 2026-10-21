@@ -76,12 +76,12 @@ The guarantees that matter most — `FOR UPDATE` serialization, the non-negative
 
 ### Shared container, migrated once
 
-Spin one container per package (or per test binary), run goose migrations against it, and give each test an isolated schema or a truncate-between-tests helper. Spinning a container per test is too slow; sharing one with clean state per test is the balance.
+Spin one container per package (or per test binary), run goose migrations once into a template database, and give each test its own database cloned from it with `CREATE DATABASE ... TEMPLATE`. Spinning a container per test is too slow; sharing one container with a fresh clone per test is the balance. Do not clean state with `TRUNCATE` or `DELETE`: `ledger_entries` is append-only and rejects both by design.
 
 ```go
 func setupDB(t *testing.T) *pgxpool.Pool {
     ctx := context.Background()
-    pg, err := postgres.Run(ctx, "postgres:16-alpine",
+    pg, err := postgres.Run(ctx, "postgres:16",
         postgres.WithDatabase("tiyn_test"),
         postgres.WithUsername("test"), postgres.WithPassword("test"),
         testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),

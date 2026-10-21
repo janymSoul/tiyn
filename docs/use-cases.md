@@ -35,7 +35,7 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 **Alternates.** Wrong, expired, or used code → generic "invalid invite" (no hint which). Repeated failures → rate limit per device/IP. A teen who already has an account and opens an invite → link to the new parent (supports a second parent). Parent removes a link later → teen's tasks are cancelled, wallet history is kept.
 
 **Support needed.**
-- identity: Google ID token verification, `invites` (hashed code, TTL, single-use, attempt counter), `FamilyDirectory.AreLinked`.
+- identity: Google ID token verification, `invites` (hashed code, TTL, single-use; attempts are rate-limited at the ingress), `FamilyDirectory.AreLinked`.
 - ledger consumes the event → creates the teen's wallet (idempotent: unique `teen_id`). notification consumes it → welcome push.
 - Link opened with the app not installed: Firebase Dynamic Links is discontinued, so use a third-party deferred-deep-link service (e.g. Branch) or fall back to manual code entry after install.
 
@@ -48,7 +48,7 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 ## UC-02 Register a device for push
 
-**Flow.** After sign-in the client sends its FCM token and locale; notification stores it. Token refresh upserts; sign-out removes it. A user may have several devices.
+**Flow.** After sign-in the client sends its FCM token and locale; notification stores it. Token refresh upserts; sign-out removes it. A user may have several devices. If the token is already stored under another user (shared phone, sign-out then sign-in), registering it reassigns it to the current user, so pushes never reach the previous user.
 
 **Support needed.** notification owns `device_tokens` (user ID as plain UUID, token, platform, locale). Locale comes from the client, so notification never calls back into identity.
 
@@ -182,7 +182,7 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 
 **Support needed.** Compensating debit entry with the note kept for the audit trail; authorization via `FamilyDirectory`.
 
-**Open.** Penalty above available funds: recommend reject with a clear message (the `CHECK (balance_amount >= 0)` constraint rejects it at the DB regardless). Penalties apply to available funds only, not to funds in open payout requests or goals.
+**Open.** Penalty above available funds: recommend reject with a clear message (the service checks available funds under the wallet lock; the `CHECK` constraints are only the backstop). Penalties apply to available funds only, not to funds in open payout requests or goals.
 
 ---
 

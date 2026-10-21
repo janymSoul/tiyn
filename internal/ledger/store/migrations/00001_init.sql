@@ -29,6 +29,7 @@ CREATE TABLE ledger.ledger_entries (
     actor_id        UUID,
     created_at      TIMESTAMPTZ       NOT NULL DEFAULT now(),
     FOREIGN KEY (teen_id, currency) REFERENCES ledger.wallets (teen_id, currency),
+    CHECK (kind = 'PENALTY' OR ref_id IS NOT NULL),
     CHECK (
         CASE kind
             WHEN 'TASK_REWARD' THEN balance_delta > 0 AND locked_delta = 0
@@ -42,6 +43,8 @@ CREATE TABLE ledger.ledger_entries (
 
 CREATE INDEX ledger_entries_teen_created_idx ON ledger.ledger_entries (teen_id, created_at DESC);
 CREATE INDEX ledger_entries_ref_idx ON ledger.ledger_entries (ref_id) WHERE ref_id IS NOT NULL;
+CREATE UNIQUE INDEX ledger_entries_one_reward_per_task_idx ON ledger.ledger_entries (ref_id) WHERE kind = 'TASK_REWARD';
+CREATE UNIQUE INDEX ledger_entries_one_debit_per_payout_idx ON ledger.ledger_entries (ref_id) WHERE kind = 'PAYOUT';
 
 -- +goose StatementBegin
 CREATE FUNCTION ledger.reject_ledger_entry_mutation() RETURNS trigger AS $$
@@ -73,7 +76,9 @@ CREATE TABLE ledger.payouts (
     cancel_reason   TEXT,
     updated_at      TIMESTAMPTZ       NOT NULL DEFAULT now(),
     FOREIGN KEY (teen_id, currency) REFERENCES ledger.wallets (teen_id, currency),
-    CHECK ((state = 'REQUESTED') = (resolved_at IS NULL))
+    CHECK ((state = 'REQUESTED') = (resolved_at IS NULL)),
+    CHECK (state <> 'FULFILLED' OR resolved_by IS NOT NULL),
+    CHECK (state <> 'CANCELLED' OR cancel_reason IS NOT NULL)
 );
 
 CREATE TRIGGER payouts_set_updated_at

@@ -13,4 +13,6 @@ $$ LANGUAGE plpgsql;
 -- +goose StatementEnd
 
 -- +goose Down
-DROP SCHEMA platform CASCADE;
+DROP FUNCTION platform.set_updated_at();
+DROP DOMAIN platform.currency;
+DROP SCHEMA platform;

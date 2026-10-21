@@ -58,26 +58,46 @@ A `Ticker` (see `docs/modules.md`, "Time-driven work"). Each tick polls pending 
 
 ```go
 func (r *Relay) tick(ctx context.Context) error {
-    return r.store.execTx(ctx, func(q *db.Queries) error {
-        rows, err := q.LockPendingOutbox(ctx, batchSize) // SELECT ... WHERE published_at IS NULL AND failed_at IS NULL
-        if err != nil {                                   // ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED
+    ids, err := r.store.PendingOutboxIDs(ctx, batchSize) // ORDER BY id LIMIT $1, unlocked read
+    if err != nil {
+        return err
+    }
+    for _, id := range ids {
+        if err := r.deliver(ctx, id); err != nil {
+            r.logger.Error("outbox delivery", "id", id, "err", err)
+        }
+    }
+    return nil
+}
+
+func (r *Relay) deliver(ctx context.Context, id int64) error {
+    publishErr := r.store.execTx(ctx, func(q *db.Queries) error {
+        row, err := q.LockOutboxEventForDelivery(ctx, id) // FOR UPDATE SKIP LOCKED, still pending and not failed
+        if errors.Is(err, pgx.ErrNoRows) {
+            return nil
+        }
+        if err != nil {
             return err
         }
-        for _, row := range rows {
-            msg := watermillMessage(row) // Watermill message; UUID = row.ID for consumer-side dedupe
-            if err := r.publisher.Publish(topicFor(row.EventType), msg); err != nil {
-                // leave it pending; bump attempts; next tick retries
-                _ = q.BumpOutboxAttempt(ctx, row.ID)
-                continue
-            }
-            if err := q.MarkOutboxPublished(ctx, row.ID); err != nil {
-                return err // tx rolls back; row stays pending; republished next tick (at-least-once)
-            }
+        if err := r.publisher.Publish(topicFor(row.EventType), watermillMessage(row)); err != nil {
+            return err
         }
+        return q.MarkOutboxPublished(ctx, id)
+    })
+    if publishErr == nil {
         return nil
+    }
+    return r.recordFailure(ctx, id, publishErr)
+}
+
+func (r *Relay) recordFailure(ctx context.Context, id int64, cause error) error {
+    return r.store.execTx(ctx, func(q *db.Queries) error {
+        return q.RecordOutboxFailure(ctx, id, maxAttempts) // attempts + 1; failed_at = now() once the cap is reached
     })
 }
 ```
+
+Each event is delivered in its own short transaction, so a slow handler holds a lock on one row only, not a batch. A failed delivery rolls that transaction back (the row stays pending), and the failure is then recorded in a *separate* transaction, so the attempts counter survives the rollback. At the cap the row gets `failed_at` and is published to `<topic>.DLQ`, which stops a poison event from retrying forever.
 
 `FOR UPDATE SKIP LOCKED` lets the relay take a batch without blocking, and makes it safe to scale to multiple relay instances later. Ordering by `id` keeps one aggregate's events in order: the outbox insert is the last step of a command, after the aggregate's row lock, so a later transition always gets a higher `id`. `created_at` is the transaction start time and must not be used for ordering. Order across aggregates is not guaranteed. The `UNIQUE (event_type, idempotency_key)` constraint rejects a producer that enqueues the same event twice, so events that can legitimately repeat (e.g. a task submitted again after a redo) need the attempt number in their key.
 
@@ -129,7 +149,7 @@ A redelivered `TaskApprovedEvent` inserts the same key, hits the `UNIQUE` constr
 
 - Handler returns an error → `Publish` returns an error in the relay → the row stays pending, `attempts` is bumped, and the next tick redelivers it. Redelivery goes to all subscribers of the topic, which is safe because every consumer is idempotent. Keep handlers short and deterministic.
 - Poison events: after `maxAttempts` the relay sets `failed_at` (so the row leaves the pending index and stops blocking later events), logs it, and publishes it to `<topic>.DLQ` for inspection. Operators re-drive by clearing `failed_at`.
-- Trade-off: because `Publish` blocks on acks, a slow consumer delays the relay for that event, and the relay's transaction (holding `SKIP LOCKED` row locks on the outbox batch) stays open meanwhile. Keep the batch small and handler work short; handlers use their own transactions on their own tables, so there is no lock conflict. Acceptable at MVP scale. If it hurts, add a per-consumer delivery table or move to a durable broker (see below).
+- Trade-off: because `Publish` blocks on acks, a slow consumer delays the relay for that event, and the relay's per-event transaction holds that one row's lock meanwhile. Keep handler work short; handlers use their own transactions on their own tables, so there is no lock conflict. Acceptable at MVP scale. If it hurts, add a per-consumer delivery table or move to a durable broker (see below).
 - **Not a replayable log.** The outbox is the durable producer-side record and published rows are retained, but consumers have no offsets, so replay is manual. If a real replay need appears (new consumer, extraction, incident), move the relay's target to a durable broker such as NATS JetStream or Redpanda via the Watermill swap. Handlers do not change; events must stay versioned and keyed by aggregate.
 
 ## Event catalogue (MVP)
