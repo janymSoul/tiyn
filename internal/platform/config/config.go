@@ -34,9 +34,9 @@ func Load(getenv func(string) string) (Config, error) {
 		HandlerTimeout:    durationOr(getenv, "HANDLER_TIMEOUT", 10*time.Second, &errs),
 		DBMaxConns:        intAtLeast(getenv, "DB_MAX_CONNS", 20, minDBConns, &errs),
 		RelayMaxBackoff:   durationOr(getenv, "RELAY_MAX_BACKOFF", 5*time.Minute, &errs),
-		HandlerMaxRetries: intAtLeast(getenv, "HANDLER_MAX_RETRIES", 3, 0, &errs),
-		RetryInitial:      durationOr(getenv, "HANDLER_RETRY_INITIAL", 200*time.Millisecond, &errs),
-		RetryMax:          durationOr(getenv, "HANDLER_RETRY_MAX", 5*time.Second, &errs),
+		HandlerMaxRetries: intAtLeast(getenv, "HANDLER_MAX_RETRIES", 1, 0, &errs),
+		RetryInitial:      durationOr(getenv, "HANDLER_RETRY_INITIAL", 100*time.Millisecond, &errs),
+		RetryMax:          durationOr(getenv, "HANDLER_RETRY_MAX", 500*time.Millisecond, &errs),
 	}
 	if cfg.RetryMax < cfg.RetryInitial {
 		errs = append(errs, errors.New("HANDLER_RETRY_MAX must not be smaller than HANDLER_RETRY_INITIAL"))

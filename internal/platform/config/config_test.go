@@ -77,8 +77,9 @@ func TestLoadRequiresEnoughConnectionsForTheRelayAndItsHandlers(t *testing.T) {
 func TestLoadReadsRetryIntervalsAndRejectsMaxBelowInitial(t *testing.T) {
 	cfg, err := config.Load(env(map[string]string{"DATABASE_URL": "postgres://x"}))
 	require.NoError(t, err)
-	require.Equal(t, 200*time.Millisecond, cfg.RetryInitial)
-	require.Equal(t, 5*time.Second, cfg.RetryMax)
+	require.Equal(t, 100*time.Millisecond, cfg.RetryInitial)
+	require.Equal(t, 500*time.Millisecond, cfg.RetryMax)
+	require.Equal(t, 1, cfg.HandlerMaxRetries)
 
 	_, err = config.Load(env(map[string]string{"DATABASE_URL": "postgres://x", "HANDLER_RETRY_INITIAL": "10s", "HANDLER_RETRY_MAX": "1s"}))
 	require.ErrorContains(t, err, "HANDLER_RETRY_MAX")
