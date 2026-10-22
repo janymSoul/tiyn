@@ -92,6 +92,8 @@ type FamilyDirectory interface {
 Links are soft-deleted (`removed_at`). `AreLinked` and every other lookup must ignore removed links; re-linking a removed pair clears `removed_at` on the existing row and increments its `generation`, which is part of the event key so that a relink produces a new event.
 Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.g. the task module checks a parent may approve a given teen's task). `Authenticator` is used by the HTTP auth middleware.
 
+**Concurrency.** Registration, join-code allocation and linking can race. Every unique-rule violation (same Google subject, same join code, same link) is reported by the store as one `ErrConflict`, and the service retries the whole transaction up to five times. The recovery is the same in all three cases (the retry finds the winner's row, or draws a fresh code), so nothing depends on Postgres-generated constraint names.
+
 **Publishes:**
 - `FamilyLinkedEvent{ParentID, TeenID}` (lets other modules react to a new link, e.g. seed a wallet). Key `FAMILY-LINKED-{parent}-{teen}-{generation}`.
 - `FamilyUnlinkedEvent{ParentID, TeenID}` (the task module cancels the teen's open tasks for that parent). Key `FAMILY-UNLINKED-{parent}-{teen}-{generation}`.

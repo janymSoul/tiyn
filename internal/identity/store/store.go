@@ -15,16 +15,8 @@ import (
 )
 
 var (
-	ErrNotFound           = errors.New("not found")
-	ErrDuplicateGoogleSub = errors.New("google subject already registered")
-	ErrDuplicateJoinCode  = errors.New("join code already taken")
-	ErrDuplicateLink      = errors.New("family link already exists")
-)
-
-const (
-	googleSubConstraint = "users_google_sub_key"
-	joinCodeConstraint  = "users_join_code_key"
-	linkConstraint      = "family_links_pkey"
+	ErrNotFound = errors.New("not found")
+	ErrConflict = errors.New("concurrent change conflicts with a unique rule")
 )
 
 type Repository struct {
@@ -59,7 +51,7 @@ func (r *Repository) InsertUser(ctx context.Context, user domain.User) error {
 		DisplayName: user.DisplayName(),
 		JoinCode:    pgtype.Text{String: code.String(), Valid: hasCode},
 	})
-	return duplicateOr(err, "insert user")
+	return conflictOr(err, "insert user")
 }
 
 func (r *Repository) LinkForUpdate(ctx context.Context, parentID, teenID uuid.UUID) (domain.FamilyLink, error) {
@@ -79,7 +71,7 @@ func (r *Repository) InsertLink(ctx context.Context, link domain.FamilyLink) err
 		TeenID:     link.TeenID(),
 		Generation: int32(link.Generation()),
 	})
-	return duplicateOr(err, "insert family link")
+	return conflictOr(err, "insert family link")
 }
 
 func (r *Repository) SaveLink(ctx context.Context, link domain.FamilyLink) error {
@@ -113,19 +105,12 @@ func userFrom(row gen.IdentityUser, err error) (domain.User, error) {
 	return domain.RehydrateUser(row.ID, row.GoogleSub, domain.Role(row.Role), row.DisplayName, row.JoinCode.String, row.CreatedAt), nil
 }
 
-func duplicateOr(err error, action string) error {
+func conflictOr(err error, action string) error {
 	if err == nil {
 		return nil
 	}
-	if constraint, ok := db.UniqueViolationConstraint(err); ok {
-		switch constraint {
-		case googleSubConstraint:
-			return ErrDuplicateGoogleSub
-		case joinCodeConstraint:
-			return ErrDuplicateJoinCode
-		case linkConstraint:
-			return ErrDuplicateLink
-		}
+	if db.IsUniqueViolation(err) {
+		return ErrConflict
 	}
 	return fmt.Errorf("%s: %w", action, err)
 }

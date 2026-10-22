@@ -83,7 +83,7 @@ func (s *Service) SignInWithGoogle(ctx context.Context, input SignInInput) (Sign
 			user, err = s.findOrRegister(ctx, store.New(tx), identity, input)
 			return err
 		})
-	}, store.ErrDuplicateGoogleSub, store.ErrDuplicateJoinCode)
+	}, store.ErrConflict)
 	if err != nil {
 		return SignInResult{}, err
 	}
@@ -150,7 +150,7 @@ func (s *Service) JoinWithCode(ctx context.Context, principal Principal, rawCode
 			result, err = s.join(ctx, tx, principal.UserID, code)
 			return err
 		})
-	}, store.ErrDuplicateLink)
+	}, store.ErrConflict)
 	return result, err
 }
 
