@@ -73,6 +73,7 @@ class TaskStore {
     void update(Task task) {
         int updated = dsl.update(TASKS)
                 .set(TASKS.STATE, task.state().name())
+                .set(TASKS.DEADLINE_AT, Instants.toUtc(task.deadlineAt()))
                 .set(TASKS.SUBMITTED_AT, Instants.toUtc(task.submittedAt()))
                 .set(TASKS.DECIDED_AT, Instants.toUtc(task.decidedAt()))
                 .set(TASKS.DECIDED_BY, task.decidedBy())

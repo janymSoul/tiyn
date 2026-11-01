@@ -151,6 +151,28 @@ class TaskFlowTests {
     }
 
     @Test
+    void redoWithANewDeadlineMovesItAndRejectsAPastOne() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID id = fx.createTask(f, 100);
+        fx.send("/tasks/" + id + "/submit", "{\"text\":\"a\"}", f.teen().bearer(), "Idempotency-Key", "d1");
+        String later = Instant.now().plusSeconds(86400).toString();
+
+        fx.send(
+                        "/tasks/" + id + "/request-redo",
+                        "{\"deadlineAt\":\"2020-01-01T00:00:00Z\"}",
+                        f.parent().bearer())
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_deadline"));
+        fx.send(
+                        "/tasks/" + id + "/request-redo",
+                        "{\"deadlineAt\":\"" + later + "\"}",
+                        f.parent().bearer())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("ASSIGNED"))
+                .andExpect(jsonPath("$.deadlineAt").value(later));
+    }
+
+    @Test
     void anUnknownKindIsRejectedWithItsOwnCode() throws Exception {
         Family f = fx.linkedFamily();
 

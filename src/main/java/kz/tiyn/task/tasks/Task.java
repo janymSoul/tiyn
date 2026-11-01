@@ -31,7 +31,7 @@ final class Task {
     private final String title;
     private final String description;
     private final Money reward;
-    private final Instant deadlineAt;
+    private Instant deadlineAt;
     private TaskState state;
     private final int version;
     private Instant submittedAt;
@@ -137,9 +137,10 @@ final class Task {
         events.record(new TaskRejected(id, teenId, cleaned));
     }
 
-    void requestRedo(UUID byParentId, String note, Instant now) {
+    void requestRedo(UUID byParentId, String note, Instant newDeadlineAt, Instant now) {
         requireState(TaskState.SUBMITTED);
         String cleaned = cleanNote(note);
+        extendDeadline(newDeadlineAt, now);
         decide(TaskState.ASSIGNED, byParentId, cleaned, now);
         events.record(new TaskRedoRequested(id, teenId, cleaned));
     }
@@ -165,6 +166,19 @@ final class Task {
 
     List<Proof> unsavedProofs() {
         return proofs.subList(persistedProofs, proofs.size());
+    }
+
+    private void extendDeadline(Instant newDeadlineAt, Instant now) {
+        if (newDeadlineAt == null) {
+            if (!now.isBefore(deadlineAt)) {
+                throw new TaskException(TaskError.INVALID_DEADLINE);
+            }
+            return;
+        }
+        if (!newDeadlineAt.isAfter(now)) {
+            throw new TaskException(TaskError.INVALID_DEADLINE);
+        }
+        deadlineAt = newDeadlineAt;
     }
 
     private void decide(TaskState to, UUID by, String note, Instant now) {

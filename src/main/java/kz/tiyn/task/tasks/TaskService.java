@@ -118,8 +118,8 @@ class TaskService {
         return decide(caller, id, (t, now) -> t.reject(caller.userId(), note, now));
     }
 
-    Task requestRedo(Principal caller, UUID id, String note) {
-        return decide(caller, id, (t, now) -> t.requestRedo(caller.userId(), note, now));
+    Task requestRedo(Principal caller, UUID id, String note, Instant newDeadlineAt) {
+        return decide(caller, id, (t, now) -> t.requestRedo(caller.userId(), note, newDeadlineAt, now));
     }
 
     Task cancel(Principal caller, UUID id) {

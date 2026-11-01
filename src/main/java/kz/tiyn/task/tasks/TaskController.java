@@ -7,6 +7,7 @@ import kz.tiyn.platform.security.Principal;
 import kz.tiyn.task.tasks.dto.CreateTaskRequest;
 import kz.tiyn.task.tasks.dto.NoteRequest;
 import kz.tiyn.task.tasks.dto.ProofResponse;
+import kz.tiyn.task.tasks.dto.RedoRequest;
 import kz.tiyn.task.tasks.dto.TaskResponse;
 import kz.tiyn.task.tasks.dto.TextProofRequest;
 import kz.tiyn.task.tasks.error.TaskError;
@@ -92,8 +93,9 @@ class TaskController {
     TaskResponse requestRedo(
             @AuthenticationPrincipal Principal caller,
             @PathVariable UUID id,
-            @RequestBody(required = false) NoteRequest request) {
-        return toResponse(service.requestRedo(caller, id, note(request)));
+            @RequestBody(required = false) RedoRequest request) {
+        return toResponse(service.requestRedo(
+                caller, id, request == null ? null : request.note(), request == null ? null : request.deadlineAt()));
     }
 
     @PostMapping("/tasks/{id}/cancel")
