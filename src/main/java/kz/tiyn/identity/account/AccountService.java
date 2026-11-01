@@ -86,9 +86,12 @@ class AccountService implements AccountDirectory {
     }
 
     private static Role parseRole(String raw) {
+        if (raw == null) {
+            throw new IdentityException(IdentityError.INVALID_ROLE);
+        }
         try {
             return Role.valueOf(raw);
-        } catch (IllegalArgumentException | NullPointerException e) {
+        } catch (IllegalArgumentException e) {
             throw new IdentityException(IdentityError.INVALID_ROLE);
         }
     }

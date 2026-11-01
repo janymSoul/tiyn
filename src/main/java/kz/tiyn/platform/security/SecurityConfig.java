@@ -88,11 +88,16 @@ class SecurityConfig {
 
     private OAuth2TokenValidator<Jwt> subjectAndRole() {
         return jwt -> {
+            String subject = jwt.getSubject();
+            String role = jwt.getClaimAsString("role");
+            if (subject == null || role == null) {
+                return OAuth2TokenValidatorResult.failure(INVALID_CLAIMS);
+            }
             try {
-                UUID.fromString(jwt.getSubject());
-                Role.valueOf(jwt.getClaimAsString("role"));
+                UUID.fromString(subject);
+                Role.valueOf(role);
                 return OAuth2TokenValidatorResult.success();
-            } catch (IllegalArgumentException | NullPointerException e) {
+            } catch (IllegalArgumentException e) {
                 return OAuth2TokenValidatorResult.failure(INVALID_CLAIMS);
             }
         };

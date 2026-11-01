@@ -38,7 +38,12 @@ class WalletStore {
     }
 
     Optional<Wallet> findForUpdate(UUID teenId, String currency) {
-        return select(teenId, currency).forUpdate().of(WALLETS).fetchOptional(WalletStore::toWallet);
+        dsl.select(WALLETS.TEEN_ID)
+                .from(WALLETS)
+                .where(WALLETS.TEEN_ID.eq(teenId).and(WALLETS.CURRENCY.eq(currency)))
+                .forUpdate()
+                .fetch();
+        return find(teenId, currency);
     }
 
     void save(Wallet wallet) {
