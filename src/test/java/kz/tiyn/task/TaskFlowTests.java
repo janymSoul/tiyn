@@ -175,9 +175,9 @@ class TaskFlowTests {
     @Test
     void milestoneTracksProgressAndCancellingItCancelsOpenTasks() throws Exception {
         Family f = fx.linkedFamily();
-        UUID milestone = createWith(f, "MILESTONE", null, 7200);
-        UUID done = createWith(f, "TASK", milestone, 3600);
-        UUID open = createWith(f, "TASK", milestone, 3600);
+        UUID milestone = fx.createItem(f, "MILESTONE", null, 7200);
+        UUID done = fx.createItem(f, "TASK", milestone, 3600);
+        UUID open = fx.createItem(f, "TASK", milestone, 3600);
         fx.send("/tasks/" + done + "/submit", "{\"text\":\"a\"}", f.teen().bearer(), "Idempotency-Key", "m1");
         fx.send("/tasks/" + done + "/approve", "", f.parent().bearer());
 
@@ -204,8 +204,8 @@ class TaskFlowTests {
     @Test
     void cancellingAMilestoneTwiceIsANoOp() throws Exception {
         Family f = fx.linkedFamily();
-        UUID milestone = createWith(f, "MILESTONE", null, 7200);
-        UUID child = createWith(f, "TASK", milestone, 3600);
+        UUID milestone = fx.createItem(f, "MILESTONE", null, 7200);
+        UUID child = fx.createItem(f, "TASK", milestone, 3600);
         fx.send("/tasks/" + child + "/submit", "{\"text\":\"a\"}", f.teen().bearer(), "Idempotency-Key", "x1");
         fx.send("/tasks/" + milestone + "/cancel", "", f.parent().bearer()).andExpect(status().isOk());
 
@@ -219,22 +219,22 @@ class TaskFlowTests {
     void invalidMilestoneLinksAreRejected() throws Exception {
         Family f = fx.linkedFamily();
         Family other = fx.linkedFamily();
-        UUID milestone = createWith(f, "MILESTONE", null, 7200);
-        UUID plain = createWith(f, "TASK", null, 3600);
+        UUID milestone = fx.createItem(f, "MILESTONE", null, 7200);
+        UUID plain = fx.createItem(f, "TASK", null, 3600);
 
         fx.send(
                         "/tasks",
-                        bodyWith(f, "TASK", UUID.randomUUID(), 3600),
+                        fx.bodyFor(f, "TASK", UUID.randomUUID(), 3600),
                         f.parent().bearer())
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").value("invalid_milestone"));
-        fx.send("/tasks", bodyWith(f, "TASK", plain, 3600), f.parent().bearer())
+        fx.send("/tasks", fx.bodyFor(f, "TASK", plain, 3600), f.parent().bearer())
                 .andExpect(jsonPath("$.error").value("invalid_milestone"));
-        fx.send("/tasks", bodyWith(f, "TASK", milestone, 9000), f.parent().bearer())
+        fx.send("/tasks", fx.bodyFor(f, "TASK", milestone, 9000), f.parent().bearer())
                 .andExpect(jsonPath("$.error").value("invalid_milestone"));
         fx.send(
                         "/tasks",
-                        bodyWith(other, "TASK", milestone, 3600),
+                        fx.bodyFor(other, "TASK", milestone, 3600),
                         other.parent().bearer())
                 .andExpect(jsonPath("$.error").value("invalid_milestone"));
     }
@@ -260,8 +260,8 @@ class TaskFlowTests {
     @Test
     void aMilestoneRedoCannotEndBeforeItsOpenTasks() throws Exception {
         Family f = fx.linkedFamily();
-        UUID milestone = createWith(f, "MILESTONE", null, 7200);
-        createWith(f, "TASK", milestone, 3600);
+        UUID milestone = fx.createItem(f, "MILESTONE", null, 7200);
+        fx.createItem(f, "TASK", milestone, 3600);
         fx.send("/tasks/" + milestone + "/submit", "{\"text\":\"a\"}", f.teen().bearer(), "Idempotency-Key", "ms1");
 
         fx.send(
@@ -357,30 +357,6 @@ class TaskFlowTests {
         mvc.perform(get("/tasks?state=NOPE").header("Authorization", f.parent().bearer()))
                 .andExpect(status().isUnprocessableEntity());
         assertThat(open).isNotEqualTo(done);
-    }
-
-    private UUID createWith(Family f, String kind, UUID milestoneId, long deadlineInSeconds) throws Exception {
-        String response = fx.send(
-                        "/tasks",
-                        bodyWith(f, kind, milestoneId, deadlineInSeconds),
-                        f.parent().bearer())
-                .andExpect(status().isCreated())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-        return UUID.fromString(json.readTree(response).get("id").asText());
-    }
-
-    private String bodyWith(Family f, String kind, UUID milestoneId, long deadlineInSeconds) throws Exception {
-        Map<String, Object> body = new java.util.HashMap<>();
-        body.put("teenId", f.teen().id());
-        body.put("kind", kind);
-        body.put("title", "Item");
-        body.put("rewardAmount", 100);
-        body.put("currency", "KZT");
-        body.put("deadlineAt", Instant.now().plusSeconds(deadlineInSeconds).toString());
-        body.put("milestoneId", milestoneId);
-        return json.writeValueAsString(body);
     }
 
     private String createBody(UUID teenId) throws Exception {

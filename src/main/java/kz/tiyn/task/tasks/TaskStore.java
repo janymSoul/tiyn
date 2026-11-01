@@ -81,6 +81,10 @@ class TaskStore {
                 .toList();
     }
 
+    void lock(UUID id) {
+        dsl.select(TASKS.ID).from(TASKS).where(TASKS.ID.eq(id)).forUpdate().fetch();
+    }
+
     List<Task> findOpenFor(UUID parentId, UUID teenId) {
         return dsl.selectFrom(TASKS)
                 .where(TASKS.PARENT_ID.eq(parentId))
