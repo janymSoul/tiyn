@@ -1,0 +1,28 @@
+image:
+  repository: tiyn
+  tag: local
+  pullPolicy: Never
+
+config:
+  mediaStorage: s3
+  notificationSender: logging
+  s3:
+    endpoint: http://tiyn-seaweedfs:8333
+    bucket: tiyn-proofs
+
+secret:
+  create: true
+  values:
+    JWT_SECRET: local-only-jwt-secret-local-only-jwt-secret-01
+    GOOGLE_CLIENT_IDS: local-client-id
+    DATABASE_URL: jdbc:postgresql://tiyn-postgres:5432/tiyn
+    DATABASE_USER: tiyn
+    DATABASE_PASSWORD: tiyn-local
+    S3_ACCESS_KEY: tiyn
+    S3_SECRET_KEY: tiyn-local-secret
+
+postgres:
+  enabled: true
+
+seaweedfs:
+  enabled: true

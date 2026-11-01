@@ -32,8 +32,10 @@ class S3Config {
 
     @Bean(destroyMethod = "close")
     S3Presigner s3Presigner(S3Properties p) {
+        String signingEndpoint =
+                p.publicEndpoint() == null || p.publicEndpoint().isBlank() ? p.endpoint() : p.publicEndpoint();
         return S3Presigner.builder()
-                .endpointOverride(URI.create(p.endpoint()))
+                .endpointOverride(URI.create(signingEndpoint))
                 .region(Region.of(p.region()))
                 .credentialsProvider(credentials(p))
                 .serviceConfiguration(

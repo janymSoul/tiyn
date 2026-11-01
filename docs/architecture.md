@@ -106,6 +106,26 @@ All generated classes live under one package tree, which Modulith cannot see as 
 - **Data residency: host in Kazakhstan.** Kazakhstan's personal-data law is understood to require citizens' personal data to be stored on servers inside the country, so the database and object storage live with a Kazakhstan provider. This rules out region-locked managed services (Cloud SQL, GCS, Cloud Run) and favours Kubernetes with Postgres and an S3-compatible store (SeaweedFS). Confirm the legal details, and the status of Google sign-in and FCM token passthrough, with counsel.
 - **JVM sizing.** Startup takes seconds and memory is higher than a static binary. Acceptable for always-running pods; size the heap explicitly rather than relying on container defaults.
 
+## Deployment
+
+The chart lives in `deploy/helm/tiyn`. It deploys only the application: a Deployment (non-root, read-only root filesystem, startup, liveness and readiness probes on `/actuator/health/*`, `maxUnavailable: 0`, a 45 s grace period above the 30 s graceful shutdown), a ConfigMap, a Service and an optional Ingress. Configuration is environment variables: non-secret values from `config.*`, secrets from a Secret (`secret.existingSecret` in real environments, `secret.create` only for local use). The chart refuses to render without `image.tag` (use the commit sha), `config.mediaStorage` and `config.notificationSender`, and without `fcm.existingSecret` when the sender is `fcm`, so a half-configured release fails in `helm template`, not at runtime.
+
+Postgres and SeaweedFS are **not part of the application release**. `postgres.enabled` and `seaweedfs.enabled` exist for local clusters only (plain StatefulSets with one disk, no backups) and default to off. In a real environment the chart receives `DATABASE_URL` and the S3 settings of managed services.
+
+**Run it locally** (Docker Desktop Kubernetes): `./mvnw -DskipTests package && docker build -t tiyn:local .`, then `helm upgrade --install tiyn deploy/helm/tiyn -n tiyn --create-namespace -f deploy/helm/tiyn/values-local.yaml --wait`, `kubectl -n tiyn port-forward svc/tiyn 8080:80`, and `helm uninstall tiyn -n tiyn` when done. Verified this way: Flyway migration on a fresh database, a proof upload to the in-cluster object store with EXIF removed, zero failed requests during a rolling restart of two replicas, and a single pod holding the ShedLock `tick` lock.
+
+**Presigned URLs and the S3 endpoint.** A presigned URL is signed for one host, and the client must be able to reach it. A provider's public S3 endpoint works as `S3_ENDPOINT`. For the in-cluster SeaweedFS (`http://<release>-seaweedfs:8333`, unreachable from outside) set `config.s3.publicEndpoint` (`S3_PUBLIC_ENDPOINT`) to the public URL and enable `seaweedfs.ingress` with that host: the app uploads through the internal endpoint and signs view URLs for the public one. The ingress must forward the original `Host` header, or signature verification fails.
+
+**Real server, step by step** (not yet done; no server exists):
+1. Pick a host; for real user data a Kazakhstan provider. Two vCPU and 4 GB RAM is the floor for k3s plus the application.
+2. Install k3s on one node (it brings Traefik and local-path storage) or use the provider's managed Kubernetes.
+3. With a domain, point an A record at the server, open ports 80 and 443, install cert-manager and a Let's Encrypt `ClusterIssuer`, and set `ingress.enabled`, `ingress.host` and `ingress.tlsSecret`. Android blocks plain HTTP by default, so the Flutter app needs this.
+4. Provision Postgres outside the release (managed, or its own server) with automated backups; create the database and user.
+5. Provision S3-compatible storage with a public endpoint; create the bucket (the application refuses to start without it) and credentials.
+6. `kubectl create secret generic tiyn-secrets` with `JWT_SECRET` (at least 32 bytes), `GOOGLE_CLIENT_IDS`, `DATABASE_URL`, `DATABASE_USER`, `DATABASE_PASSWORD`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`; for `fcm`, a second secret holding the service-account JSON under `credentials.json`.
+7. Set the GHCR package to public (GitHub, Packages, package settings) or add `image.pullSecrets`, then `helm upgrade --install tiyn deploy/helm/tiyn -n tiyn --create-namespace --set secret.existingSecret=tiyn-secrets --set image.tag=<sha> -f values-prod.yaml`, where `values-prod.yaml` sets `config.*` and the ingress.
+8. Before real data: backups with a tested restore, alerts on the age of the oldest incomplete `event_publication`, and a registry and object store hosted in Kazakhstan.
+
 ## Non-functional requirements that shape the code
 
 - **Immutable audit trail (SYS-01):** `ledger_entries` is append-only; corrections are compensating entries, never updates or deletes. Enforced at the DB layer by triggers, which also block `TRUNCATE`, so tests cannot reset state that way.

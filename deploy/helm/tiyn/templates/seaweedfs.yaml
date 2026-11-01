@@ -1,0 +1,80 @@
+{{- if .Values.seaweedfs.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "tiyn.name" . }}-seaweedfs-s3
+  labels:
+    {{- include "tiyn.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  s3.json: |
+    {"identities":[{"name":"tiyn","credentials":[{"accessKey":{{ required "secret.values.S3_ACCESS_KEY is required" .Values.secret.values.S3_ACCESS_KEY | quote }},"secretKey":{{ required "secret.values.S3_SECRET_KEY is required" .Values.secret.values.S3_SECRET_KEY | quote }}}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tiyn.name" . }}-seaweedfs
+  labels:
+    {{- include "tiyn.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: tiyn-seaweedfs
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: s3
+      port: 8333
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "tiyn.name" . }}-seaweedfs
+  labels:
+    {{- include "tiyn.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "tiyn.name" . }}-seaweedfs
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tiyn-seaweedfs
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tiyn-seaweedfs
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: seaweedfs
+          image: {{ .Values.seaweedfs.image }}
+          args:
+            - server
+            - -dir=/data
+            - -s3
+            - -s3.port=8333
+            - -s3.config=/etc/seaweedfs/s3.json
+          ports:
+            - name: s3
+              containerPort: 8333
+          readinessProbe:
+            tcpSocket:
+              port: s3
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: s3-config
+              mountPath: /etc/seaweedfs
+              readOnly: true
+      volumes:
+        - name: s3-config
+          secret:
+            secretName: {{ include "tiyn.name" . }}-seaweedfs-s3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: {{ .Values.seaweedfs.storage }}
+{{- end }}

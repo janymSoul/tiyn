@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tiyn
+description: tiyn backend (Spring Boot) with optional in-cluster Postgres and SeaweedFS for local use
+type: application
+version: 0.1.0
+appVersion: "0.1.0-SNAPSHOT"

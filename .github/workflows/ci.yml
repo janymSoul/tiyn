@@ -45,6 +45,17 @@ jobs:
           path: target/*.jar
           if-no-files-found: error
 
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint
+        run: helm lint deploy/helm/tiyn -f deploy/helm/tiyn/values-local.yaml
+      - name: Render
+        run: helm template tiyn deploy/helm/tiyn -f deploy/helm/tiyn/values-local.yaml > /dev/null
+      - name: Required values are enforced
+        run: "! helm template tiyn deploy/helm/tiyn > /dev/null 2>&1"
+
   image:
     needs: build
     runs-on: ubuntu-latest

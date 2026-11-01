@@ -56,11 +56,16 @@ class S3StorageTests {
     }
 
     private ApplicationContextRunner runner(String bucket) {
+        return runner(bucket, "");
+    }
+
+    private ApplicationContextRunner runner(String bucket, String publicEndpoint) {
         return new ApplicationContextRunner()
                 .withUserConfiguration(S3Config.class, S3Storage.class)
                 .withPropertyValues(
                         "tiyn.media.storage=s3",
                         "tiyn.media.s3.endpoint=" + endpoint,
+                        "tiyn.media.s3.public-endpoint=" + publicEndpoint,
                         "tiyn.media.s3.region=us-east-1",
                         "tiyn.media.s3.bucket=" + bucket,
                         "tiyn.media.s3.access-key=tiyn",
@@ -101,5 +106,24 @@ class S3StorageTests {
     @Test
     void aMissingBucketStopsStartup() {
         runner("does-not-exist").run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void viewUrlsAreSignedForThePublicEndpointWhileUploadsUseTheInternalOne() {
+        String internal = "http://127.0.0.1:" + seaweed.getMappedPort(8333);
+        String external = "http://localhost:" + seaweed.getMappedPort(8333);
+        runner(BUCKET, external)
+                .withPropertyValues("tiyn.media.s3.endpoint=" + internal)
+                .run(context -> {
+                    Storage storage = context.getBean(Storage.class);
+
+                    String key = storage.put("task-2", "image/png", new ByteArrayInputStream(TestImages.png(10, 10)));
+                    URI view = storage.presignView(key);
+
+                    assertThat(view.getHost()).isEqualTo("localhost");
+                    HttpResponse<byte[]> response = HttpClient.newHttpClient()
+                            .send(HttpRequest.newBuilder(view).build(), HttpResponse.BodyHandlers.ofByteArray());
+                    assertThat(response.statusCode()).isEqualTo(200);
+                });
     }
 }
