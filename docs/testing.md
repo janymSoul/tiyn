@@ -108,12 +108,12 @@ One such black-box test per PRD user scenario (Scenario 1: milestone; Scenario 2
 - Services — every command path and its error branches.
 - Integration — every guarantee in `docs/transactions.md`'s checklist and every PRD user scenario.
 
-Coverage percentage is a guide, not a target; a 100%-covered FSM with no concurrency test is worse than an 80%-covered one that proves the wallet can't go negative. Test the guarantees, and coverage follows.
+Coverage percentage is a guide; the JaCoCo floor only stops it from sliding back. a 100%-covered FSM with no concurrency test is worse than an 80%-covered one that proves the wallet can't go negative. Test the guarantees, and coverage follows.
 
 ## Commands
 
 ```bash
-./mvnw verify                       # build, jOOQ codegen, all tests, spotless:check (needs Docker)
+./mvnw verify                       # build, jOOQ codegen, tests, Spotless, Checkstyle, SpotBugs, JaCoCo floor (needs Docker)
 ./mvnw -Dtest=FamilyLinkTests test  # a single class
 ./mvnw -Dtest=ModularityTests test  # boundaries only
 ./mvnw spotless:apply               # format before committing
