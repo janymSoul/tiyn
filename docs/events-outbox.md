@@ -96,7 +96,7 @@ If a flow ever needs strict ordering (it does not today), that is a reason to ad
 
 | Event | Producer | Consumers | Effect |
 |---|---|---|---|
-| `FamilyLinked` | identity | notification | welcome push (the ledger creates wallets lazily on the first credit) |
+| `FamilyLinked` | identity | notification | welcome push to both sides (the ledger creates wallets lazily on the first credit) |
 | `FamilyUnlinked` | identity | task, notification | cancel the teen's open tasks for that parent; tell the teen |
 | `TaskAssigned` | task | notification | "new task / milestone" → teen |
 | `TaskSubmitted` | task | notification | "proof pending" → parent |
@@ -107,10 +107,10 @@ If a flow ever needs strict ordering (it does not today), that is a reason to ad
 | `TaskExpired` | task | ledger, notification | debit the task's penalty, if any; "deadline passed" → teen |
 | `PayoutRequested` | ledger | notification | high-priority "payout request" → parent |
 | `PayoutFulfilled` | ledger | notification | "paid" → teen |
-| `PayoutCancelled` | ledger | notification | "request cancelled / declined / expired" → teen |
-| `PenaltyApplied` | ledger | notification | "deduction" → teen (published today; no consumer yet) |
+| `PayoutCancelled` | ledger | notification | to the parent when the teen cancelled; otherwise "declined / expired / unlinked" → teen |
+| `PenaltyApplied` | ledger | notification | "deduction" → teen |
 
-`FamilyLinked`, `FamilyUnlinked` and all the `Task*` events exist in code. The real listeners today are the two `FamilyUnlinked` handlers in the task module (cancel open tasks, close series), the ledger's `FamilyUnlinked` handler (cancel the open payout) and its `TaskApproved` handler (credit the wallet) and `TaskExpired` handler (debit the penalty); `PayoutRequested`, `PayoutFulfilled` and `PayoutCancelled` exist but have no consumer yet; notification consumers arrive in a later step. Event payloads are records in the producing module's root package and are part of its **public contract**.
+`FamilyLinked`, `FamilyUnlinked` and all the `Task*` events exist in code. The real listeners today are the two `FamilyUnlinked` handlers in the task module (cancel open tasks, close series), the ledger's `FamilyUnlinked` handler (cancel the open payout) and its `TaskApproved` handler (credit the wallet) and `TaskExpired` handler (debit the penalty); `PayoutRequested`, `PayoutFulfilled`, `PayoutCancelled` and `PenaltyApplied` are consumed by the notification module; the notification module consumes every event in the table (idempotent through `notification.delivered`, claimed before sending). Event payloads are records in the producing module's root package and are part of its **public contract**.
 
 ## Before production
 

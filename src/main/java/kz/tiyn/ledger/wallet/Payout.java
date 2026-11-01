@@ -153,7 +153,7 @@ final class Payout {
         cancelReason = reason;
         resolvedAt = now;
         resolvedBy = by;
-        events.record(new PayoutCancelled(id, teenId, parentId, reason.name()));
+        events.record(new PayoutCancelled(id, teenId, parentId, amount, currency, reason.name()));
     }
 
     List<Object> pullEvents() {
