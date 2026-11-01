@@ -115,7 +115,7 @@ final class Task {
         proofs.add(Proof.submitted(proofId, proofs.size() + 1, objectKey, textBody, now));
         state = TaskState.SUBMITTED;
         submittedAt = now;
-        events.record(new TaskSubmitted(id, parentId, teenId, objectKey != null));
+        events.record(new TaskSubmitted(id, parentId, teenId));
     }
 
     void approve(UUID byParentId, Instant now) {
