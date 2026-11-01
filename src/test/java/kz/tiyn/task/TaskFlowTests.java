@@ -240,6 +240,45 @@ class TaskFlowTests {
     }
 
     @Test
+    void uploadProblemsAreClientErrorsNotServerErrors() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID id = fx.createTask(f, 100);
+
+        mvc.perform(multipart("/tasks/" + id + "/submit")
+                        .header("Authorization", f.teen().bearer())
+                        .header("Idempotency-Key", "no-file"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("invalid_request"));
+        mvc.perform(multipart("/tasks/" + id + "/submit")
+                        .file(new MockMultipartFile("file", "p.png", "image/png", new byte[5 * 1024 * 1024 + 1]))
+                        .header("Authorization", f.teen().bearer())
+                        .header("Idempotency-Key", "too-big"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("unsupported_proof"));
+    }
+
+    @Test
+    void aMilestoneRedoCannotEndBeforeItsOpenTasks() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID milestone = createWith(f, "MILESTONE", null, 7200);
+        createWith(f, "TASK", milestone, 3600);
+        fx.send("/tasks/" + milestone + "/submit", "{\"text\":\"a\"}", f.teen().bearer(), "Idempotency-Key", "ms1");
+
+        fx.send(
+                        "/tasks/" + milestone + "/request-redo",
+                        "{\"deadlineAt\":\"" + Instant.now().plusSeconds(1800) + "\"}",
+                        f.parent().bearer())
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_deadline"));
+        fx.send(
+                        "/tasks/" + milestone + "/request-redo",
+                        "{\"deadlineAt\":\"" + Instant.now().plusSeconds(5000) + "\"}",
+                        f.parent().bearer())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("ASSIGNED"));
+    }
+
+    @Test
     void anUnknownKindIsRejectedWithItsOwnCode() throws Exception {
         Family f = fx.linkedFamily();
 

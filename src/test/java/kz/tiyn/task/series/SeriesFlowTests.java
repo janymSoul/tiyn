@@ -155,6 +155,21 @@ class SeriesFlowTests {
     }
 
     @Test
+    void anUnlinkedPairGetsNoOccurrenceEvenBeforeTheSeriesIsClosed() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID series = createSeries(f, "DAILY", null);
+        jdbc.update(
+                "UPDATE identity.family_links SET removed_at = now() WHERE parent_id = ? AND teen_id = ?",
+                f.parent().id(),
+                f.teen().id());
+        jdbc.update("UPDATE task.task_series SET active = TRUE WHERE id = ?", series);
+
+        ticker.tick(at(today().plusDays(1), "10:00"));
+
+        assertThat(occurrences(series)).isEqualTo(1);
+    }
+
+    @Test
     void occurrencesAreOrdinaryTasksTheTeenCanSee() throws Exception {
         Family f = fx.linkedFamily();
         createSeries(f, "DAILY", null);

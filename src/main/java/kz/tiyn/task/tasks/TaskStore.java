@@ -4,6 +4,7 @@ import static kz.tiyn.platform.jooq.task.Tables.TASKS;
 import static kz.tiyn.platform.jooq.task.Tables.TASK_PROOFS;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -87,6 +88,14 @@ class TaskStore {
                 .and(TASKS.STATE.in(TaskState.ASSIGNED.name(), TaskState.SUBMITTED.name()))
                 .fetch()
                 .map(this::toTask);
+    }
+
+    Instant latestOpenChildDeadline(UUID milestoneId) {
+        return Instants.fromUtc(dsl.select(DSL.max(TASKS.DEADLINE_AT))
+                .from(TASKS)
+                .where(TASKS.MILESTONE_ID.eq(milestoneId))
+                .and(TASKS.STATE.in(TaskState.ASSIGNED.name(), TaskState.SUBMITTED.name()))
+                .fetchOne(0, OffsetDateTime.class));
     }
 
     List<Task> findOpenInMilestone(UUID milestoneId) {

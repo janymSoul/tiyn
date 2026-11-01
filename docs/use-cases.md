@@ -74,7 +74,7 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 **Flow** (Scenario 1, step 4).
 1. Teen opens a task and picks a photo (or enters text). The client compresses the image.
 2. Client sends one request to the task API with the proof and an `Idempotency-Key` header.
-3. Task service calls `media.Storage.put` (validates type and size, strips EXIF/GPS, stores at a key derived from the idempotency key).
+3. Task service calls `media.Storage.put` (validates type and size, strips EXIF/GPS, stores under a fresh unique key).
 4. One transaction: FSM `ASSIGNED → SUBMITTED`, store `task_proofs`, publish `TaskSubmitted`.
 5. Parent gets a "proof pending" push.
 
