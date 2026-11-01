@@ -73,6 +73,15 @@ class TaskStore {
                 .toList();
     }
 
+    List<Task> findOpenFor(UUID parentId, UUID teenId) {
+        return dsl.selectFrom(TASKS)
+                .where(TASKS.PARENT_ID.eq(parentId))
+                .and(TASKS.TEEN_ID.eq(teenId))
+                .and(TASKS.STATE.in(TaskState.ASSIGNED.name(), TaskState.SUBMITTED.name()))
+                .fetch()
+                .map(this::toTask);
+    }
+
     List<Task> findOpenInMilestone(UUID milestoneId) {
         return dsl.selectFrom(TASKS)
                 .where(TASKS.MILESTONE_ID.eq(milestoneId))

@@ -48,6 +48,15 @@ class SeriesStore {
                 .toList();
     }
 
+    void closeAllFor(UUID parentId, UUID teenId) {
+        dsl.update(TASK_SERIES)
+                .set(TASK_SERIES.ACTIVE, false)
+                .where(TASK_SERIES.PARENT_ID.eq(parentId))
+                .and(TASK_SERIES.TEEN_ID.eq(teenId))
+                .and(TASK_SERIES.ACTIVE.isTrue())
+                .execute();
+    }
+
     void saveActive(TaskSeries series) {
         dsl.update(TASK_SERIES)
                 .set(TASK_SERIES.ACTIVE, series.isActive())

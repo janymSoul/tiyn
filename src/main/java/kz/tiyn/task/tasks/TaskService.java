@@ -152,6 +152,19 @@ class TaskService {
         }));
     }
 
+    void cancelOpenTasksAfterUnlink(UUID parentId, UUID teenId) {
+        tx.executeWithoutResult(status -> {
+            if (family.areLinked(parentId, teenId)) {
+                return;
+            }
+            Instant now = clock.instant();
+            for (Task task : tasks.findOpenFor(parentId, teenId)) {
+                task.cancel(parentId, now);
+                saveAndPublish(task);
+            }
+        });
+    }
+
     boolean expire(UUID id, Instant now) {
         return Boolean.TRUE.equals(tx.execute(status -> tasks.find(id)
                 .map(task -> {

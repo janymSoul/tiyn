@@ -69,6 +69,14 @@ class SeriesService {
         series.saveActive(found);
     }
 
+    void closeAfterUnlink(UUID parentId, UUID teenId) {
+        tx.executeWithoutResult(status -> {
+            if (!family.areLinked(parentId, teenId)) {
+                series.closeAllFor(parentId, teenId);
+            }
+        });
+    }
+
     private static void requireParent(Principal caller) {
         if (caller.role() != Role.PARENT) {
             throw new TaskException(TaskError.FORBIDDEN);
