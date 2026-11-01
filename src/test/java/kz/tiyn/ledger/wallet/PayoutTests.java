@@ -92,7 +92,7 @@ class PayoutTests {
         assertThat(payout.resolvedAt()).isEqualTo(later);
         assertThat(payout.resolvedBy()).isEqualTo(TEEN);
         assertThat(payout.pullEvents())
-                .containsExactly(new PayoutCancelled(payout.id(), TEEN, PARENT, "TEEN_CANCELLED"));
+                .containsExactly(new PayoutCancelled(payout.id(), TEEN, PARENT, 20_000, "KZT", "TEEN_CANCELLED"));
     }
 
     @Test
@@ -104,7 +104,8 @@ class PayoutTests {
 
         assertThat(payout.cancelReason()).isEqualTo(CancelReason.DECLINED);
         assertThat(payout.resolvedBy()).isEqualTo(PARENT);
-        assertThat(payout.pullEvents()).containsExactly(new PayoutCancelled(payout.id(), TEEN, PARENT, "DECLINED"));
+        assertThat(payout.pullEvents())
+                .containsExactly(new PayoutCancelled(payout.id(), TEEN, PARENT, 20_000, "KZT", "DECLINED"));
     }
 
     @Test
@@ -150,7 +151,8 @@ class PayoutTests {
         assertThat(payout.state()).isEqualTo(PayoutState.CANCELLED);
         assertThat(payout.cancelReason()).isEqualTo(CancelReason.EXPIRED);
         assertThat(payout.resolvedBy()).isNull();
-        assertThat(payout.pullEvents()).containsExactly(new PayoutCancelled(payout.id(), TEEN, PARENT, "EXPIRED"));
+        assertThat(payout.pullEvents())
+                .containsExactly(new PayoutCancelled(payout.id(), TEEN, PARENT, 20_000, "KZT", "EXPIRED"));
     }
 
     @Test
@@ -175,6 +177,7 @@ class PayoutTests {
 
         assertThat(payout.cancelReason()).isEqualTo(CancelReason.UNLINKED);
         assertThat(payout.resolvedBy()).isNull();
-        assertThat(payout.pullEvents()).containsExactly(new PayoutCancelled(payout.id(), TEEN, PARENT, "UNLINKED"));
+        assertThat(payout.pullEvents())
+                .containsExactly(new PayoutCancelled(payout.id(), TEEN, PARENT, 20_000, "KZT", "UNLINKED"));
     }
 }

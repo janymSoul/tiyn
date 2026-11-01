@@ -111,17 +111,20 @@ class DeviceFlowTests {
         register(f.teen(), token, "ANDROID", "ru").andExpect(status().isNoContent());
 
         mvc.perform(delete("/devices")
-                        .param("token", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + token + "\"}")
                         .header("Authorization", f.parent().bearer()))
                 .andExpect(status().isNoContent());
         assertThat(rows(token)).isEqualTo(1);
 
         mvc.perform(delete("/devices")
-                        .param("token", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + token + "\"}")
                         .header("Authorization", f.teen().bearer()))
                 .andExpect(status().isNoContent());
         mvc.perform(delete("/devices")
-                        .param("token", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + token + "\"}")
                         .header("Authorization", f.teen().bearer()))
                 .andExpect(status().isNoContent());
         assertThat(rows(token)).isZero();

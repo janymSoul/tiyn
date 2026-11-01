@@ -2,9 +2,10 @@ package kz.tiyn.notification.push;
 
 import static kz.tiyn.platform.jooq.notification.Tables.DEVICE_TOKENS;
 
-import java.time.OffsetDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import kz.tiyn.platform.time.Instants;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 
@@ -17,7 +18,7 @@ class DeviceStore {
         this.dsl = dsl;
     }
 
-    void upsert(UUID userId, String token, Platform platform, String locale) {
+    void upsert(UUID userId, String token, Platform platform, String locale, Instant now) {
         dsl.insertInto(DEVICE_TOKENS)
                 .set(DEVICE_TOKENS.ID, UUID.randomUUID())
                 .set(DEVICE_TOKENS.USER_ID, userId)
@@ -29,7 +30,7 @@ class DeviceStore {
                 .set(DEVICE_TOKENS.USER_ID, userId)
                 .set(DEVICE_TOKENS.PLATFORM, platform.name())
                 .set(DEVICE_TOKENS.LOCALE, locale)
-                .set(DEVICE_TOKENS.LAST_SEEN_AT, OffsetDateTime.now())
+                .set(DEVICE_TOKENS.LAST_SEEN_AT, Instants.toUtc(now))
                 .execute();
     }
 

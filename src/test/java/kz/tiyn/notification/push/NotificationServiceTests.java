@@ -3,6 +3,7 @@ package kz.tiyn.notification.push;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -49,8 +50,8 @@ class NotificationServiceTests {
         UUID user = UUID.randomUUID();
         String ru = token();
         String kk = token();
-        devices.upsert(user, ru, Platform.ANDROID, "ru");
-        devices.upsert(user, kk, Platform.IOS, "kk");
+        devices.upsert(user, ru, Platform.ANDROID, "ru", Instant.now());
+        devices.upsert(user, kk, Platform.IOS, "kk", Instant.now());
 
         send("k1:" + user, user, NotificationType.TASK_APPROVED);
 
@@ -66,7 +67,7 @@ class NotificationServiceTests {
     void aRepeatedEventIsSentOnce() {
         UUID user = UUID.randomUUID();
         String device = token();
-        devices.upsert(user, device, Platform.ANDROID, "ru");
+        devices.upsert(user, device, Platform.ANDROID, "ru", Instant.now());
 
         send("dup:" + user, user, NotificationType.TASK_ASSIGNED);
         send("dup:" + user, user, NotificationType.TASK_ASSIGNED);
@@ -76,19 +77,35 @@ class NotificationServiceTests {
     }
 
     @Test
-    void aUserWithoutDevicesIsMarkedDeliveredAndNothingFails() {
+    void aUserWithoutDevicesCostsNothingAndLeavesNoRecord() {
         UUID user = UUID.randomUUID();
 
         send("none:" + user, user, NotificationType.TASK_ASSIGNED);
 
-        assertThat(delivered("none:" + user, user)).isEqualTo(1);
+        assertThat(delivered("none:" + user, user)).isZero();
+    }
+
+    @Test
+    void oneFailingDeviceDoesNotBlockOrRepeatThePushToTheOthers() {
+        UUID user = UUID.randomUUID();
+        String broken = token();
+        String fine = token();
+        devices.upsert(user, broken, Platform.ANDROID, "ru", Instant.now());
+        devices.upsert(user, fine, Platform.ANDROID, "ru", Instant.now());
+        sender.failWith(broken, new IllegalStateException("fcm down"));
+
+        send("mixed:" + user, user, NotificationType.TASK_ASSIGNED);
+        send("mixed:" + user, user, NotificationType.TASK_ASSIGNED);
+
+        assertThat(sender.sentTo(fine)).hasSize(1);
+        assertThat(delivered("mixed:" + user, user)).isEqualTo(1);
     }
 
     @Test
     void aTransientFailureLeavesNoRecordAndTheRetrySendsExactlyOnce() {
         UUID user = UUID.randomUUID();
         String device = token();
-        devices.upsert(user, device, Platform.ANDROID, "ru");
+        devices.upsert(user, device, Platform.ANDROID, "ru", Instant.now());
         sender.failWith(device, new IllegalStateException("fcm down"));
 
         assertThatThrownBy(() -> send("retry:" + user, user, NotificationType.TASK_ASSIGNED))
@@ -108,8 +125,8 @@ class NotificationServiceTests {
         UUID user = UUID.randomUUID();
         String dead = token();
         String alive = token();
-        devices.upsert(user, dead, Platform.ANDROID, "ru");
-        devices.upsert(user, alive, Platform.ANDROID, "ru");
+        devices.upsert(user, dead, Platform.ANDROID, "ru", Instant.now());
+        devices.upsert(user, alive, Platform.ANDROID, "ru", Instant.now());
         sender.failWith(dead, new PushRejectedException("unregistered"));
 
         send("rej:" + user, user, NotificationType.TASK_ASSIGNED);

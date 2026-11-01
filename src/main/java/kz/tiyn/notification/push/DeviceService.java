@@ -1,5 +1,6 @@
 package kz.tiyn.notification.push;
 
+import java.time.Clock;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -14,16 +15,18 @@ class DeviceService {
     private static final Set<String> LOCALES = Set.of(Messages.RU, Messages.KK);
 
     private final DeviceStore devices;
+    private final Clock clock;
 
-    DeviceService(DeviceStore devices) {
+    DeviceService(DeviceStore devices, Clock clock) {
         this.devices = devices;
+        this.clock = clock;
     }
 
     void register(UUID userId, String token, String platform, String locale) {
         if (token == null || token.isBlank() || token.length() > MAX_TOKEN_LENGTH) {
             throw new NotificationException(NotificationError.INVALID_TOKEN);
         }
-        devices.upsert(userId, token.trim(), parsePlatform(platform), parseLocale(locale));
+        devices.upsert(userId, token.trim(), parsePlatform(platform), parseLocale(locale), clock.instant());
     }
 
     void unregister(UUID userId, String token) {

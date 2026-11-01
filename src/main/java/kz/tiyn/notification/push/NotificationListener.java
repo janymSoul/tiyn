@@ -1,5 +1,6 @@
 package kz.tiyn.notification.push;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -120,15 +121,16 @@ class NotificationListener {
 
     @ApplicationModuleListener
     void on(PayoutCancelled e) {
-        boolean byTeen = TEEN_CANCELLED.equals(e.reason());
         NotificationType type =
                 switch (e.reason()) {
                     case TEEN_CANCELLED -> NotificationType.PAYOUT_CANCELLED_BY_TEEN;
                     case "DECLINED" -> NotificationType.PAYOUT_DECLINED;
                     case "EXPIRED" -> NotificationType.PAYOUT_EXPIRED;
-                    default -> NotificationType.PAYOUT_UNLINKED;
+                    case "UNLINKED" -> NotificationType.PAYOUT_UNLINKED;
+                    default -> throw new IllegalStateException("unknown payout cancel reason " + e.reason());
                 };
-        notify("PayoutCancelled:" + e.payoutId(), byTeen ? e.parentId() : e.teenId(), type, payoutData(e.payoutId()));
+        UUID recipient = TEEN_CANCELLED.equals(e.reason()) ? e.parentId() : e.teenId();
+        notify("PayoutCancelled:" + e.payoutId(), recipient, type, payoutData(e.payoutId()), money(e.amount()));
     }
 
     @ApplicationModuleListener
@@ -158,7 +160,7 @@ class NotificationListener {
     }
 
     private void notify(String key, UUID recipient, NotificationType type, Map<String, String> data, String... args) {
-        Map<String, String> payload = new java.util.HashMap<>(data);
+        Map<String, String> payload = new HashMap<>(data);
         payload.put("type", type.name());
         notifications.notify(key, recipient, type, List.of(args), Map.copyOf(payload));
     }

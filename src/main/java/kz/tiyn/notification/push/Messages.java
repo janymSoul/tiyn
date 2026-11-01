@@ -2,6 +2,7 @@ package kz.tiyn.notification.push;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import org.springframework.context.support.ResourceBundleMessageSource;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +21,7 @@ class Messages {
         source.setFallbackToSystemLocale(false);
     }
 
-    Push render(NotificationType type, String locale, List<String> args, java.util.Map<String, String> data) {
+    Push render(NotificationType type, String locale, List<String> args, Map<String, String> data) {
         Locale target = KK.equals(locale) ? Locale.forLanguageTag(KK) : Locale.forLanguageTag(RU);
         Object[] values = args.toArray();
         return new Push(

@@ -67,7 +67,7 @@ class NotificationFlowTests {
 
     private String device(Person who, String locale) {
         String token = "tok-" + UUID.randomUUID();
-        devices.upsert(who.id(), token, Platform.ANDROID, locale);
+        devices.upsert(who.id(), token, Platform.ANDROID, locale, Instant.now());
         return token;
     }
 
@@ -212,12 +212,16 @@ class NotificationFlowTests {
 
         UUID cancelled = requestPayout(f, 100_00, "p2");
         fx.send("/payouts/" + cancelled + "/cancel", "", f.teen().bearer()).andExpect(status().isOk());
-        awaitPush(parent, "PAYOUT_CANCELLED_BY_TEEN");
+        assertThat(awaitPush(parent, "PAYOUT_CANCELLED_BY_TEEN").push().body())
+                .contains("100")
+                .doesNotContain("{");
         assertNoPush(teen, "PAYOUT_CANCELLED_BY_TEEN");
 
         UUID declined = requestPayout(f, 100_00, "p3");
         fx.send("/payouts/" + declined + "/decline", "", f.parent().bearer()).andExpect(status().isOk());
-        awaitPush(teen, "PAYOUT_DECLINED");
+        assertThat(awaitPush(teen, "PAYOUT_DECLINED").push().body())
+                .contains("100")
+                .doesNotContain("{");
     }
 
     @Test

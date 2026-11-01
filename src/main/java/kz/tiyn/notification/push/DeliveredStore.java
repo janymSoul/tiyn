@@ -36,11 +36,4 @@ class DeliveredStore {
                                 .limit(limit)))
                 .execute();
     }
-
-    void release(String eventKey, UUID recipientId) {
-        dsl.deleteFrom(DELIVERED)
-                .where(DELIVERED.EVENT_KEY.eq(eventKey))
-                .and(DELIVERED.RECIPIENT_ID.eq(recipientId))
-                .execute();
-    }
 }
