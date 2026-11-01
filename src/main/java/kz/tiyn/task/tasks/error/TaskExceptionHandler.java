@@ -23,6 +23,7 @@ class TaskExceptionHandler {
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
             case INVALID_TRANSITION, CONCURRENT_MODIFICATION, DEADLINE_PASSED -> HttpStatus.CONFLICT;
             case INVALID_REWARD,
+                    INVALID_PENALTY,
                     INVALID_DEADLINE,
                     INVALID_TITLE,
                     INVALID_NOTE,

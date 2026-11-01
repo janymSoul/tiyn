@@ -38,7 +38,7 @@ class TaskTests {
     }
 
     private static NewTask draft(long reward, String currency, Instant deadline) {
-        return new NewTask(PARENT, TEEN, TaskKind.TASK, " Wash dishes ", null, reward, currency, deadline);
+        return new NewTask(PARENT, TEEN, TaskKind.TASK, " Wash dishes ", null, reward, 0, currency, deadline);
     }
 
     private static void assertError(Runnable action, TaskError expected) {
@@ -65,7 +65,7 @@ class TaskTests {
         assertError(() -> Task.assign(id, draft(100, "USD", later), NOW, MAX), TaskError.INVALID_REWARD);
         assertError(() -> Task.assign(id, draft(100, "KZT", NOW), NOW, MAX), TaskError.INVALID_DEADLINE);
         assertError(() -> Task.assign(id, draft(100, "KZT", null), NOW, MAX), TaskError.INVALID_DEADLINE);
-        var blank = new NewTask(PARENT, TEEN, TaskKind.TASK, "  ", null, 100, "KZT", later);
+        var blank = new NewTask(PARENT, TEEN, TaskKind.TASK, "  ", null, 100, 0, "KZT", later);
         assertError(() -> Task.assign(id, blank, NOW, MAX), TaskError.INVALID_TITLE);
     }
 
@@ -167,6 +167,7 @@ class TaskTests {
                         "t",
                         "",
                         1,
+                        0,
                         "KZT",
                         TaskState.ASSIGNED,
                         NOW.plusSeconds(60),
@@ -213,14 +214,14 @@ class TaskTests {
     }
 
     private Task milestone(Instant deadline) {
-        var draft = new NewTask(PARENT, TEEN, TaskKind.MILESTONE, "Exam", null, 5000, "KZT", deadline);
+        var draft = new NewTask(PARENT, TEEN, TaskKind.MILESTONE, "Exam", null, 5000, 0, "KZT", deadline);
         Task milestone = Task.assign(UUID.randomUUID(), draft, NOW, MAX);
         milestone.pullEvents();
         return milestone;
     }
 
     private NewTask milestoneTask(UUID parent, UUID teen, TaskKind kind, Instant deadline) {
-        return new NewTask(parent, teen, kind, "Study", null, 100, "KZT", deadline);
+        return new NewTask(parent, teen, kind, "Study", null, 100, 0, "KZT", deadline);
     }
 
     @Test
@@ -272,6 +273,43 @@ class TaskTests {
         Task cancelled = milestone(milestoneDeadline);
         cancelled.cancel(PARENT, NOW);
         assertError(() -> Task.assignInMilestone(id, cancelled, fine, NOW, MAX), TaskError.INVALID_MILESTONE);
+    }
+
+    @Test
+    void thePenaltyIsKeptAndTravelsWithTheExpiryEvent() {
+        var withPenalty = new NewTask(PARENT, TEEN, TaskKind.TASK, "Study", null, 100, 40, "KZT", NOW.plusSeconds(60));
+        Task task = Task.assign(UUID.randomUUID(), withPenalty, NOW, MAX);
+        task.pullEvents();
+
+        task.expire(NOW.plusSeconds(60));
+
+        assertThat(task.penaltyAmount()).isEqualTo(40);
+        assertThat(task.pullEvents()).containsExactly(new TaskExpired(task.id(), TEEN, 40, "KZT"));
+    }
+
+    @Test
+    void thePenaltyMustBeNonNegativeAndWithinTheLimit() {
+        UUID id = UUID.randomUUID();
+        Instant deadline = NOW.plusSeconds(60);
+
+        assertError(
+                () -> Task.assign(
+                        id, new NewTask(PARENT, TEEN, TaskKind.TASK, "t", null, 100, -1, "KZT", deadline), NOW, MAX),
+                TaskError.INVALID_PENALTY);
+        assertError(
+                () -> Task.assign(
+                        id,
+                        new NewTask(PARENT, TEEN, TaskKind.TASK, "t", null, 100, MAX + 1, "KZT", deadline),
+                        NOW,
+                        MAX),
+                TaskError.INVALID_PENALTY);
+        assertThat(Task.assign(
+                                id,
+                                new NewTask(PARENT, TEEN, TaskKind.TASK, "t", null, 100, MAX, "KZT", deadline),
+                                NOW,
+                                MAX)
+                        .penaltyAmount())
+                .isEqualTo(MAX);
     }
 
     @Test

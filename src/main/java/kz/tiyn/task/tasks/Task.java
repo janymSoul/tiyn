@@ -32,6 +32,7 @@ final class Task {
     private final String title;
     private final String description;
     private final Money reward;
+    private final long penaltyAmount;
     private Instant deadlineAt;
     private TaskState state;
     private final int version;
@@ -54,6 +55,7 @@ final class Task {
         this.title = s.title();
         this.description = s.description();
         this.reward = new Money(s.rewardAmount(), s.currency());
+        this.penaltyAmount = s.penaltyAmount();
         this.deadlineAt = s.deadlineAt();
         this.state = s.state();
         this.version = s.version();
@@ -100,6 +102,7 @@ final class Task {
             throw new TaskException(TaskError.INVALID_TITLE);
         }
         Money reward = Money.reward(draft.rewardAmount(), draft.currency(), maxRewardAmount);
+        long penalty = Money.penalty(draft.penaltyAmount(), maxRewardAmount);
         if (draft.deadlineAt() == null || !draft.deadlineAt().isAfter(now)) {
             throw new TaskException(TaskError.INVALID_DEADLINE);
         }
@@ -117,6 +120,7 @@ final class Task {
                 title,
                 description,
                 reward.amount(),
+                penalty,
                 reward.currency(),
                 TaskState.ASSIGNED,
                 draft.deadlineAt(),
@@ -184,7 +188,7 @@ final class Task {
             return;
         }
         state = TaskState.EXPIRED;
-        events.record(new TaskExpired(id, teenId, 0, reward.currency()));
+        events.record(new TaskExpired(id, teenId, penaltyAmount, reward.currency()));
     }
 
     void cancel(UUID byParentId, Instant now) {
@@ -283,6 +287,10 @@ final class Task {
 
     String description() {
         return description;
+    }
+
+    long penaltyAmount() {
+        return penaltyAmount;
     }
 
     Money reward() {

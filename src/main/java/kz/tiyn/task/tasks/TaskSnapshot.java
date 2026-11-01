@@ -15,6 +15,7 @@ record TaskSnapshot(
         String title,
         String description,
         long rewardAmount,
+        long penaltyAmount,
         String currency,
         TaskState state,
         Instant deadlineAt,

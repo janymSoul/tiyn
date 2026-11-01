@@ -42,12 +42,18 @@ class SeriesService {
         if (!family.areLinked(caller.userId(), request.teenId())) {
             throw new TaskException(TaskError.FORBIDDEN);
         }
-        assignment.validateTemplate(request.title(), request.description(), request.rewardAmount(), request.currency());
+        assignment.validateTemplate(
+                request.title(),
+                request.description(),
+                request.rewardAmount(),
+                request.penaltyAmount(),
+                request.currency());
         var draft = new NewSeries(
                 request.teenId(),
                 request.title(),
                 request.description(),
                 request.rewardAmount(),
+                request.penaltyAmount(),
                 request.currency(),
                 request.recurrence(),
                 request.timezone(),

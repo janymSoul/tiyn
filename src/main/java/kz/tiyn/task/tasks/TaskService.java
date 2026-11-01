@@ -64,6 +64,7 @@ class TaskService {
                 request.title(),
                 request.description(),
                 request.rewardAmount(),
+                request.penaltyAmount(),
                 request.currency(),
                 request.deadlineAt());
         return tx.execute(status -> {

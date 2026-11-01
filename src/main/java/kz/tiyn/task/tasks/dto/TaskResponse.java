@@ -13,6 +13,7 @@ public record TaskResponse(
         String title,
         String description,
         long rewardAmount,
+        long penaltyAmount,
         String currency,
         String state,
         Instant deadlineAt,
