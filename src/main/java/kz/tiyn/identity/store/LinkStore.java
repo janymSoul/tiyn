@@ -51,7 +51,8 @@ public class LinkStore {
     }
 
     public void update(FamilyLink link) {
-        OffsetDateTime removedAt = link.removedAt() == null ? null : OffsetDateTime.ofInstant(link.removedAt(), ZoneOffset.UTC);
+        OffsetDateTime removedAt =
+                link.removedAt() == null ? null : OffsetDateTime.ofInstant(link.removedAt(), ZoneOffset.UTC);
         dsl.update(FAMILY_LINKS)
                 .set(FAMILY_LINKS.GENERATION, link.generation())
                 .set(FAMILY_LINKS.REMOVED_AT, removedAt)

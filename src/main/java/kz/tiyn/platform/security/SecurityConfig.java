@@ -13,7 +13,6 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -54,7 +53,8 @@ class SecurityConfig {
                 .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(principalConverter()))
                         .authenticationEntryPoint(unauthenticated)
                         .accessDeniedHandler(forbidden))
-                .exceptionHandling(e -> e.authenticationEntryPoint(unauthenticated).accessDeniedHandler(forbidden))
+                .exceptionHandling(
+                        e -> e.authenticationEntryPoint(unauthenticated).accessDeniedHandler(forbidden))
                 .build();
     }
 
@@ -73,8 +73,8 @@ class SecurityConfig {
 
     private Converter<Jwt, AbstractAuthenticationToken> principalConverter() {
         return jwt -> {
-            Principal principal = new Principal(
-                    UUID.fromString(jwt.getSubject()), Role.valueOf(jwt.getClaimAsString("role")));
+            Principal principal =
+                    new Principal(UUID.fromString(jwt.getSubject()), Role.valueOf(jwt.getClaimAsString("role")));
             return new PrincipalAuthentication(
                     principal, jwt, List.of(new SimpleGrantedAuthority("ROLE_" + principal.role())));
         };

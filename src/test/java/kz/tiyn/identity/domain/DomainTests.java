@@ -29,8 +29,8 @@ class DomainTests {
     void lookAlikeShortLongAndNullCodesAreAllTheSameError() {
         for (String bad : new String[] {"AB0CDE", "AB1CDE", "ABOCDE", "ABICDE", "ABCDE", "ABCDEFG", "", null}) {
             assertThatThrownBy(() -> JoinCode.parse(bad))
-                    .isInstanceOfSatisfying(
-                            IdentityException.class, e -> assertThat(e.error()).isEqualTo(IdentityError.INVALID_JOIN_CODE));
+                    .isInstanceOfSatisfying(IdentityException.class, e -> assertThat(e.error())
+                            .isEqualTo(IdentityError.INVALID_JOIN_CODE));
         }
     }
 
@@ -38,21 +38,23 @@ class DomainTests {
     void parentsGetAJoinCodeAndTeensDoNot() {
         var code = new JoinCode("ABCDEF");
 
-        assertThat(User.register(UUID.randomUUID(), "s1", Role.PARENT, "Aigul", code).joinCode())
+        assertThat(User.register(UUID.randomUUID(), "s1", Role.PARENT, "Aigul", code)
+                        .joinCode())
                 .isEqualTo("ABCDEF");
-        assertThat(User.register(UUID.randomUUID(), "s2", Role.TEEN, "Dana", code).joinCode())
+        assertThat(User.register(UUID.randomUUID(), "s2", Role.TEEN, "Dana", code)
+                        .joinCode())
                 .isNull();
     }
 
     @Test
     void displayNameIsTrimmedAndMustBeNonBlankAndShort() {
-        assertThat(User.register(UUID.randomUUID(), "s", Role.TEEN, "  Dana  ", null).displayName())
+        assertThat(User.register(UUID.randomUUID(), "s", Role.TEEN, "  Dana  ", null)
+                        .displayName())
                 .isEqualTo("Dana");
         for (String bad : new String[] {null, "", "   ", "x".repeat(101)}) {
             assertThatThrownBy(() -> User.register(UUID.randomUUID(), "s", Role.TEEN, bad, null))
-                    .isInstanceOfSatisfying(
-                            IdentityException.class,
-                            e -> assertThat(e.error()).isEqualTo(IdentityError.INVALID_DISPLAY_NAME));
+                    .isInstanceOfSatisfying(IdentityException.class, e -> assertThat(e.error())
+                            .isEqualTo(IdentityError.INVALID_DISPLAY_NAME));
         }
     }
 

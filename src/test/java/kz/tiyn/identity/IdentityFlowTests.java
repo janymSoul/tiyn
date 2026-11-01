@@ -48,7 +48,8 @@ class IdentityFlowTests {
 
         assertThat(first.at("/user/role").asText()).isEqualTo("PARENT");
         assertThat(first.at("/user/joinCode").asText()).matches("[A-Z2-9]{6}");
-        assertThat(second.at("/user/id").asText()).isEqualTo(first.at("/user/id").asText());
+        assertThat(second.at("/user/id").asText())
+                .isEqualTo(first.at("/user/id").asText());
         assertThat(second.at("/user/role").asText()).isEqualTo("PARENT");
         assertThat(second.at("/user/displayName").asText()).isEqualTo("Aigul");
     }
@@ -96,7 +97,8 @@ class IdentityFlowTests {
         mvc.perform(get("/me").header("Authorization", bearer(parent)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(parent.at("/user/id").asText()))
-                .andExpect(jsonPath("$.joinCode").value(parent.at("/user/joinCode").asText()));
+                .andExpect(
+                        jsonPath("$.joinCode").value(parent.at("/user/joinCode").asText()));
     }
 
     @Test
@@ -239,8 +241,9 @@ class IdentityFlowTests {
     }
 
     private ResultActions send(String path, String content, String authorization) throws Exception {
-        MockHttpServletRequestBuilder request =
-                MockMvcRequestBuilders.post(path).contentType(MediaType.APPLICATION_JSON).content(content);
+        MockHttpServletRequestBuilder request = MockMvcRequestBuilders.post(path)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(content);
         if (authorization != null) {
             request = request.header("Authorization", authorization);
         }

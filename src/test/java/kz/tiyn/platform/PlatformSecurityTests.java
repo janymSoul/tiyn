@@ -38,7 +38,8 @@ class PlatformSecurityTests {
 
     @Test
     void tokenSignedWithAnotherSecretIsRejected() throws Exception {
-        String token = token(OTHER_SECRET, JWSAlgorithm.HS256, "tiyn", UUID.randomUUID().toString(), "TEEN", future());
+        String token = token(
+                OTHER_SECRET, JWSAlgorithm.HS256, "tiyn", UUID.randomUUID().toString(), "TEEN", future());
 
         expectUnauthenticated(token);
     }
@@ -71,24 +72,24 @@ class PlatformSecurityTests {
 
     @Test
     void tokenWithoutExpiryIsRejected() throws Exception {
-        String token =
-                token(TestTokens.SECRET, JWSAlgorithm.HS256, "tiyn", UUID.randomUUID().toString(), "TEEN", null);
+        String token = token(
+                TestTokens.SECRET, JWSAlgorithm.HS256, "tiyn", UUID.randomUUID().toString(), "TEEN", null);
 
         expectUnauthenticated(token);
     }
 
     @Test
     void tokenFromAnotherIssuerIsRejected() throws Exception {
-        String token =
-                token(TestTokens.SECRET, JWSAlgorithm.HS256, "evil", UUID.randomUUID().toString(), "TEEN", future());
+        String token = token(
+                TestTokens.SECRET, JWSAlgorithm.HS256, "evil", UUID.randomUUID().toString(), "TEEN", future());
 
         expectUnauthenticated(token);
     }
 
     @Test
     void tokenWithUnknownRoleIsRejected() throws Exception {
-        String token =
-                token(TestTokens.SECRET, JWSAlgorithm.HS256, "tiyn", UUID.randomUUID().toString(), "ADMIN", future());
+        String token = token(
+                TestTokens.SECRET, JWSAlgorithm.HS256, "tiyn", UUID.randomUUID().toString(), "ADMIN", future());
 
         expectUnauthenticated(token);
     }

@@ -17,7 +17,13 @@ public final class TestTokens {
     private TestTokens() {}
 
     public static String valid(UUID userId, String role) {
-        return sign(SECRET, JWSAlgorithm.HS256, "tiyn", userId.toString(), role, Instant.now().plusSeconds(600));
+        return sign(
+                SECRET,
+                JWSAlgorithm.HS256,
+                "tiyn",
+                userId.toString(),
+                role,
+                Instant.now().plusSeconds(600));
     }
 
     public static String sign(

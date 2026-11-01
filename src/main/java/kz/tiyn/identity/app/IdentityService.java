@@ -75,8 +75,8 @@ public class IdentityService {
             throw new IdentityException(IdentityError.FORBIDDEN);
         }
         JoinCode code = JoinCode.parse(rawCode);
-        User parent =
-                users.findByJoinCode(code.value()).orElseThrow(() -> new IdentityException(IdentityError.INVALID_JOIN_CODE));
+        User parent = users.findByJoinCode(code.value())
+                .orElseThrow(() -> new IdentityException(IdentityError.INVALID_JOIN_CODE));
         withRetry(() -> linkOnce(parent.id(), teenId));
         return parent.displayName();
     }
@@ -113,7 +113,8 @@ public class IdentityService {
                 events.publishEvent(new FamilyLinked(parentId, teenId, created.generation()));
             } else if (existing.get().relink()) {
                 links.update(existing.get());
-                events.publishEvent(new FamilyLinked(parentId, teenId, existing.get().generation()));
+                events.publishEvent(
+                        new FamilyLinked(parentId, teenId, existing.get().generation()));
             }
             return null;
         });

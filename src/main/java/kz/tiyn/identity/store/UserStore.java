@@ -25,11 +25,17 @@ public class UserStore {
     }
 
     public Optional<User> findByIdpSub(String idpSub) {
-        return dsl.selectFrom(USERS).where(USERS.IDP_SUB.eq(idpSub)).fetchOptional().map(UserStore::toUser);
+        return dsl.selectFrom(USERS)
+                .where(USERS.IDP_SUB.eq(idpSub))
+                .fetchOptional()
+                .map(UserStore::toUser);
     }
 
     public Optional<User> findByJoinCode(String joinCode) {
-        return dsl.selectFrom(USERS).where(USERS.JOIN_CODE.eq(joinCode)).fetchOptional().map(UserStore::toUser);
+        return dsl.selectFrom(USERS)
+                .where(USERS.JOIN_CODE.eq(joinCode))
+                .fetchOptional()
+                .map(UserStore::toUser);
     }
 
     public void insert(User user) {
