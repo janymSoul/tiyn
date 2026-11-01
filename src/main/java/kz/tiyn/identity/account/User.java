@@ -41,7 +41,7 @@ public final class User {
         return id;
     }
 
-    public String idpSub() {
+    String idpSub() {
         return idpSub;
     }
 
