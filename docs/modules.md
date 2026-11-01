@@ -117,7 +117,7 @@ Both are published in the transaction that locks the link row, so changes to one
 
 A milestone is a task with `kind = MILESTONE`: same FSM, same review flow, different grouping in the teen UI. One table, one FSM.
 
-**Tasks inside a milestone.** A task may belong to a milestone through a nullable `milestone_id` (a self-reference within the task module). Each such task has its own reward and goes through its own review; the milestone is approved separately, with its own proof and reward, and does not auto-complete when its tasks are done. Rules enforced in the service: one level only (a milestone's tasks cannot themselves be milestones or hold tasks), a task's deadline is not later than its milestone's, the milestone must be `ASSIGNED` when a task is added, and tasks inside a milestone are one-time, never recurring (also enforced by a CHECK). Cancelling a milestone cancels its open tasks in the same transaction, each emitting `TaskCancelled`; cancelling a task does not affect the milestone. Expiry does not cascade, since a task's deadline never exceeds its milestone's. Progress ("3 of 5 approved") is computed from the tasks.
+**Tasks inside a milestone.** A task may belong to a milestone through a nullable `milestone_id` (a self-reference within the task module). Each such task has its own reward and goes through its own review; the milestone is approved separately, with its own proof and reward, and does not auto-complete when its tasks are done. Rules enforced in the aggregate (`Task.assignInMilestone`, error `invalid_milestone`): one level only (a milestone's tasks cannot themselves be milestones or hold tasks), the task has the same parent and teen as the milestone, a task's deadline is not later than its milestone's, the milestone must be `ASSIGNED` when a task is added, and tasks inside a milestone are one-time, never recurring (also enforced by a CHECK). Creating a child and cancelling a milestone both lock the milestone row, so a child can never land under a milestone that is being cancelled. Cancelling a milestone cancels its open tasks in the same transaction, each emitting `TaskCancelled`; cancelling a task does not affect the milestone. Expiry does not cascade: a task's deadline never exceeds its milestone's (a redo cannot push it past, either), so `ASSIGNED` children expire no later than the milestone, and `SUBMITTED` children stay reviewable. Progress (`approvedTasks` of `totalTasks`, cancelled tasks excluded) is computed from the tasks and returned only by `GET /tasks/{id}` on a milestone.
 
 **Task FSM:**
 ```
@@ -131,11 +131,11 @@ A milestone is a task with `kind = MILESTONE`: same FSM, same review flow, diffe
                ├── expire (system, deadline passed) ──▶ EXPIRED     (terminal)
                └── cancel (parent, from ASSIGNED or SUBMITTED) ──▶ CANCELLED (terminal)
 ```
-There is no `DRAFT`: a task is created directly in `ASSIGNED`. Guards live in the domain: `submit` only from `ASSIGNED`; `approve`/`reject`/`request_redo` only from `SUBMITTED`; `expire` only from `ASSIGNED` (a task submitted before its deadline stays approvable however slow the review); `cancel` from `ASSIGNED` or `SUBMITTED`. Invalid transitions return `ErrInvalidTransition`.
+There is no `DRAFT`: a task is created directly in `ASSIGNED`. Guards live in the domain: `submit` only from `ASSIGNED`; `approve`/`reject`/`request_redo` only from `SUBMITTED`; `expire` only from `ASSIGNED` (a task submitted before its deadline stays approvable however slow the review); `cancel` from `ASSIGNED` or `SUBMITTED`. Invalid transitions raise `TaskException(INVALID_TRANSITION)` (HTTP 409). Errors are defined out of existence where a retry is natural: repeating the same decision (`approve`, `reject`) or `cancel` by the same parent is a no-op, and `expire` silently does nothing unless the task is `ASSIGNED` and past its deadline, so a tick racing a submit or cancel is harmless. `request-redo` accepts an optional new `deadlineAt`; it is required once the old deadline has passed, must be in the future, and may not exceed the milestone's deadline.
 
-**Recurrence: one row per occurrence.** A recurring task (daily/weekly) is a *series*; each period is its own `tasks` row with `series_id` and `occurrence_date` and a `UNIQUE (series_id, occurrence_date)` constraint. Terminal states never "re-arm" — the next period is a new row. This keeps history, makes the reward key (`REWARD-TASK-{taskID}`) naturally unique per occurrence, and makes materialising the next occurrence idempotent. Period boundaries are computed in the series' own timezone (`task_series.timezone`) and stored in UTC. A missed occurrence expires; it carries no automatic penalty (penalties are manual, PAR-04).
+**Recurrence: one row per occurrence.** A recurring task (daily/weekly) is a *series*; each period is its own `tasks` row with `series_id` and `occurrence_date` and a `UNIQUE (series_id, occurrence_date)` constraint. Terminal states never "re-arm" — the next period is a new row. This keeps history, makes the reward key (`REWARD-TASK-{taskID}`) naturally unique per occurrence, and makes materialising the next occurrence idempotent. Period boundaries are computed in the series' own timezone (`task_series.timezone`) and stored in UTC. A missed occurrence expires; it carries no automatic penalty (penalties are manual, PAR-04). **No backfill:** each tick materialises only *today's* occurrence (the date in the series' timezone), and only while its due time is still in the future, so a day the system missed simply never exists. Creating a series materialises today's occurrence in the same transaction. The `series` feature depends on `tasks` through the public `TaskAssignment` interface and the `Occurrence` record; the reverse dependency does not exist. Series tasks cannot belong to a milestone.
 
-**Proof submission.** The client sends the image (or text) in the submit request with an `Idempotency-Key`. The task service passes the bytes to `media.Storage.Put` first (idempotent by key), then runs one transaction that applies the FSM transition, stores `task_proofs`, and publishes the event. If the transaction fails, a retry re-puts to the same object key (overwrite, no duplicate) and tries the transition again.
+**Proof submission.** The client sends the image (multipart) or text (JSON) in the submit request with a required `Idempotency-Key`. The task service passes image bytes to `media.Storage.put` first, outside any transaction, then runs one transaction that claims the key, applies the FSM transition, stores `task_proofs`, and publishes the event. The claim is scoped to the attempt (`taskId:attempt:key`), so a replay within one attempt is a no-op that returns the current task, while the same key after a redo starts a new attempt. Every `put` returns a fresh unique object key, so a replay can never overwrite the object a stored proof points to; the cost is an orphan blob after a failed or replayed submit, which a storage lifecycle rule should expire.
 
 **Offers (sync interface):**
 ```java
@@ -148,11 +148,29 @@ Used by the dashboard handler to show "Pending" funds (TEN-01). Pending is task-
 
 **Publishes:**
 - `TaskAssigned(taskId, teenId, kind, rewardAmount, currency)` → notification (tell the teen: "new task / milestone").
-- `TaskSubmitted(taskId, teenId, proofRef)` → notification (tell the parent).
+- `TaskSubmitted(taskId, parentId, teenId)` → notification (tell the parent). Events carry identifiers only: the proof itself is read through `GET /tasks/{id}/proofs`, which mints a fresh presigned URL at view time.
 - `TaskApproved(taskId, teenId, rewardAmount, currency)` → ledger (credit), notification (tell the teen). *This is the central event of the system* (architecture doc calls it `TaskCompletedEvent`; we name it `TaskApproved` for precision).
 - `TaskRejected`, `TaskRedoRequested`, `TaskCancelled`, `TaskExpired` → notification.
 
-**Time-driven work** (`Ticker`, see below): expire `ASSIGNED` tasks past their deadline; materialise the next occurrence of each recurring series.
+**Time-driven work** (`Ticker`, see below): `TaskExpiryTicker` expires `ASSIGNED` tasks past their deadline, each in its own short transaction; `SeriesTicker` materialises today's occurrence of each active recurring series.
+
+**Reacts to** `FamilyUnlinked`: `tasks` cancels the pair's open tasks and `series` closes the pair's series, each in its own listener (separate publications, independent retries). Both re-check `areLinked` first, so a late replay after a relink does nothing.
+
+**HTTP API** (all routes need a bearer token; errors are `{"error": "<code>"}`):
+
+| Route | Caller | Purpose |
+|---|---|---|
+| `POST /tasks` | parent | create a task or milestone; optional `milestoneId` |
+| `GET /tasks?teenId&state` | parent or teen | list (a teen sees only their own; capped at 200) |
+| `GET /tasks/{id}` | parent or teen | detail; milestones include progress |
+| `POST /tasks/{id}/submit` | teen | multipart `file` or JSON `{text}`; `Idempotency-Key` required |
+| `POST /tasks/{id}/approve`, `/reject`, `/request-redo` | parent | review; reject and redo take `{note?}`, redo also `{deadlineAt?}` |
+| `POST /tasks/{id}/cancel` | parent | cancel; a milestone cancels its open tasks |
+| `GET /tasks/{id}/proofs` | parent | proofs with presigned view URLs |
+| `POST /task-series` | parent | create a daily or weekly series (`recurrence`, `dueTime`, optional `timezone`, `startsOn`) |
+| `DELETE /task-series/{id}` | parent | close a series (repeatable) |
+
+Error codes: `not_found` 404, `forbidden` 403; `invalid_transition`, `deadline_passed`, `concurrent_modification` 409; `invalid_reward`, `invalid_deadline`, `invalid_title`, `invalid_note`, `invalid_milestone`, `invalid_kind`, `invalid_schedule`, `invalid_filter`, `unsupported_proof`, `invalid_idempotency_key`, `teen_required` 422. Rewards are capped by `tiyn.task.max-reward-amount` (default 10,000,000 minor units).
 
 **Depends on:** `identity.FamilyDirectory` (authorize that the caller parents this teen), `media.Storage` (store the proof image).
 
@@ -212,15 +230,17 @@ public interface BalanceReader {
 ```java
 public interface Storage {
 
-    String put(String scope, String idempotencyKey, String contentType, InputStream body);
+    String put(String scope, String contentType, InputStream body);
 
     URI presignView(String objectKey);
 }
 ```
-`put` validates (content-type allowlist, size cap), strips metadata such as EXIF/GPS, and stores the image. The object key is a deterministic function of scope and idempotency key, so a retried `put` overwrites the same object instead of creating a duplicate (PRD "Important" note). `presignView` returns a short-lived GET URL for parent review.
+`put` validates (content-type allowlist, size cap), strips metadata such as EXIF/GPS, and stores the image. Each `put` returns a new unique object key; idempotency belongs to the task service, which claims the submit's `Idempotency-Key` in its transaction. `presignView` returns a short-lived GET URL for parent review.
 Called by the task module on submission and review.
 
-**Idempotent upload:** object key = `proofs/{scope}/{sha256(idemKey)}`. A retry for the same key hits the same object. If the later DB transaction fails, the object is orphaned only until the retry overwrites it; a periodic sweep of unreferenced objects can be added if it ever matters.
+**Uploads and orphans:** object key = `proofs/{scope}/{uuid}`. A deterministic key was rejected because a replay with a different image would overwrite the object a stored proof points to. The price is an orphan object after a failed or replayed submit; expire unreferenced objects with a storage lifecycle rule.
+
+**Current implementation:** only the in-memory `InMemoryStorage` exists (a default bean, replaced when a real `Storage` bean is defined). It enforces the content-type allowlist (jpeg, png, webp) and a 5 MB cap and returns `memory://` view URLs. The S3 adapter and EXIF stripping are step 7.
 
 **Why bytes pass through.** The teen client never sees S3, never holds an object key, and cannot submit a key for an object that was never uploaded. The server can enforce type and size and strip location metadata from photos of minors. Cost: image bytes use API bandwidth and memory, and the platform's request-size limit applies (set the ingress body limit accordingly). Clients compress before sending, so a few MB per request is expected. If scale demands it, switching to pre-signed PUT is a change inside this module plus the task submit path.
 
@@ -255,11 +275,11 @@ public interface Ticker {
     void tick(Instant now);
 }
 ```
-`tick` must be idempotent and safe to run concurrently with itself: batches use `FOR UPDATE SKIP LOCKED`, and transitions are guarded by the FSM and the version column.
+`tick` must be idempotent and safe to run concurrently with itself: each item is processed in its own short transaction, and transitions are guarded by the FSM (a no-op when the state no longer fits) and the version column. A failure on one item is logged and does not block the rest of the batch. Tickers that take an explicit `now` are tested by calling `tick(Instant)` with chosen instants, never by sleeping.
 
 **Decision: `@Scheduled` plus ShedLock inside the API pods.** `TickScheduler` (in `kz.tiyn.platform.tick`) runs every `Ticker` on a fixed delay (`TICK_INTERVAL`, default one minute). A ShedLock row in `platform.shedlock` makes one replica run each cycle. A ticker that throws is logged and does not stop the others. There is no CronJob: booting a JVM every minute would cost far more than the work, and the lock only avoids duplicate effort, since correctness already comes from idempotent tickers.
 
-Events do not need a ticker. Spring Modulith's event publication registry delivers them (`docs/events-outbox.md`).
+Events do not need a ticker to be delivered, but redelivery of failed ones does: `EventResubmitTicker` asks the registry to resubmit publications still incomplete after `tiyn.events.resubmit-after` (default one minute; `docs/events-outbox.md`).
 
 Tickers run one after another under a single lock, so a slow ticker delays the rest. A job that needs its own cadence gets its own `@Scheduled` method and lock name.
 
