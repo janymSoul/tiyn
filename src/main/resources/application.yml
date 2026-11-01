@@ -39,6 +39,7 @@ tiyn:
   media:
     s3:
       endpoint: ${S3_ENDPOINT:}
+      public-endpoint: ${S3_PUBLIC_ENDPOINT:}
       region: ${S3_REGION:us-east-1}
       bucket: ${S3_BUCKET:}
       access-key: ${S3_ACCESS_KEY:}

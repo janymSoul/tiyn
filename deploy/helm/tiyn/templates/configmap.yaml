@@ -13,6 +13,9 @@ data:
   DASHBOARD_MAX_TASKS: {{ .Values.config.dashboard.maxTasks | quote }}
   {{- if eq .Values.config.mediaStorage "s3" }}
   S3_ENDPOINT: {{ required "config.s3.endpoint is required for s3 storage" .Values.config.s3.endpoint | quote }}
+  {{- with .Values.config.s3.publicEndpoint }}
+  S3_PUBLIC_ENDPOINT: {{ . | quote }}
+  {{- end }}
   S3_REGION: {{ .Values.config.s3.region | quote }}
   S3_BUCKET: {{ required "config.s3.bucket is required for s3 storage" .Values.config.s3.bucket | quote }}
   S3_VIEW_URL_TTL: {{ .Values.config.s3.viewUrlTtl | quote }}

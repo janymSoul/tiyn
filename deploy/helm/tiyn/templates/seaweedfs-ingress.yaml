@@ -1,0 +1,34 @@
+{{- if and .Values.seaweedfs.enabled .Values.seaweedfs.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "tiyn.name" . }}-seaweedfs
+  labels:
+    {{- include "tiyn.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 10m
+    {{- with .Values.seaweedfs.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.seaweedfs.ingress.className }}
+  ingressClassName: {{ .Values.seaweedfs.ingress.className }}
+  {{- end }}
+  {{- if .Values.seaweedfs.ingress.tlsSecret }}
+  tls:
+    - hosts:
+        - {{ required "seaweedfs.ingress.host is required" .Values.seaweedfs.ingress.host }}
+      secretName: {{ .Values.seaweedfs.ingress.tlsSecret }}
+  {{- end }}
+  rules:
+    - host: {{ required "seaweedfs.ingress.host is required" .Values.seaweedfs.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "tiyn.name" . }}-seaweedfs
+                port:
+                  number: 8333
+{{- end }}
