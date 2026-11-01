@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.task.tables.records.TasksRecord;
@@ -81,6 +82,37 @@ class TaskStore {
         return dsl.selectFrom(TASKS).where(where).orderBy(TASKS.CREATED_AT.desc()).limit(200).fetch().stream()
                 .map(this::toTask)
                 .toList();
+    }
+
+    List<Task> board(UUID teenId, Instant since, int limit) {
+        List<String> open = List.of(TaskState.ASSIGNED.name(), TaskState.SUBMITTED.name());
+        var isOpen = TASKS.STATE.in(open);
+        var settledAt = DSL.coalesce(TASKS.DECIDED_AT, TASKS.UPDATED_AT);
+        return dsl.selectFrom(TASKS)
+                .where(TASKS.TEEN_ID.eq(teenId))
+                .and(isOpen.or(settledAt.ge(Instants.toUtc(since))))
+                .orderBy(
+                        DSL.when(isOpen, 0).otherwise(1).asc(),
+                        DSL.when(isOpen, TASKS.DEADLINE_AT).asc(),
+                        settledAt.desc(),
+                        TASKS.ID)
+                .limit(limit)
+                .fetch()
+                .map(this::toTask);
+    }
+
+    Map<UUID, MilestoneProgress> progressOf(List<UUID> milestoneIds) {
+        if (milestoneIds.isEmpty()) {
+            return Map.of();
+        }
+        var total = DSL.count();
+        var approved = DSL.count().filterWhere(TASKS.STATE.eq(TaskState.APPROVED.name()));
+        return dsl.select(TASKS.MILESTONE_ID, approved, total)
+                .from(TASKS)
+                .where(TASKS.MILESTONE_ID.in(milestoneIds))
+                .and(TASKS.STATE.ne(TaskState.CANCELLED.name()))
+                .groupBy(TASKS.MILESTONE_ID)
+                .fetchMap(r -> r.value1(), r -> new MilestoneProgress(r.value2(), r.value3()));
     }
 
     void lock(UUID id) {
