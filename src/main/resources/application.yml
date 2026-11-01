@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: tiyn
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/tiyn}
+    username: ${DATABASE_USER:tiyn}
+    password: ${DATABASE_PASSWORD:tiyn}
+    hikari:
+      maximum-pool-size: ${DB_MAX_CONNS:20}
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  flyway:
+    locations: classpath:db/migration
+  modulith:
+    events:
+      jdbc:
+        schema-initialization:
+          enabled: false
+      republish-outstanding-events-on-restart: true
+
+tiyn:
+  task:
+    max-reward-amount: ${TASK_MAX_REWARD_AMOUNT:10000000}
+  jwt:
+    secret: ${JWT_SECRET}
+    ttl: ${JWT_TTL:168h}
+  google:
+    client-ids: ${GOOGLE_CLIENT_IDS}
+  tick:
+    interval: ${TICK_INTERVAL:PT1M}
+
+server:
+  port: ${HTTP_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

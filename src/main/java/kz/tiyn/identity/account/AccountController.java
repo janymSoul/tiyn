@@ -1,0 +1,33 @@
+package kz.tiyn.identity.account;
+
+import kz.tiyn.identity.account.dto.SignInRequest;
+import kz.tiyn.identity.account.dto.SignInResponse;
+import kz.tiyn.identity.account.dto.SignInResult;
+import kz.tiyn.identity.account.dto.UserResponse;
+import kz.tiyn.platform.security.Principal;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+class AccountController {
+
+    private final AccountService service;
+
+    AccountController(AccountService service) {
+        this.service = service;
+    }
+
+    @PostMapping("/auth/google")
+    SignInResponse signIn(@RequestBody SignInRequest request) {
+        SignInResult result = service.signIn(request.idToken(), request.role(), request.displayName());
+        return new SignInResponse(result.token(), UserResponse.from(result.user()));
+    }
+
+    @GetMapping("/me")
+    UserResponse me(@AuthenticationPrincipal Principal principal) {
+        return UserResponse.from(service.requireUser(principal.userId()));
+    }
+}
