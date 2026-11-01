@@ -33,17 +33,18 @@ CREATE TABLE event_publication (
 
 ## Publishing an event (producer side)
 
-Producers publish inside their service transaction and never call listeners directly:
+Aggregates only *record* events as facts (an `EventLog` they own); they never publish. The producing store's `save` writes the aggregate and then publishes the events it recorded, so the write and the publication happen in the service's transaction and a service cannot forget the second half. Nothing calls listeners directly:
 
 ```java
 @Transactional
 public void approveTask(ApproveTask cmd) {
     Task task = tasks.findForUpdate(cmd.taskId());
     task.approve(cmd.parentId(), clock.instant());
-    tasks.save(task);
-    publisher.publishEvent(new TaskApproved(task.id(), task.teenId(), task.rewardAmount(), task.currency()));
+    tasks.save(task);   // UPDATE with the version check, then publishes the TaskApproved the task recorded
 }
 ```
+
+`save` does nothing when the aggregate recorded no events (a repeated, no-op command), and it publishes only after the write succeeded: a version conflict throws before any event leaves. A store publishes only the events of its own aggregate; anything spanning aggregates stays in the service.
 
 Events are records in the producing module's **root package**, so other modules may depend on them and nothing else of the producer.
 

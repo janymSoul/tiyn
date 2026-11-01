@@ -13,6 +13,7 @@ import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
@@ -20,13 +21,15 @@ import org.springframework.stereotype.Repository;
 class TaskStore {
 
     private final DSLContext dsl;
+    private final ApplicationEventPublisher events;
 
-    TaskStore(DSLContext dsl) {
+    TaskStore(DSLContext dsl, ApplicationEventPublisher events) {
         this.dsl = dsl;
+        this.events = events;
     }
 
     boolean insert(Task task) {
-        return dsl.insertInto(TASKS)
+        boolean inserted = dsl.insertInto(TASKS)
                         .set(TASKS.ID, task.id())
                         .set(TASKS.SERIES_ID, task.seriesId())
                         .set(TASKS.OCCURRENCE_DATE, task.occurrenceDate())
@@ -43,6 +46,10 @@ class TaskStore {
                         .onConflictDoNothing()
                         .execute()
                 == 1;
+        if (inserted) {
+            task.pullEvents().forEach(events::publishEvent);
+        }
+        return inserted;
     }
 
     Optional<Task> find(UUID id) {
@@ -118,7 +125,11 @@ class TaskStore {
         return sum == null ? 0 : sum;
     }
 
-    void update(Task task) {
+    boolean save(Task task) {
+        List<Object> raised = task.pullEvents();
+        if (raised.isEmpty()) {
+            return false;
+        }
         int updated = dsl.update(TASKS)
                 .set(TASKS.STATE, task.state().name())
                 .set(TASKS.DEADLINE_AT, Instants.toUtc(task.deadlineAt()))
@@ -145,6 +156,8 @@ class TaskStore {
         } catch (DuplicateKeyException e) {
             throw new ConflictException(e);
         }
+        raised.forEach(events::publishEvent);
+        return true;
     }
 
     private Task toTask(TasksRecord r) {

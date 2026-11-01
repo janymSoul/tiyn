@@ -12,7 +12,7 @@ The backend is Java 21, Spring Boot 3.5 and Spring Modulith, with jOOQ over Post
 
 3. **Domain models are finite state machines, and they are pure.** Aggregates validate their own transitions with no dependency on the database, Spring web or the event publisher. Persistence is explicit and lives outside the domain. See `docs/modules.md` and `docs/conventions.md`.
 
-4. **Every cross-module effect is a published event.** Publish with `ApplicationEventPublisher` inside the same transaction; Spring Modulith persists a publication per listener and delivers it at-least-once. Listeners must be idempotent and state-based. See `docs/events-outbox.md`.
+4. **Every cross-module effect is a published event.** Aggregates record events and the store's `save` publishes them (through `ApplicationEventPublisher`) inside the service's transaction, so never publish from a service by hand; Spring Modulith persists a publication per listener and delivers it at-least-once. Listeners must be idempotent and state-based. See `docs/events-outbox.md`.
 
 5. **Code is tested before it is called done.** Pure domain logic → unit tests (fast, no Spring). Service + HTTP + events → integration tests against a real Postgres (Testcontainers, `@IntegrationTest`). A change without tests is not complete. See `docs/testing.md`.
 

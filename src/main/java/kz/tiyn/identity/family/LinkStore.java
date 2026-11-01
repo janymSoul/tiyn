@@ -2,12 +2,14 @@ package kz.tiyn.identity.family;
 
 import static kz.tiyn.platform.jooq.identity.Tables.FAMILY_LINKS;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.identity.tables.records.FamilyLinksRecord;
 import kz.tiyn.platform.time.Instants;
 import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.DSLContext;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
@@ -15,9 +17,11 @@ import org.springframework.stereotype.Repository;
 class LinkStore {
 
     private final DSLContext dsl;
+    private final ApplicationEventPublisher events;
 
-    LinkStore(DSLContext dsl) {
+    LinkStore(DSLContext dsl, ApplicationEventPublisher events) {
         this.dsl = dsl;
+        this.events = events;
     }
 
     Optional<FamilyLink> findForUpdate(UUID parentId, UUID teenId) {
@@ -37,9 +41,14 @@ class LinkStore {
     }
 
     void save(FamilyLink link) {
+        List<Object> raised = link.pullEvents();
+        if (raised.isEmpty()) {
+            return;
+        }
         if (update(link) == 0) {
             insert(link);
         }
+        raised.forEach(events::publishEvent);
     }
 
     private void insert(FamilyLink link) {

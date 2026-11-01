@@ -19,7 +19,6 @@ import kz.tiyn.task.tasks.dto.CreateTaskRequest;
 import kz.tiyn.task.tasks.dto.ProofResponse;
 import kz.tiyn.task.tasks.error.TaskError;
 import kz.tiyn.task.tasks.error.TaskException;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -31,7 +30,6 @@ class TaskService {
     private final FamilyDirectory family;
     private final Storage storage;
     private final TransactionTemplate tx;
-    private final ApplicationEventPublisher events;
     private final TaskProperties properties;
     private final Clock clock;
 
@@ -41,7 +39,6 @@ class TaskService {
             FamilyDirectory family,
             Storage storage,
             TransactionTemplate tx,
-            ApplicationEventPublisher events,
             TaskProperties properties,
             Clock clock) {
         this.tasks = tasks;
@@ -49,7 +46,6 @@ class TaskService {
         this.family = family;
         this.storage = storage;
         this.tx = tx;
-        this.events = events;
         this.properties = properties;
         this.clock = clock;
     }
@@ -81,7 +77,6 @@ class TaskService {
                             clock.instant(),
                             properties.maxRewardAmount());
             tasks.insert(task);
-            task.pullEvents().forEach(events::publishEvent);
             return task;
         });
     }
@@ -139,15 +134,15 @@ class TaskService {
             if (task.kind() == TaskKind.MILESTONE) {
                 task = tasks.findLocked(id).orElseThrow(() -> new TaskException(TaskError.NOT_FOUND));
                 task.cancel(caller.userId(), now);
-                saveAndPublish(task);
+                tasks.save(task);
                 for (Task child : tasks.findOpenInMilestone(id)) {
                     child.cancel(caller.userId(), now);
-                    saveAndPublish(child);
+                    tasks.save(child);
                 }
                 return task;
             }
             task.cancel(caller.userId(), now);
-            saveAndPublish(task);
+            tasks.save(task);
             return task;
         }));
     }
@@ -160,7 +155,7 @@ class TaskService {
             Instant now = clock.instant();
             for (Task task : tasks.findOpenFor(parentId, teenId)) {
                 task.cancel(parentId, now);
-                saveAndPublish(task);
+                tasks.save(task);
             }
         });
     }
@@ -169,7 +164,7 @@ class TaskService {
         return Boolean.TRUE.equals(tx.execute(status -> tasks.find(id)
                 .map(task -> {
                     task.expire(now);
-                    return saveAndPublish(task);
+                    return tasks.save(task);
                 })
                 .orElse(false)));
     }
@@ -198,19 +193,9 @@ class TaskService {
                 return task;
             }
             task.submit(caller.userId(), UUID.randomUUID(), objectKey, text, clock.instant());
-            saveAndPublish(task);
+            tasks.save(task);
             return task;
         }));
-    }
-
-    private boolean saveAndPublish(Task task) {
-        List<Object> raised = task.pullEvents();
-        if (raised.isEmpty()) {
-            return false;
-        }
-        tasks.update(task);
-        raised.forEach(events::publishEvent);
-        return true;
     }
 
     private Instant milestoneDeadline(Task task) {
@@ -225,7 +210,7 @@ class TaskService {
         return retry(() -> tx.execute(status -> {
             Task task = authorised(caller, id);
             decision.apply(task, clock.instant());
-            saveAndPublish(task);
+            tasks.save(task);
             return task;
         }));
     }
