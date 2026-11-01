@@ -1,0 +1,61 @@
+image:
+  repository: ghcr.io/janymsoul/tiyn
+  tag: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 768Mi
+
+config:
+  mediaStorage: ""
+  notificationSender: ""
+  s3:
+    endpoint: ""
+    region: us-east-1
+    bucket: ""
+    viewUrlTtl: PT10M
+  tickInterval: PT1M
+  dashboard:
+    recentWindow: P7D
+    maxTasks: 50
+  extra: {}
+
+secret:
+  create: false
+  existingSecret: ""
+  values: {}
+
+fcm:
+  existingSecret: ""
+  secretKey: credentials.json
+  dryRun: false
+
+service:
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  tlsSecret: ""
+  annotations: {}
+
+postgres:
+  enabled: false
+  image: postgres:16
+  database: tiyn
+  user: tiyn
+  storage: 2Gi
+
+seaweedfs:
+  enabled: false
+  image: chrislusf/seaweedfs:4.48
+  awsCliImage: amazon/aws-cli:2.17.0
+  storage: 2Gi

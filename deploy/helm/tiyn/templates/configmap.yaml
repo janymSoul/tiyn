@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tiyn.name" . }}-config
+  labels:
+    {{- include "tiyn.labels" . | nindent 4 }}
+data:
+  HTTP_PORT: "8080"
+  TIYN_MEDIA_STORAGE: {{ required "config.mediaStorage must be s3 or memory" .Values.config.mediaStorage | quote }}
+  TIYN_NOTIFICATION_SENDER: {{ required "config.notificationSender must be fcm or logging" .Values.config.notificationSender | quote }}
+  TICK_INTERVAL: {{ .Values.config.tickInterval | quote }}
+  DASHBOARD_RECENT_WINDOW: {{ .Values.config.dashboard.recentWindow | quote }}
+  DASHBOARD_MAX_TASKS: {{ .Values.config.dashboard.maxTasks | quote }}
+  {{- if eq .Values.config.mediaStorage "s3" }}
+  S3_ENDPOINT: {{ required "config.s3.endpoint is required for s3 storage" .Values.config.s3.endpoint | quote }}
+  S3_REGION: {{ .Values.config.s3.region | quote }}
+  S3_BUCKET: {{ required "config.s3.bucket is required for s3 storage" .Values.config.s3.bucket | quote }}
+  S3_VIEW_URL_TTL: {{ .Values.config.s3.viewUrlTtl | quote }}
+  {{- end }}
+  {{- if eq .Values.config.notificationSender "fcm" }}
+  FCM_CREDENTIALS_FILE: /etc/fcm/{{ .Values.fcm.secretKey }}
+  FCM_DRY_RUN: {{ .Values.fcm.dryRun | quote }}
+  {{- end }}
+  {{- range $key, $value := .Values.config.extra }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
