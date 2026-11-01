@@ -202,6 +202,20 @@ class TaskFlowTests {
     }
 
     @Test
+    void cancellingAMilestoneTwiceIsANoOp() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID milestone = createWith(f, "MILESTONE", null, 7200);
+        UUID child = createWith(f, "TASK", milestone, 3600);
+        fx.send("/tasks/" + child + "/submit", "{\"text\":\"a\"}", f.teen().bearer(), "Idempotency-Key", "x1");
+        fx.send("/tasks/" + milestone + "/cancel", "", f.parent().bearer()).andExpect(status().isOk());
+
+        fx.send("/tasks/" + milestone + "/cancel", "", f.parent().bearer()).andExpect(status().isOk());
+
+        mvc.perform(get("/tasks/" + child).header("Authorization", f.parent().bearer()))
+                .andExpect(jsonPath("$.state").value("CANCELLED"));
+    }
+
+    @Test
     void invalidMilestoneLinksAreRejected() throws Exception {
         Family f = fx.linkedFamily();
         Family other = fx.linkedFamily();

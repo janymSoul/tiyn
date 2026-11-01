@@ -31,10 +31,13 @@ class TaskExpiryTicker implements Ticker {
             int expired = 0;
             for (UUID id : batch) {
                 try {
-                    service.expire(id, now);
-                    expired++;
+                    if (service.expire(id, now)) {
+                        expired++;
+                    }
                 } catch (ConflictException e) {
                     log.debug("task {} changed while expiring, retrying next tick", id);
+                } catch (RuntimeException e) {
+                    log.error("task {} could not be expired", id, e);
                 }
             }
             if (expired == 0) {

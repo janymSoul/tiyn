@@ -70,20 +70,20 @@ class TaskService {
                 request.rewardAmount(),
                 request.currency(),
                 request.deadlineAt());
-        Task task = request.milestoneId() == null
-                ? Task.assign(UUID.randomUUID(), draft, clock.instant(), properties.maxRewardAmount())
-                : Task.assignInMilestone(
-                        UUID.randomUUID(),
-                        tasks.find(request.milestoneId())
-                                .orElseThrow(() -> new TaskException(TaskError.INVALID_MILESTONE)),
-                        draft,
-                        clock.instant(),
-                        properties.maxRewardAmount());
-        tx.executeWithoutResult(status -> {
+        return tx.execute(status -> {
+            Task task = request.milestoneId() == null
+                    ? Task.assign(UUID.randomUUID(), draft, clock.instant(), properties.maxRewardAmount())
+                    : Task.assignInMilestone(
+                            UUID.randomUUID(),
+                            tasks.findLocked(request.milestoneId())
+                                    .orElseThrow(() -> new TaskException(TaskError.INVALID_MILESTONE)),
+                            draft,
+                            clock.instant(),
+                            properties.maxRewardAmount());
             tasks.insert(task);
             task.pullEvents().forEach(events::publishEvent);
+            return task;
         });
-        return task;
     }
 
     Task get(Principal caller, UUID id) {
@@ -127,7 +127,8 @@ class TaskService {
     }
 
     Task requestRedo(Principal caller, UUID id, String note, Instant newDeadlineAt) {
-        return decide(caller, id, (t, now) -> t.requestRedo(caller.userId(), note, newDeadlineAt, now));
+        return decide(
+                caller, id, (t, now) -> t.requestRedo(caller.userId(), note, newDeadlineAt, milestoneDeadline(t), now));
     }
 
     Task cancel(Principal caller, UUID id) {
@@ -136,22 +137,28 @@ class TaskService {
             Task task = authorised(caller, id);
             Instant now = clock.instant();
             if (task.kind() == TaskKind.MILESTONE) {
-                tasks.findOpenInMilestone(id).forEach(child -> cancelAndSave(child, caller.userId(), now));
+                task = tasks.findLocked(id).orElseThrow(() -> new TaskException(TaskError.NOT_FOUND));
+                task.cancel(caller.userId(), now);
+                saveAndPublish(task);
+                for (Task child : tasks.findOpenInMilestone(id)) {
+                    child.cancel(caller.userId(), now);
+                    saveAndPublish(child);
+                }
+                return task;
             }
-            cancelAndSave(task, caller.userId(), now);
+            task.cancel(caller.userId(), now);
+            saveAndPublish(task);
             return task;
         }));
     }
 
-    void expire(UUID id, Instant now) {
-        tx.executeWithoutResult(status -> tasks.find(id).ifPresent(task -> {
-            task.expire(now);
-            List<Object> raised = task.pullEvents();
-            if (!raised.isEmpty()) {
-                tasks.update(task);
-                raised.forEach(events::publishEvent);
-            }
-        }));
+    boolean expire(UUID id, Instant now) {
+        return Boolean.TRUE.equals(tx.execute(status -> tasks.find(id)
+                .map(task -> {
+                    task.expire(now);
+                    return saveAndPublish(task);
+                })
+                .orElse(false)));
     }
 
     MilestoneProgress progress(Task milestone) {
@@ -178,19 +185,26 @@ class TaskService {
                 return task;
             }
             task.submit(caller.userId(), UUID.randomUUID(), objectKey, text, clock.instant());
-            tasks.update(task);
-            task.pullEvents().forEach(events::publishEvent);
+            saveAndPublish(task);
             return task;
         }));
     }
 
-    private void cancelAndSave(Task task, UUID parentId, Instant now) {
-        task.cancel(parentId, now);
+    private boolean saveAndPublish(Task task) {
         List<Object> raised = task.pullEvents();
-        if (!raised.isEmpty()) {
-            tasks.update(task);
-            raised.forEach(events::publishEvent);
+        if (raised.isEmpty()) {
+            return false;
         }
+        tasks.update(task);
+        raised.forEach(events::publishEvent);
+        return true;
+    }
+
+    private Instant milestoneDeadline(Task task) {
+        if (task.milestoneId() == null) {
+            return null;
+        }
+        return tasks.find(task.milestoneId()).map(Task::deadlineAt).orElse(null);
     }
 
     private Task decide(Principal caller, UUID id, Decision decision) {
@@ -198,11 +212,7 @@ class TaskService {
         return retry(() -> tx.execute(status -> {
             Task task = authorised(caller, id);
             decision.apply(task, clock.instant());
-            List<Object> raised = task.pullEvents();
-            if (!raised.isEmpty()) {
-                tasks.update(task);
-                raised.forEach(events::publishEvent);
-            }
+            saveAndPublish(task);
             return task;
         }));
     }

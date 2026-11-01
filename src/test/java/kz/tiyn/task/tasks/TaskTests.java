@@ -114,7 +114,7 @@ class TaskTests {
         assertThat(rejected.pullEvents()).singleElement().isInstanceOf(TaskRejected.class);
 
         Task redo = submitted();
-        redo.requestRedo(PARENT, "again", null, NOW);
+        redo.requestRedo(PARENT, "again", null, null, NOW);
         assertThat(redo.state()).isEqualTo(TaskState.ASSIGNED);
         assertThat(redo.pullEvents()).singleElement().isInstanceOf(TaskRedoRequested.class);
         redo.submit(TEEN, UUID.randomUUID(), null, "second try", NOW);
@@ -125,7 +125,7 @@ class TaskTests {
     void decisionsAreOnlyPossibleFromSubmittedAndConflictingDecisionsFail() {
         assertError(() -> assigned().approve(PARENT, NOW), TaskError.INVALID_TRANSITION);
         assertError(() -> assigned().reject(PARENT, null, NOW), TaskError.INVALID_TRANSITION);
-        assertError(() -> assigned().requestRedo(PARENT, null, null, NOW), TaskError.INVALID_TRANSITION);
+        assertError(() -> assigned().requestRedo(PARENT, null, null, null, NOW), TaskError.INVALID_TRANSITION);
         Task approved = submitted();
         approved.approve(PARENT, NOW);
         assertError(() -> approved.reject(PARENT, null, NOW), TaskError.INVALID_TRANSITION);
@@ -183,14 +183,14 @@ class TaskTests {
     @Test
     void redoAfterTheDeadlineRequiresANewFutureDeadline() {
         Instant afterDeadline = NOW.plusSeconds(7200);
-        assertError(() -> submitted().requestRedo(PARENT, null, null, afterDeadline), TaskError.INVALID_DEADLINE);
+        assertError(() -> submitted().requestRedo(PARENT, null, null, null, afterDeadline), TaskError.INVALID_DEADLINE);
         assertError(
-                () -> submitted().requestRedo(PARENT, null, afterDeadline.minusSeconds(1), afterDeadline),
+                () -> submitted().requestRedo(PARENT, null, afterDeadline.minusSeconds(1), null, afterDeadline),
                 TaskError.INVALID_DEADLINE);
 
         Task task = submitted();
         Instant extended = afterDeadline.plusSeconds(3600);
-        task.requestRedo(PARENT, null, extended, afterDeadline);
+        task.requestRedo(PARENT, null, extended, null, afterDeadline);
 
         assertThat(task.deadlineAt()).isEqualTo(extended);
         assertThat(task.state()).isEqualTo(TaskState.ASSIGNED);
@@ -199,11 +199,11 @@ class TaskTests {
     @Test
     void redoBeforeTheDeadlineKeepsItUnlessANewOneIsGiven() {
         Task kept = submitted();
-        kept.requestRedo(PARENT, null, null, NOW);
+        kept.requestRedo(PARENT, null, null, null, NOW);
         assertThat(kept.deadlineAt()).isEqualTo(NOW.plusSeconds(3600));
 
         Task moved = submitted();
-        moved.requestRedo(PARENT, null, NOW.plusSeconds(9000), NOW);
+        moved.requestRedo(PARENT, null, NOW.plusSeconds(9000), null, NOW);
         assertThat(moved.deadlineAt()).isEqualTo(NOW.plusSeconds(9000));
     }
 
@@ -291,5 +291,18 @@ class TaskTests {
         cancelled.expire(NOW.plusSeconds(9000));
         assertThat(cancelled.state()).isEqualTo(TaskState.CANCELLED);
         assertThat(cancelled.pullEvents()).isEmpty();
+    }
+
+    @Test
+    void redoCannotMoveTheDeadlineBeyondTheMilestones() {
+        Instant ceiling = NOW.plusSeconds(7200);
+
+        assertError(
+                () -> submitted().requestRedo(PARENT, null, ceiling.plusSeconds(1), ceiling, NOW),
+                TaskError.INVALID_DEADLINE);
+
+        Task task = submitted();
+        task.requestRedo(PARENT, null, ceiling, ceiling, NOW);
+        assertThat(task.deadlineAt()).isEqualTo(ceiling);
     }
 }

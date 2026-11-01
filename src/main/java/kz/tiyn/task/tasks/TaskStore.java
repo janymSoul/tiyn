@@ -47,6 +47,14 @@ class TaskStore {
         return dsl.selectFrom(TASKS).where(TASKS.ID.eq(id)).fetchOptional().map(this::toTask);
     }
 
+    Optional<Task> findLocked(UUID id) {
+        return dsl.selectFrom(TASKS)
+                .where(TASKS.ID.eq(id))
+                .forUpdate()
+                .fetchOptional()
+                .map(this::toTask);
+    }
+
     List<Task> list(UUID parentId, UUID teenId, TaskState state) {
         Condition where = DSL.noCondition();
         if (parentId != null) {
