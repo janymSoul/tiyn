@@ -21,6 +21,7 @@
     <testcontainers-jooq-codegen.version>0.0.4</testcontainers-jooq-codegen.version>
     <shedlock.version>6.3.1</shedlock.version>
     <awssdk.version>2.29.52</awssdk.version>
+    <firebase-admin.version>9.4.3</firebase-admin.version>
   </properties>
 
   <dependencyManagement>
@@ -110,6 +111,11 @@
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>url-connection-client</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.google.firebase</groupId>
+      <artifactId>firebase-admin</artifactId>
+      <version>${firebase-admin.version}</version>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
