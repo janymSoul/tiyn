@@ -3,12 +3,11 @@ CREATE SCHEMA ledger;
 CREATE TABLE ledger.wallets (
     teen_id        UUID,
     currency       platform.currency,
-    balance_amount BIGINT      NOT NULL DEFAULT 0 CHECK (balance_amount >= 0),
+    balance_amount BIGINT      NOT NULL DEFAULT 0,
     locked_amount  BIGINT      NOT NULL DEFAULT 0 CHECK (locked_amount >= 0),
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (teen_id, currency),
-    CHECK (locked_amount <= balance_amount)
+    PRIMARY KEY (teen_id, currency)
 );
 
 CREATE TRIGGER wallets_set_updated_at
@@ -44,6 +43,7 @@ CREATE INDEX ledger_entries_teen_created_idx ON ledger.ledger_entries (teen_id, 
 CREATE INDEX ledger_entries_ref_idx ON ledger.ledger_entries (ref_id) WHERE ref_id IS NOT NULL;
 CREATE UNIQUE INDEX ledger_entries_one_reward_per_task_idx ON ledger.ledger_entries (ref_id) WHERE kind = 'TASK_REWARD';
 CREATE UNIQUE INDEX ledger_entries_one_debit_per_payout_idx ON ledger.ledger_entries (ref_id) WHERE kind = 'PAYOUT';
+CREATE UNIQUE INDEX ledger_entries_one_penalty_per_task_idx ON ledger.ledger_entries (ref_id) WHERE kind = 'PENALTY';
 
 CREATE FUNCTION ledger.reject_ledger_entry_mutation() RETURNS trigger AS $$
 BEGIN

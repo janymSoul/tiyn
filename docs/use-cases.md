@@ -16,7 +16,7 @@ Actors: **Parent**, **Teen**, **System** (scheduler, event listeners, push).
 | UC-08 | Teen requests a payout | TEN-03 | MVP |
 | UC-09 | Parent fulfils a payout through a bank app | SYS-04 | MVP |
 | UC-10 | Recurring tasks and deadlines (system-driven) | PAR-02 | MVP |
-| UC-11 | Parent applies a penalty | PAR-04 | Medium |
+| UC-11 | A missed task costs money | PAR-04 | Medium |
 | UC-12 | Teen sets a savings goal | TEN-04 | Medium |
 
 XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting to `TaskApproved`.
@@ -112,7 +112,7 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 **Flow.** Parent cancels a task in `ASSIGNED` or `SUBMITTED` (e.g. created by mistake, or the plan changed). FSM → `CANCELLED`, `TaskCancelled` → teen is notified. For a recurring series, the parent chooses "this occurrence" or "this and all future" (the series is closed, so no further occurrences are created). Cancelling a milestone also cancels its open tasks, each notifying the teen.
 
-**Alternates.** Already `APPROVED`/`REJECTED`/`EXPIRED` → an invalid-transition error (409). Cancelling an approved task does not claw back money; use a penalty (UC-11) for that.
+**Alternates.** Already `APPROVED`/`REJECTED`/`EXPIRED` → an invalid-transition error (409). Cancelling an approved task does not claw back money, and there is no manual penalty to do it (UC-11 covers only missed tasks).
 
 ---
 
@@ -172,19 +172,23 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 **Support needed.**
 - The `Ticker` interface and scheduler described in `docs/modules.md`: `@Scheduled` with a ShedLock inside the API pods, every minute. Events are not part of the ticker; the Modulith registry delivers them.
 - Period boundaries in the series' own timezone (`task_series.timezone`, stored UTC); Kazakhstan has a single zone now, but it is stored per series.
-- A missed occurrence expires; no automatic penalty. No backfill: a tick creates only the current day's occurrence (in the series' timezone, and only while its due time is still ahead), so days the system missed are never created later.
+- A missed occurrence expires, and costs the series' penalty if it has one (UC-11). No backfill: a tick creates only the current day's occurrence (in the series' timezone, and only while its due time is still ahead), so days the system missed are never created later.
 - Closing a series, or removing the family link, stops further occurrences.
 - Tick cadence of about one minute is enough; expiry precision beyond that is not needed.
 
 ---
 
-## UC-11 Parent applies a penalty
+## UC-11 A missed task costs money
 
-**Flow.** Parent enters an amount and an optional note; ledger debits the wallet under `FOR UPDATE` and writes `PenaltyApplied`; the teen is notified.
+**Flow.** When creating a task or a recurring series, the parent can set an optional penalty (0 or empty means none). If the teen lets the task expire, the ledger debits the penalty automatically and publishes `PenaltyApplied`; the teen is notified. There is no free-form manual penalty.
 
-**Support needed.** Compensating debit entry with the note kept for the audit trail; authorization via `FamilyDirectory`.
+**Rules.**
+- Only a missed deadline counts: `ASSIGNED` past its deadline becomes `EXPIRED`. Submitted, rejected, cancelled (including after an unlink) and approved tasks cost nothing.
+- One penalty per task at most (key `PENALTY-TASK-{taskId}`), so a redelivered event does nothing.
+- The balance may go negative. A debt blocks payout requests and goal locks until rewards pay it down; releasing a goal still works.
+- The teen sees the penalty on the task (`penaltyAmount`) before the deadline. A teen-visible history of deductions is not built yet.
 
-**Open.** Penalty above available funds: recommend reject with a clear message (the service checks available funds under the wallet lock; the `CHECK` constraints are only the backstop). Penalties apply to available funds only, not to funds in open payout requests or goals.
+**Support needed.** The expiry ticker (UC-10), the ledger's `TaskExpired` listener, the compensating `PENALTY` journal entry.
 
 ---
 

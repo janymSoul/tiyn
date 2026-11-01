@@ -104,13 +104,13 @@ If a flow ever needs strict ordering (it does not today), that is a reason to ad
 | `TaskRejected` | task | notification | "rejected" → teen |
 | `TaskRedoRequested` | task | notification | "redo" → teen |
 | `TaskCancelled` | task | notification | "cancelled" → teen |
-| `TaskExpired` | task | notification | "deadline passed" → teen |
+| `TaskExpired` | task | ledger, notification | debit the task's penalty, if any; "deadline passed" → teen |
 | `PayoutRequested` | ledger | notification | high-priority "payout request" → parent |
 | `PayoutFulfilled` | ledger | notification | "paid" → teen |
 | `PayoutCancelled` | ledger | notification | "request cancelled / declined / expired" → teen |
-| `PenaltyApplied` | ledger | notification | "deduction" → teen |
+| `PenaltyApplied` | ledger | notification | "deduction" → teen (published today; no consumer yet) |
 
-`FamilyLinked`, `FamilyUnlinked` and all the `Task*` events exist in code. The real listeners today are the two `FamilyUnlinked` handlers in the task module (cancel open tasks, close series), the ledger's `FamilyUnlinked` handler (cancel the open payout) and its `TaskApproved` handler (credit the wallet); `PayoutRequested`, `PayoutFulfilled` and `PayoutCancelled` exist but have no consumer yet; notification consumers arrive in a later step. Event payloads are records in the producing module's root package and are part of its **public contract**.
+`FamilyLinked`, `FamilyUnlinked` and all the `Task*` events exist in code. The real listeners today are the two `FamilyUnlinked` handlers in the task module (cancel open tasks, close series), the ledger's `FamilyUnlinked` handler (cancel the open payout) and its `TaskApproved` handler (credit the wallet) and `TaskExpired` handler (debit the penalty); `PayoutRequested`, `PayoutFulfilled` and `PayoutCancelled` exist but have no consumer yet; notification consumers arrive in a later step. Event payloads are records in the producing module's root package and are part of its **public contract**.
 
 ## Before production
 

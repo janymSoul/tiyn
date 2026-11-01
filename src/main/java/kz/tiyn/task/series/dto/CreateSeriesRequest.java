@@ -9,6 +9,7 @@ public record CreateSeriesRequest(
         String title,
         String description,
         long rewardAmount,
+        long penaltyAmount,
         String currency,
         String recurrence,
         String timezone,

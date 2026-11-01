@@ -23,6 +23,7 @@ final class TaskSeries {
     private final String title;
     private final String description;
     private final long rewardAmount;
+    private final long penaltyAmount;
     private final String currency;
     private final Recurrence recurrence;
     private final ZoneId zone;
@@ -37,6 +38,7 @@ final class TaskSeries {
             String title,
             String description,
             long rewardAmount,
+            long penaltyAmount,
             String currency,
             Recurrence recurrence,
             ZoneId zone,
@@ -49,6 +51,7 @@ final class TaskSeries {
         this.title = title;
         this.description = description;
         this.rewardAmount = rewardAmount;
+        this.penaltyAmount = penaltyAmount;
         this.currency = currency;
         this.recurrence = recurrence;
         this.zone = zone;
@@ -77,6 +80,7 @@ final class TaskSeries {
                 draft.title().trim(),
                 description,
                 draft.rewardAmount(),
+                draft.penaltyAmount(),
                 draft.currency(),
                 recurrence,
                 zone,
@@ -92,6 +96,7 @@ final class TaskSeries {
             String title,
             String description,
             long rewardAmount,
+            long penaltyAmount,
             String currency,
             String recurrence,
             String timezone,
@@ -105,6 +110,7 @@ final class TaskSeries {
                 title,
                 description,
                 rewardAmount,
+                penaltyAmount,
                 currency,
                 Recurrence.valueOf(recurrence),
                 ZoneId.of(timezone),
@@ -122,8 +128,8 @@ final class TaskSeries {
         if (!deadline.isAfter(now)) {
             return Optional.empty();
         }
-        return Optional.of(
-                new Occurrence(id, today, parentId, teenId, title, description, rewardAmount, currency, deadline));
+        return Optional.of(new Occurrence(
+                id, today, parentId, teenId, title, description, rewardAmount, penaltyAmount, currency, deadline));
     }
 
     void close(UUID byParentId) {
@@ -171,6 +177,10 @@ final class TaskSeries {
 
     long rewardAmount() {
         return rewardAmount;
+    }
+
+    long penaltyAmount() {
+        return penaltyAmount;
     }
 
     String currency() {

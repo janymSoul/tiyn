@@ -1,9 +1,12 @@
 package kz.tiyn.ledger.wallet;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import kz.tiyn.ledger.PenaltyApplied;
 import kz.tiyn.ledger.wallet.error.LedgerError;
 import kz.tiyn.ledger.wallet.error.LedgerException;
+import kz.tiyn.platform.event.EventLog;
 
 final class Wallet {
 
@@ -14,6 +17,7 @@ final class Wallet {
     private long balanceAmount;
     private long lockedAmount;
     private final long openRequestedAmount;
+    private final EventLog events = new EventLog();
 
     private Wallet(UUID teenId, String currency, long balanceAmount, long lockedAmount, long openRequestedAmount) {
         this.teenId = teenId;
@@ -54,6 +58,20 @@ final class Wallet {
         balanceAmount -= amount;
         return new LedgerEntry(
                 entryId, teenId, currency, EntryKind.PAYOUT, -amount, 0, payoutId, LedgerEntry.payoutKey(payoutId));
+    }
+
+    LedgerEntry applyPenalty(UUID entryId, UUID taskId, long amount) {
+        if (amount <= 0) {
+            throw new LedgerException(LedgerError.INVALID_AMOUNT);
+        }
+        balanceAmount -= amount;
+        events.record(new PenaltyApplied(entryId, teenId, taskId, amount, currency));
+        return new LedgerEntry(
+                entryId, teenId, currency, EntryKind.PENALTY, -amount, 0, taskId, LedgerEntry.penaltyKey(taskId));
+    }
+
+    List<Object> pullEvents() {
+        return events.drain();
     }
 
     LedgerEntry lockForGoal(UUID entryId, UUID goalId, long amount, String idempotencyKey) {

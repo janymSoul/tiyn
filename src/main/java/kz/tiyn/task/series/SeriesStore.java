@@ -27,6 +27,7 @@ class SeriesStore {
                 .set(TASK_SERIES.TITLE, series.title())
                 .set(TASK_SERIES.DESCRIPTION, series.description())
                 .set(TASK_SERIES.REWARD_AMOUNT, series.rewardAmount())
+                .set(TASK_SERIES.PENALTY_AMOUNT, series.penaltyAmount())
                 .set(TASK_SERIES.CURRENCY, series.currency())
                 .set(TASK_SERIES.RECURRENCE, series.recurrence().name())
                 .set(TASK_SERIES.TIMEZONE, series.zone().getId())
@@ -72,6 +73,7 @@ class SeriesStore {
                 r.getTitle(),
                 r.getDescription(),
                 r.getRewardAmount(),
+                r.getPenaltyAmount(),
                 r.getCurrency(),
                 r.getRecurrence(),
                 r.getTimezone(),

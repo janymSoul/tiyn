@@ -26,8 +26,19 @@ class TaskSeriesTests {
 
     private static TaskSeries series(String recurrence, LocalDate startsOn) {
         var draft = new NewSeries(
-                TEEN, " Walk dog ", null, 100, "KZT", recurrence, "Asia/Almaty", LocalTime.of(18, 0), startsOn);
+                TEEN, " Walk dog ", null, 100, 0, "KZT", recurrence, "Asia/Almaty", LocalTime.of(18, 0), startsOn);
         return TaskSeries.create(UUID.randomUUID(), PARENT, draft, at(START, "08:00"));
+    }
+
+    @Test
+    void everyOccurrenceCarriesTheSeriesPenalty() {
+        var draft = new NewSeries(
+                TEEN, "Walk dog", null, 100, 25, "KZT", "DAILY", "Asia/Almaty", LocalTime.of(18, 0), START);
+        TaskSeries withPenalty = TaskSeries.create(UUID.randomUUID(), PARENT, draft, at(START, "08:00"));
+
+        var occurrence = withPenalty.dueOccurrence(at(START, "09:00")).orElseThrow();
+
+        assertThat(occurrence.penaltyAmount()).isEqualTo(25);
     }
 
     @Test
@@ -90,11 +101,11 @@ class TaskSeriesTests {
 
         Instant now = at(START, "08:00");
         for (var bad : new NewSeries[] {
-            new NewSeries(TEEN, "t", null, 1, "KZT", "MONTHLY", null, LocalTime.NOON, null),
-            new NewSeries(TEEN, "t", null, 1, "KZT", null, null, LocalTime.NOON, null),
-            new NewSeries(TEEN, "t", null, 1, "KZT", "DAILY", "Mars/Base", LocalTime.NOON, null),
-            new NewSeries(TEEN, "t", null, 1, "KZT", "DAILY", null, null, null),
-            new NewSeries(TEEN, "t", null, 1, "KZT", "DAILY", null, LocalTime.NOON, START.minusDays(1))
+            new NewSeries(TEEN, "t", null, 1, 0, "KZT", "MONTHLY", null, LocalTime.NOON, null),
+            new NewSeries(TEEN, "t", null, 1, 0, "KZT", null, null, LocalTime.NOON, null),
+            new NewSeries(TEEN, "t", null, 1, 0, "KZT", "DAILY", "Mars/Base", LocalTime.NOON, null),
+            new NewSeries(TEEN, "t", null, 1, 0, "KZT", "DAILY", null, null, null),
+            new NewSeries(TEEN, "t", null, 1, 0, "KZT", "DAILY", null, LocalTime.NOON, START.minusDays(1))
         }) {
             assertThatThrownBy(() -> TaskSeries.create(UUID.randomUUID(), PARENT, bad, now))
                     .isInstanceOfSatisfying(

@@ -21,7 +21,8 @@ class TaskAssignmentService implements TaskAssignment {
     }
 
     @Override
-    public void validateTemplate(String title, String description, long rewardAmount, String currency) {
+    public void validateTemplate(
+            String title, String description, long rewardAmount, long penaltyAmount, String currency) {
         var draft = new NewTask(
                 UUID.randomUUID(),
                 UUID.randomUUID(),
@@ -29,6 +30,7 @@ class TaskAssignmentService implements TaskAssignment {
                 title,
                 description,
                 rewardAmount,
+                penaltyAmount,
                 currency,
                 clock.instant().plusSeconds(86_400));
         Task.assign(UUID.randomUUID(), draft, clock.instant(), properties.maxRewardAmount());
@@ -43,6 +45,7 @@ class TaskAssignmentService implements TaskAssignment {
                 o.title(),
                 o.description(),
                 o.rewardAmount(),
+                o.penaltyAmount(),
                 o.currency(),
                 o.deadlineAt());
         Task task = Task.assignOccurrence(

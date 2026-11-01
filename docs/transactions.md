@@ -73,7 +73,7 @@ dsl.selectFrom(WALLETS)
         .forUpdate()
         .fetchSingle();
 ```
-The service compares the amount with *available* funds (balance minus locked minus open payout request) under that lock and returns a domain error if it does not fit. The `CHECK (balance_amount >= 0)` and `CHECK (locked_amount <= balance_amount)` constraints are the immutable backstop, mapped to the same domain error; the row lock is what serializes the read-modify-write. This is the PRD's chosen mechanism (architecture doc §3). It is correct at the app's scale; the footnote's high-scale concern is real but distant.
+The service compares the amount with *available* funds (balance minus locked minus open payout request) under that lock and returns a domain error if it does not fit. There is no database backstop on the balance any more (a penalty may take it below zero, so `balance_amount >= 0` and `locked_amount <= balance_amount` were dropped); the row lock plus the service checks are the guarantee, and the concurrency tests are what verify it. This is the PRD's chosen mechanism (architecture doc §3). It is correct at the app's scale; the footnote's high-scale concern is real but distant.
 
 **Lock order for payouts: the wallet row first, then the payout row**, in every command (request, fulfil, cancel, decline, expiry, unlink), so two commands can never wait on each other.
 

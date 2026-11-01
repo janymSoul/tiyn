@@ -9,6 +9,7 @@ record NewSeries(
         String title,
         String description,
         long rewardAmount,
+        long penaltyAmount,
         String currency,
         String recurrence,
         String timezone,

@@ -12,5 +12,6 @@ public record Occurrence(
         String title,
         String description,
         long rewardAmount,
+        long penaltyAmount,
         String currency,
         Instant deadlineAt) {}

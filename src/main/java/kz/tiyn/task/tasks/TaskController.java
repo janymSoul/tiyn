@@ -137,6 +137,7 @@ class TaskController {
                 t.title(),
                 t.description(),
                 t.reward().amount(),
+                t.penaltyAmount(),
                 t.reward().currency(),
                 t.state().name(),
                 t.deadlineAt(),

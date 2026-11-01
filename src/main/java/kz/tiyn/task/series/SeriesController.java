@@ -33,6 +33,7 @@ class SeriesController {
                 s.title(),
                 s.description(),
                 s.rewardAmount(),
+                s.penaltyAmount(),
                 s.currency(),
                 s.recurrence().name(),
                 s.zone().getId(),

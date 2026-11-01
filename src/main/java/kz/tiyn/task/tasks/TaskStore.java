@@ -42,6 +42,7 @@ class TaskStore {
                         .set(TASKS.TITLE, task.title())
                         .set(TASKS.DESCRIPTION, task.description())
                         .set(TASKS.REWARD_AMOUNT, task.reward().amount())
+                        .set(TASKS.PENALTY_AMOUNT, task.penaltyAmount())
                         .set(TASKS.CURRENCY, task.reward().currency())
                         .set(TASKS.STATE, task.state().name())
                         .set(TASKS.DEADLINE_AT, Instants.toUtc(task.deadlineAt()))
@@ -187,6 +188,7 @@ class TaskStore {
                 r.getTitle(),
                 r.getDescription(),
                 r.getRewardAmount(),
+                r.getPenaltyAmount(),
                 r.getCurrency(),
                 TaskState.valueOf(r.getState()),
                 Instants.fromUtc(r.getDeadlineAt()),
