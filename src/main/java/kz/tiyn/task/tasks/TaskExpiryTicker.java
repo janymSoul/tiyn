@@ -1,7 +1,9 @@
 package kz.tiyn.task.tasks;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import kz.tiyn.platform.tick.Ticker;
 import kz.tiyn.platform.tx.ConflictException;
@@ -25,24 +27,23 @@ class TaskExpiryTicker implements Ticker {
 
     @Override
     public void tick(Instant now) {
+        Set<UUID> skipped = new HashSet<>();
         List<UUID> batch;
         do {
-            batch = tasks.findExpiredIds(now, BATCH);
-            int expired = 0;
+            batch = tasks.findExpiredIds(now, skipped, BATCH);
             for (UUID id : batch) {
                 try {
-                    if (service.expire(id, now)) {
-                        expired++;
+                    if (!service.expire(id, now)) {
+                        skipped.add(id);
                     }
                 } catch (ConflictException e) {
+                    skipped.add(id);
                     log.debug("task {} changed while expiring, retrying next tick", id);
                 } catch (RuntimeException e) {
+                    skipped.add(id);
                     log.error("task {} could not be expired", id, e);
                 }
             }
-            if (expired == 0) {
-                return;
-            }
-        } while (batch.size() == BATCH);
+        } while (!batch.isEmpty());
     }
 }

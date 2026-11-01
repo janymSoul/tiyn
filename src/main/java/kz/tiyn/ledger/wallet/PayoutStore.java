@@ -3,6 +3,7 @@ package kz.tiyn.ledger.wallet;
 import static kz.tiyn.platform.jooq.ledger.Tables.PAYOUTS;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -11,7 +12,6 @@ import kz.tiyn.platform.time.Instants;
 import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
-import org.jooq.impl.DSL;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
@@ -81,11 +81,12 @@ class PayoutStore {
                 .map(PayoutStore::toPayout);
     }
 
-    List<UUID> findStaleIds(Instant cutoff, int limit) {
+    List<UUID> findStaleIds(Instant cutoff, Collection<UUID> excluded, int limit) {
         return dsl.select(PAYOUTS.ID)
                 .from(PAYOUTS)
                 .where(PAYOUTS.STATE.eq(PayoutState.REQUESTED.name()))
                 .and(PAYOUTS.REQUESTED_AT.le(Instants.toUtc(cutoff)))
+                .and(PAYOUTS.ID.notIn(excluded))
                 .orderBy(PAYOUTS.REQUESTED_AT)
                 .limit(limit)
                 .fetch(PAYOUTS.ID);
@@ -104,18 +105,6 @@ class PayoutStore {
         return dsl.fetchExists(dsl.selectOne()
                 .from(PAYOUTS)
                 .where(PAYOUTS.TEEN_ID.eq(teenId).and(PAYOUTS.STATE.eq(PayoutState.REQUESTED.name()))));
-    }
-
-    long openAmount(UUID teenId, String currency) {
-        return dsl.select(DSL.coalesce(DSL.sum(PAYOUTS.AMOUNT), java.math.BigDecimal.ZERO))
-                .from(PAYOUTS)
-                .where(PAYOUTS.TEEN_ID
-                        .eq(teenId)
-                        .and(PAYOUTS.CURRENCY.eq(currency))
-                        .and(PAYOUTS.STATE.eq(PayoutState.REQUESTED.name())))
-                .fetchSingle()
-                .value1()
-                .longValueExact();
     }
 
     List<Payout> listForTeen(UUID teenId, PayoutState state) {

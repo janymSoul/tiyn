@@ -2,6 +2,7 @@ package kz.tiyn.ledger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -97,6 +98,29 @@ class PayoutFlowTests {
                         Integer.class,
                         f.teen().id()))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void reusingAKeyForADifferentRequestIsRefused() throws Exception {
+        Family f = richFamily(500_00);
+        requestPayout(f, f.parent().id(), 300_00, "dup").andExpect(status().isCreated());
+
+        requestPayout(f, f.parent().id(), 200_00, "dup")
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_idempotency_key"));
+    }
+
+    @Test
+    void aParentWhoWasUnlinkedCanNeitherFulfilNorDecline() throws Exception {
+        Family f = richFamily(500_00);
+        UUID id = idOf(requestPayout(f, f.parent().id(), 300_00, "u1"));
+        mvc.perform(delete("/links/" + f.teen().id())
+                        .header("Authorization", f.parent().bearer()))
+                .andExpect(status().isNoContent());
+
+        fx.send("/payouts/" + id + "/fulfil", "", f.parent().bearer()).andExpect(status().isForbidden());
+        fx.send("/payouts/" + id + "/decline", "", f.parent().bearer()).andExpect(status().isForbidden());
+        assertThat(balances.balance(f.teen().id()).balanceAmount()).isEqualTo(500_00);
     }
 
     @Test

@@ -66,7 +66,11 @@ class PayoutService {
                         wallets.findForUpdate(caller.userId(), Wallet.KZT).orElseThrow();
                 var replay = payouts.findByKey(scopedKey);
                 if (replay.isPresent()) {
-                    return replay.get();
+                    Payout original = replay.get();
+                    if (!original.parentId().equals(parentId) || original.amount() != amount) {
+                        throw new LedgerException(LedgerError.INVALID_IDEMPOTENCY_KEY);
+                    }
+                    return original;
                 }
                 if (payouts.hasOpen(caller.userId())) {
                     throw new LedgerException(LedgerError.PAYOUT_ALREADY_OPEN);
@@ -92,10 +96,10 @@ class PayoutService {
     Payout fulfil(Principal caller, UUID id) {
         requireRole(caller, Role.PARENT);
         Payout visible = get(caller, id);
-        requireStillLinked(caller, visible);
         return tx.execute(status -> {
             Wallet wallet =
                     wallets.findForUpdate(visible.teenId(), visible.currency()).orElseThrow();
+            requireStillLinked(caller, visible);
             Payout payout = payouts.findForUpdate(id).orElseThrow(() -> new LedgerException(LedgerError.NOT_FOUND));
             boolean wasOpen = payout.state() == PayoutState.REQUESTED;
             payout.fulfil(caller.userId(), clock.instant());
@@ -163,9 +167,9 @@ class PayoutService {
 
     private Payout resolve(Principal caller, UUID id, BiConsumer<Payout, Instant> action) {
         Payout visible = get(caller, id);
-        requireStillLinked(caller, visible);
         return tx.execute(status -> {
             wallets.findForUpdate(visible.teenId(), visible.currency()).orElseThrow();
+            requireStillLinked(caller, visible);
             Payout payout = payouts.findForUpdate(id).orElseThrow(() -> new LedgerException(LedgerError.NOT_FOUND));
             action.accept(payout, clock.instant());
             payouts.save(payout);

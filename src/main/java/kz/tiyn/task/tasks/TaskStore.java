@@ -5,6 +5,7 @@ import static kz.tiyn.platform.jooq.task.Tables.TASK_PROOFS;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -120,11 +121,12 @@ class TaskStore {
                 .fetchOne(r -> new MilestoneProgress(r.value1(), r.value2()));
     }
 
-    List<UUID> findExpiredIds(Instant now, int limit) {
+    List<UUID> findExpiredIds(Instant now, Collection<UUID> excluded, int limit) {
         return dsl.select(TASKS.ID)
                 .from(TASKS)
                 .where(TASKS.STATE.eq(TaskState.ASSIGNED.name()))
                 .and(TASKS.DEADLINE_AT.le(Instants.toUtc(now)))
+                .and(TASKS.ID.notIn(excluded))
                 .orderBy(TASKS.DEADLINE_AT)
                 .limit(limit)
                 .fetch(TASKS.ID);
