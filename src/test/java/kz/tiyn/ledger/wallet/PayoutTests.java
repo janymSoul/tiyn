@@ -137,4 +137,44 @@ class PayoutTests {
         assertError(() -> payout.decline(PARENT, NOW), LedgerError.INVALID_TRANSITION);
         assertThat(payout.cancelReason()).isEqualTo(CancelReason.TEEN_CANCELLED);
     }
+
+    @Test
+    void anOldEnoughRequestExpiresWithoutAnActor() {
+        Payout payout = requested(20_000);
+        payout.pullEvents();
+
+        payout.expire(NOW.minusSeconds(1), NOW.plusSeconds(10));
+        assertThat(payout.state()).isEqualTo(PayoutState.REQUESTED);
+
+        payout.expire(NOW, NOW.plusSeconds(10));
+        assertThat(payout.state()).isEqualTo(PayoutState.CANCELLED);
+        assertThat(payout.cancelReason()).isEqualTo(CancelReason.EXPIRED);
+        assertThat(payout.resolvedBy()).isNull();
+        assertThat(payout.pullEvents()).containsExactly(new PayoutCancelled(payout.id(), TEEN, PARENT, "EXPIRED"));
+    }
+
+    @Test
+    void expiryAndUnlinkLeaveResolvedPayoutsAlone() {
+        Payout fulfilled = requested(20_000);
+        fulfilled.fulfil(PARENT, NOW);
+        fulfilled.pullEvents();
+
+        fulfilled.expire(NOW.plusSeconds(1000), NOW.plusSeconds(1000));
+        fulfilled.cancelForUnlink(NOW.plusSeconds(1000));
+
+        assertThat(fulfilled.state()).isEqualTo(PayoutState.FULFILLED);
+        assertThat(fulfilled.pullEvents()).isEmpty();
+    }
+
+    @Test
+    void unlinkCancelsAnOpenRequestWithoutAnActor() {
+        Payout payout = requested(20_000);
+        payout.pullEvents();
+
+        payout.cancelForUnlink(NOW);
+
+        assertThat(payout.cancelReason()).isEqualTo(CancelReason.UNLINKED);
+        assertThat(payout.resolvedBy()).isNull();
+        assertThat(payout.pullEvents()).containsExactly(new PayoutCancelled(payout.id(), TEEN, PARENT, "UNLINKED"));
+    }
 }

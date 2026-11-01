@@ -2,6 +2,7 @@ package kz.tiyn.ledger.wallet;
 
 import static kz.tiyn.platform.jooq.ledger.Tables.PAYOUTS;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -76,6 +77,25 @@ class PayoutStore {
     Optional<Payout> findByKey(String idempotencyKey) {
         return dsl.selectFrom(PAYOUTS)
                 .where(PAYOUTS.IDEMPOTENCY_KEY.eq(idempotencyKey))
+                .fetchOptional()
+                .map(PayoutStore::toPayout);
+    }
+
+    List<UUID> findStaleIds(Instant cutoff, int limit) {
+        return dsl.select(PAYOUTS.ID)
+                .from(PAYOUTS)
+                .where(PAYOUTS.STATE.eq(PayoutState.REQUESTED.name()))
+                .and(PAYOUTS.REQUESTED_AT.le(Instants.toUtc(cutoff)))
+                .orderBy(PAYOUTS.REQUESTED_AT)
+                .limit(limit)
+                .fetch(PAYOUTS.ID);
+    }
+
+    Optional<Payout> findOpen(UUID teenId, UUID parentId) {
+        return dsl.selectFrom(PAYOUTS)
+                .where(PAYOUTS.TEEN_ID.eq(teenId))
+                .and(PAYOUTS.PARENT_ID.eq(parentId))
+                .and(PAYOUTS.STATE.eq(PayoutState.REQUESTED.name()))
                 .fetchOptional()
                 .map(PayoutStore::toPayout);
     }

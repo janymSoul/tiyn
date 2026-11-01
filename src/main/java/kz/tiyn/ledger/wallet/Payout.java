@@ -114,6 +114,20 @@ final class Payout {
         events.record(new PayoutFulfilled(id, teenId, parentId, amount, currency));
     }
 
+    void expire(Instant cutoff, Instant now) {
+        if (state != PayoutState.REQUESTED || requestedAt.isAfter(cutoff)) {
+            return;
+        }
+        cancel(CancelReason.EXPIRED, null, now);
+    }
+
+    void cancelForUnlink(Instant now) {
+        if (state != PayoutState.REQUESTED) {
+            return;
+        }
+        cancel(CancelReason.UNLINKED, null, now);
+    }
+
     void cancelByTeen(UUID by, Instant now) {
         if (!teenId.equals(by)) {
             throw new LedgerException(LedgerError.FORBIDDEN);

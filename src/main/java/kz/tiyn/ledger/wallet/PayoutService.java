@@ -1,6 +1,7 @@
 package kz.tiyn.ledger.wallet;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.BiConsumer;
@@ -117,6 +118,37 @@ class PayoutService {
         return resolve(caller, id, (payout, now) -> payout.decline(caller.userId(), now));
     }
 
+    boolean expire(UUID id, Instant now) {
+        return Boolean.TRUE.equals(tx.execute(status -> {
+            Payout visible = payouts.find(id).orElse(null);
+            if (visible == null) {
+                return false;
+            }
+            wallets.findForUpdate(visible.teenId(), visible.currency()).orElseThrow();
+            Payout payout = payouts.findForUpdate(id).orElseThrow();
+            payout.expire(now.minus(properties.payoutExpiry()), now);
+            if (payout.state() != PayoutState.CANCELLED) {
+                return false;
+            }
+            payouts.save(payout);
+            return true;
+        }));
+    }
+
+    void cancelAfterUnlink(UUID parentId, UUID teenId) {
+        tx.executeWithoutResult(status -> {
+            wallets.ensure(teenId, Wallet.KZT);
+            wallets.findForUpdate(teenId, Wallet.KZT).orElseThrow();
+            if (family.areLinked(parentId, teenId)) {
+                return;
+            }
+            payouts.findOpen(teenId, parentId).ifPresent(payout -> {
+                payout.cancelForUnlink(clock.instant());
+                payouts.save(payout);
+            });
+        });
+    }
+
     Payout get(Principal caller, UUID id) {
         Payout payout = payouts.find(id).orElseThrow(() -> new LedgerException(LedgerError.NOT_FOUND));
         requireParticipant(caller, payout);
@@ -129,7 +161,7 @@ class PayoutService {
                 : payouts.listForParent(caller.userId(), state);
     }
 
-    private Payout resolve(Principal caller, UUID id, BiConsumer<Payout, java.time.Instant> action) {
+    private Payout resolve(Principal caller, UUID id, BiConsumer<Payout, Instant> action) {
         Payout visible = get(caller, id);
         requireStillLinked(caller, visible);
         return tx.execute(status -> {
