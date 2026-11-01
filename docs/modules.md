@@ -4,7 +4,7 @@ The system is five bounded contexts. Each is a deep module: a small interface ov
 
 ## The two — and only two — ways modules interact
 
-1. **Synchronous:** Module A depends on an **interface** that Module B exports (e.g. `media.Storage`). A receives the concrete implementation by constructor injection, wired in `cmd/api/main.go`. A imports *only* B's exported interface and event types — never B's `domain/`, `store/`, or `http/`.
+1. **Synchronous:** Module A depends on an **interface** that Module B exports (e.g. `media.Storage`). A receives the implementation by constructor injection. A uses *only* what B publishes in its root package (interfaces, DTOs, event records) — never B's `domain`, `store`, `app` or `web` sub-packages. Spring Modulith treats a module's root package as its API and every sub-package as internal; `ApplicationModules.verify()` fails the build on a violation.
 2. **Asynchronous:** Module A publishes a domain event; Module B subscribes. A and B do not know about each other at all. This is the default for anything that is a *reaction* ("when a task is approved, credit the ledger and notify").
 
 Prefer async for reactions and side effects; use sync only when the caller genuinely needs a result back *now* (e.g. "store this proof image and give me its object key").
@@ -64,7 +64,7 @@ The wallet aggregate is deliberately large: "available funds = balance − locke
 | Payout | A teen's request to cash out; the parent fulfils it in their bank app and confirms. |
 | Penalty | A parent's manual deduction. |
 | Savings goal | A target the teen sets aside part of the balance for. |
-| Domain event | A past-tense fact one context publishes, e.g. `TaskApprovedEvent`. |
+| Domain event | A past-tense fact one context publishes, e.g. `TaskApproved`. |
 
 ---
 
@@ -72,33 +72,29 @@ The wallet aggregate is deliberately large: "available funds = balance − locke
 
 **Responsibility.** User accounts (parent, teen), authentication, and family-group linking (PAR-01). Owns the security context that every other request is authorized against.
 
-**Authentication.** Sign-in with Google. The client obtains a Google ID token and sends it to the backend; identity verifies it and issues the app's own JWT. Google is only the proof of identity, so the provider can be swapped or extended (e.g. Apple) without touching other modules. Parents and teens both register by signing in; the role (`PARENT` or `TEEN`) is chosen at first sign-in and an account has exactly one role for life. Signing in again ignores any role in the request and returns the existing account. `GoogleVerifier` is the anti-corruption layer: the real implementation validates the ID token against Google's keys for the configured client ids (`GOOGLE_CLIENT_IDS`, one per platform), and tests use a fake. No email is stored; the display name comes from the request or the Google profile.
+**Authentication.** Sign-in with Google. The client obtains a Google ID token and sends it to the backend; identity verifies it and issues the app's own JWT. Google is only the proof of identity, so the provider can be swapped or extended (e.g. Apple) without touching other modules. Parents and teens both register by signing in; the role (`PARENT` or `TEEN`) is chosen at first sign-in and an account has exactly one role for life. Signing in again ignores any role in the request and returns the existing account. `GoogleVerifier` is the anti-corruption layer: the real implementation validates the ID token with Spring Security's `NimbusJwtDecoder` against Google's published keys (issuer, expiry and an audience from `GOOGLE_CLIENT_IDS`, one per platform), and tests use a fake. A malformed or invalid token is 401 `invalid_identity`; an unreachable key set is 503 `identity_provider_unavailable`, logged, so an outage is not mistaken for a bad credential. The application refuses to start when `GOOGLE_CLIENT_IDS` is empty. No email is stored; the display name comes from the request or the Google profile.
 
-**Session token.** After a successful sign-in the backend issues its own JWT: HS256, signed with `JWT_SECRET` (at least 32 bytes), issuer `tiyn`, subject = user id, a `role` claim, valid for `JWT_TTL` (default 7 days). Verification pins the algorithm, requires an expiry, the issuer and a known role, so `alg: none` and other-algorithm tokens are rejected. There is no refresh token: when it expires the client signs in with Google again. The token only proves identity; every parent-to-teen action still checks `AreLinked` in the database. Moving to an identity provider (e.g. Keycloak) later changes only `GoogleVerifier`, `TokenIssuer` and the sign-in route.
+**Session token.** After a successful sign-in the backend issues its own JWT: HS256, signed with `JWT_SECRET` (at least 32 bytes), issuer `tiyn`, subject = user id, a `role` claim, valid for `JWT_TTL` (default 7 days). Verification pins the algorithm, requires an expiry, the issuer and a known role, so `alg: none` and other-algorithm tokens are rejected. There is no refresh token: when it expires the client signs in with Google again. The token only proves identity; every parent-to-teen action still checks `areLinked` in the database. Tokens are issued by `platform.security.AccessTokenIssuer` and verified in `platform.security.SecurityConfig` with the same key, so the claim format (`iss`, `sub`, `role`, `iat`, `exp`) lives in one place. `users.idp_sub` holds the identity provider's subject and is provider-neutral. Moving to an identity provider such as Keycloak later changes `GoogleVerifier`, the issuer, the claim converter and the sign-in route; no other module notices, because they only see `Principal(userId, role)`.
 
-**Linking.** Every parent has a permanent **join code** (6 characters, PRD PAR-01) stored on their user row. It uses an alphabet without look-alike characters (no `0/O`, `1/I`) and is generated with a retry on collision. A teen who has signed in enters the parent's code and identity creates the `family_links` row immediately and publishes `FamilyLinkedEvent`; entering a code a second time is a no-op. Codes are matched case-insensitively and ignoring surrounding spaces. One code can link any number of children, and a teen can enter a second parent's code. The parent can remove a link later. Code attempts are rate-limited at the ingress and failures never reveal whether a code exists. Accepted risk: the code is permanent and reusable, so anyone who learns it can link to that parent. Parent confirmation of each join (a pending-request step) is deliberately deferred; it would add an identity-owned `join_requests` table without changing other modules.
+**Linking.** Every parent has a permanent **join code** (6 characters, PRD PAR-01) stored on their user row. It uses an alphabet without look-alike characters (no `0/O`, `1/I`) and is generated with a retry on collision. A teen who has signed in enters the parent's code and identity creates the `family_links` row immediately and publishes `FamilyLinked`; entering a code a second time is a no-op. Codes are matched case-insensitively and ignoring surrounding spaces. One code can link any number of children, and a teen can enter a second parent's code. The parent can remove a link later. Code attempts are rate-limited at the ingress and failures never reveal whether a code exists. Accepted risk: the code is permanent and reusable, so anyone who learns it can link to that parent. Parent confirmation of each join (a pending-request step) is deliberately deferred; it would add an identity-owned `join_requests` table without changing other modules.
 
 **Offers (sync interface):**
-```go
-type Authenticator interface {
-    // Verify parses and validates a bearer token, returning the caller's identity.
-    Verify(ctx context.Context, bearer string) (Principal, error)
-}
-type FamilyDirectory interface {
-    // AreLinked reports whether a parent may act on a given teen's behalf.
-    AreLinked(ctx context.Context, parentID, teenID uuid.UUID) (bool, error)
+```java
+public interface FamilyDirectory {
+
+    boolean areLinked(UUID parentId, UUID teenId);
 }
 ```
-Links are soft-deleted (`removed_at`). `AreLinked` and every other lookup must ignore removed links; re-linking a removed pair clears `removed_at` on the existing row and increments its `generation`, which is part of the event key so that a relink produces a new event.
-Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.g. the task module checks a parent may approve a given teen's task). `Authenticator` is used by the HTTP auth middleware.
+Links are soft-deleted (`removed_at`). `areLinked` and every other lookup must ignore removed links; re-linking a removed pair clears `removed_at` on the existing row and increments its `generation`, which is part of the event key so that a relink produces a new event.
+Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.g. the task module checks a parent may approve a given teen's task). Token verification is not part of identity's API: the `platform` module verifies bearer tokens and hands controllers a `Principal(userId, role)`.
 
-**Concurrency.** Registration, join-code allocation and linking can race. Every unique-rule violation (same Google subject, same join code, same link) is reported by the store as one `ErrConflict`, and the service retries the whole transaction up to five times. The recovery is the same in all three cases (the retry finds the winner's row, or draws a fresh code), so nothing depends on Postgres-generated constraint names.
+**Concurrency.** Registration, join-code allocation and linking can race. Every unique-rule violation (same Google subject, same join code, same link) is reported by the store as one `ConflictException`, and the service retries the whole transaction up to five times; if it still conflicts the caller gets 409 `conflict`. The recovery is the same in all three cases (the retry finds the winner's row, or draws a fresh code), so nothing depends on Postgres-generated constraint names. The transaction is opened per attempt with a `TransactionTemplate`, because a unique violation aborts the Postgres transaction and a retry needs a fresh one.
 
 **Publishes:**
-- `FamilyLinkedEvent{ParentID, TeenID}` (lets other modules react to a new link, e.g. seed a wallet). Key `FAMILY-LINKED-{parent}-{teen}-{generation}`.
-- `FamilyUnlinkedEvent{ParentID, TeenID}` (the task module cancels the teen's open tasks for that parent). Key `FAMILY-UNLINKED-{parent}-{teen}-{generation}`.
+- `FamilyLinked(parentId, teenId, generation)` (lets other modules react to a new link, e.g. seed a wallet). Consumers dedupe on `(parentId, teenId, generation)`.
+- `FamilyUnlinked(parentId, teenId, generation)` (the task module cancels the teen's open tasks for that parent). The generation is the one of the link being removed, and the event type already separates it from `FamilyLinked`.
 
-Both use an aggregate id derived from the (parent, teen) pair, and are written in the transaction that locks the link row, so the events of one pair stay ordered.
+Both are published in the transaction that locks the link row, so changes to one pair are serialised. Modulith delivers events asynchronously and does not order them across listeners, so consumers must be state-based: they look at the current link, not at the order of events. `generation` is what lets a relink after an unlink count as a new fact.
 
 **HTTP API.** Errors are `{"error": "<code>"}`; bodies are size-limited and reject unknown fields.
 
@@ -121,7 +117,7 @@ Both use an aggregate id derived from the (parent, teen) pair, and are written i
 
 A milestone is a task with `kind = MILESTONE`: same FSM, same review flow, different grouping in the teen UI. One table, one FSM.
 
-**Tasks inside a milestone.** A task may belong to a milestone through a nullable `milestone_id` (a self-reference within the task module). Each such task has its own reward and goes through its own review; the milestone is approved separately, with its own proof and reward, and does not auto-complete when its tasks are done. Rules enforced in the service: one level only (a milestone's tasks cannot themselves be milestones or hold tasks), a task's deadline is not later than its milestone's, the milestone must be `ASSIGNED` when a task is added, and tasks inside a milestone are one-time, never recurring (also enforced by a CHECK). Cancelling a milestone cancels its open tasks in the same transaction, each emitting `TaskCancelledEvent`; cancelling a task does not affect the milestone. Expiry does not cascade, since a task's deadline never exceeds its milestone's. Progress ("3 of 5 approved") is computed from the tasks.
+**Tasks inside a milestone.** A task may belong to a milestone through a nullable `milestone_id` (a self-reference within the task module). Each such task has its own reward and goes through its own review; the milestone is approved separately, with its own proof and reward, and does not auto-complete when its tasks are done. Rules enforced in the service: one level only (a milestone's tasks cannot themselves be milestones or hold tasks), a task's deadline is not later than its milestone's, the milestone must be `ASSIGNED` when a task is added, and tasks inside a milestone are one-time, never recurring (also enforced by a CHECK). Cancelling a milestone cancels its open tasks in the same transaction, each emitting `TaskCancelled`; cancelling a task does not affect the milestone. Expiry does not cascade, since a task's deadline never exceeds its milestone's. Progress ("3 of 5 approved") is computed from the tasks.
 
 **Task FSM:**
 ```
@@ -139,22 +135,22 @@ There is no `DRAFT`: a task is created directly in `ASSIGNED`. Guards live in th
 
 **Recurrence: one row per occurrence.** A recurring task (daily/weekly) is a *series*; each period is its own `tasks` row with `series_id` and `occurrence_date` and a `UNIQUE (series_id, occurrence_date)` constraint. Terminal states never "re-arm" — the next period is a new row. This keeps history, makes the reward key (`REWARD-TASK-{taskID}`) naturally unique per occurrence, and makes materialising the next occurrence idempotent. Period boundaries are computed in the series' own timezone (`task_series.timezone`) and stored in UTC. A missed occurrence expires; it carries no automatic penalty (penalties are manual, PAR-04).
 
-**Proof submission.** The client sends the image (or text) in the submit request with an `Idempotency-Key`. The task service passes the bytes to `media.Storage.Put` first (idempotent by key), then runs one transaction that applies the FSM transition, stores `task_proofs`, and writes the outbox event. If the transaction fails, a retry re-puts to the same object key (overwrite, no duplicate) and tries the transition again.
+**Proof submission.** The client sends the image (or text) in the submit request with an `Idempotency-Key`. The task service passes the bytes to `media.Storage.Put` first (idempotent by key), then runs one transaction that applies the FSM transition, stores `task_proofs`, and publishes the event. If the transaction fails, a retry re-puts to the same object key (overwrite, no duplicate) and tries the transition again.
 
 **Offers (sync interface):**
-```go
-type PendingReader interface {
-    // PendingReward is the sum of rewards of the teen's SUBMITTED tasks.
-    PendingReward(ctx context.Context, teenID uuid.UUID) (kzt int64, err error)
+```java
+public interface PendingReader {
+
+    long pendingReward(UUID teenId);
 }
 ```
 Used by the dashboard handler to show "Pending" funds (TEN-01). Pending is task-owned data, so the task module answers it; the ledger never reads task tables.
 
 **Publishes:**
-- `TaskAssignedEvent{TaskID, TeenID, Kind, RewardAmount, Currency}` → notification (tell the teen: "new task / milestone").
-- `TaskSubmittedEvent{TaskID, TeenID, ProofRef}` → notification (tell the parent).
-- `TaskApprovedEvent{TaskID, TeenID, RewardAmount, Currency, IdempotencyKey}` → ledger (credit), notification (tell the teen). *This is the central event of the system* (architecture doc calls it `TaskCompletedEvent`; we name it `TaskApprovedEvent` for precision).
-- `TaskRejectedEvent`, `TaskRedoRequestedEvent`, `TaskCancelledEvent`, `TaskExpiredEvent` → notification.
+- `TaskAssigned(taskId, teenId, kind, rewardAmount, currency)` → notification (tell the teen: "new task / milestone").
+- `TaskSubmitted(taskId, teenId, proofRef)` → notification (tell the parent).
+- `TaskApproved(taskId, teenId, rewardAmount, currency)` → ledger (credit), notification (tell the teen). *This is the central event of the system* (architecture doc calls it `TaskCompletedEvent`; we name it `TaskApproved` for precision).
+- `TaskRejected`, `TaskRedoRequested`, `TaskCancelled`, `TaskExpired` → notification.
 
 **Time-driven work** (`Ticker`, see below): expire `ASSIGNED` tasks past their deadline; materialise the next occurrence of each recurring series.
 
@@ -187,16 +183,18 @@ REQUESTED ──parent confirms──▶ FULFILLED   (debit entry written; paren
 A payout cancelled by the system (it expired) has no `resolved_by`; one cancelled by the teen or declined by the parent records who did it. Every cancellation records a `cancel_reason`. We never verify the bank transfer (no bank API, and we are not a bank), whichever bank the parent uses. Confirmation by the parent is the source of truth; the audit trail records who confirmed and when. A missing transfer is resolved between parent and teen.
 
 **Offers (sync interface):**
-```go
-type BalanceReader interface {
-    Balance(ctx context.Context, teenID uuid.UUID) (Balance, error) // Approved, Locked, Available
+```java
+public interface BalanceReader {
+
+    Balance balance(UUID teenId);
 }
 ```
+`Balance` is a value object with approved, locked and available amounts.
 (Read-only. "Pending" is not here; it comes from `task.PendingReader`. All *writes* arrive via events or payout commands, never a generic "setBalance".)
 
-**Publishes:** `PayoutRequestedEvent{PayoutID, TeenID, ParentID, Amount, Currency}` → notification. `PayoutFulfilledEvent`, `PayoutCancelledEvent`, `PenaltyAppliedEvent`.
+**Publishes:** `PayoutRequested(payoutId, teenId, parentId, amount, currency)` → notification. `PayoutFulfilled`, `PayoutCancelled`, `PenaltyApplied`.
 
-**Subscribes:** `TaskApprovedEvent` → credit the teen's wallet (idempotent on the event's key). `FamilyLinkedEvent` → create the teen's wallet.
+**Subscribes:** `TaskApproved` → credit the teen's wallet (idempotent on the event's key). `FamilyLinked` → create the teen's wallet.
 
 **Time-driven work** (`Ticker`): cancel `REQUESTED` payouts older than the expiry window.
 
@@ -211,17 +209,15 @@ type BalanceReader interface {
 **Responsibility.** S3 client wrapper (SYS-02). Receives proof images from the task service, validates and sanitises them, stores them, and issues short-lived pre-signed GET URLs for review. Proof images pass through the backend (see "Why bytes pass through" below).
 
 **Offers (sync interface):**
-```go
-type Storage interface {
-    // Put validates (content-type allowlist, size cap), strips metadata such as
-    // EXIF/GPS, and stores the image. The object key is a deterministic function
-    // of scope + idemKey, so a retried Put overwrites the same object instead of
-    // creating a duplicate (PRD "Important" note).
-    Put(ctx context.Context, scope, idemKey, contentType string, body io.Reader) (objectKey string, err error)
-    // PresignView returns a short-lived GET URL for parent review.
-    PresignView(ctx context.Context, objectKey string) (url string, err error)
+```java
+public interface Storage {
+
+    String put(String scope, String idempotencyKey, String contentType, InputStream body);
+
+    URI presignView(String objectKey);
 }
 ```
+`put` validates (content-type allowlist, size cap), strips metadata such as EXIF/GPS, and stores the image. The object key is a deterministic function of scope and idempotency key, so a retried `put` overwrites the same object instead of creating a duplicate (PRD "Important" note). `presignView` returns a short-lived GET URL for parent review.
 Called by the task module on submission and review.
 
 **Idempotent upload:** object key = `proofs/{scope}/{sha256(idemKey)}`. A retry for the same key hits the same object. If the later DB transaction fails, the object is orphaned only until the retry overwrites it; a periodic sweep of unreferenced objects can be added if it ever matters.
@@ -240,45 +236,44 @@ Called by the task module on submission and review.
 
 **Offers (sync interface):** none for domain callers. It exposes an endpoint for clients to register/refresh a device token and locale.
 
-**Subscribes:** `TaskAssignedEvent` (→ teen), `TaskSubmittedEvent` (→ parent: "Proof pending"), `TaskApprovedEvent` (→ teen: "Reward credited"), `TaskRejectedEvent`/`TaskRedoRequestedEvent`/`TaskCancelledEvent`/`TaskExpiredEvent` (→ teen), `PayoutRequestedEvent` (→ parent: high-priority "Payout request"), `PayoutFulfilledEvent`/`PayoutCancelledEvent` (→ teen), `PenaltyAppliedEvent` (→ teen), `FamilyLinkedEvent` (→ welcome).
+**Subscribes:** `TaskAssigned` (→ teen), `TaskSubmitted` (→ parent: "Proof pending"), `TaskApproved` (→ teen: "Reward credited"), `TaskRejected`/`TaskRedoRequested`/`TaskCancelled`/`TaskExpired` (→ teen), `PayoutRequested` (→ parent: high-priority "Payout request"), `PayoutFulfilled`/`PayoutCancelled` (→ teen), `PenaltyApplied` (→ teen), `FamilyLinked` (→ welcome).
 
 **Localization:** picks RU/KK copy per the recipient's locale, which the client sends with its device token. Events carry only IDs, so no call back into identity is needed.
 
-**Owns:** `device_tokens`, and any notification outbox/dedup table it needs to be idempotent (a device must not get the same push twice from a redelivered event).
+**Owns:** `device_tokens`, and the `delivered` table, keyed by event and recipient, which makes it idempotent (a device must not get the same push twice from a redelivered event).
 
 ---
 
 ## Time-driven work
 
-Some state changes happen because time passes, not because a request arrives: expiring overdue tasks, creating the next occurrence of a recurring task, cancelling stale payout requests, and publishing the outbox. No request wakes the process for these, so something must.
+Some state changes happen because time passes, not because a request arrives: expiring overdue tasks, creating the next occurrence of a recurring task, and cancelling stale payout requests. No request wakes the process for these, so something must.
 
-Each module with such work exposes a small interface and the composition root wires them together:
-```go
-type Ticker interface {
-    // Tick performs all work due at `now`. It must be idempotent and safe to run
-    // concurrently with itself (batches use FOR UPDATE SKIP LOCKED; transitions
-    // are guarded by the FSM and version column).
-    Tick(ctx context.Context, now time.Time) error
+Each module with such work registers a `Ticker` bean and the platform scheduler runs them all:
+```java
+public interface Ticker {
+
+    void tick(Instant now);
 }
 ```
-**Decision: a Kubernetes CronJob runs the same binary.** `tiyn tick` is a one-shot subcommand: it runs all domain tickers once and exits. It currently has none registered and only logs that; do not deploy the CronJob until the first ticker (task expiry) exists. A CronJob invokes it every minute with `concurrencyPolicy: Forbid` and an `activeDeadlineSeconds` shorter than the schedule interval. No HTTP endpoint is exposed and no extra service is needed.
+`tick` must be idempotent and safe to run concurrently with itself: batches use `FOR UPDATE SKIP LOCKED`, and transitions are guarded by the FSM and the version column.
 
-**The outbox relay is the exception.** A CronJob's one-minute granularity would delay every event (reward credit, pushes) by up to a minute, which is too slow for the approve → credit → notify path. The relay therefore runs as an in-process loop (about 1 s) inside the API pods, which are always running on Kubernetes. The CronJob handles only work where minute-level precision is fine: task expiry, recurrence, payout expiry.
+**Decision: `@Scheduled` plus ShedLock inside the API pods.** `TickScheduler` (in `kz.tiyn.platform.tick`) runs every `Ticker` on a fixed delay (`TICK_INTERVAL`, default one minute). A ShedLock row in `platform.shedlock` makes one replica run each cycle. A ticker that throws is logged and does not stop the others. There is no CronJob: booting a JVM every minute would cost far more than the work, and the lock only avoids duplicate effort, since correctness already comes from idempotent tickers.
 
-Because every `Tick` is idempotent and concurrency-safe, overlapping runs, a retried Job, or several API replicas all running the relay are harmless. The code stays platform-agnostic: the same `Ticker`s can be driven by an in-process loop (local dev) or any other scheduler if the platform changes.
+Events do not need a ticker. Spring Modulith's event publication registry delivers them (`docs/events-outbox.md`).
+
+Tickers run one after another under a single lock, so a slow ticker delays the rest. A job that needs its own cadence gets its own `@Scheduled` method and lock name.
 
 ---
 
 ## Module dependency graph (sync edges only)
 
 ```
-http middleware ──▶ identity.Authenticator
 task.service ──▶ identity.FamilyDirectory
 task.service ──▶ media.Storage
 http (dashboard) ──▶ ledger.BalanceReader
 http (dashboard) ──▶ task.PendingReader
 ```
-No cycles. All other relationships are event-driven (dashed, via the bus): task→ledger, task→notification, ledger→notification, identity→ledger, identity→notification.
+No cycles. All other relationships are event-driven (via Modulith events): task→ledger, task→notification, ledger→notification, identity→ledger, identity→notification.
 
 Keeping the sync graph this thin is deliberate: it is the set of edges you must sever to extract a module. The fewer, the cheaper the extraction.
 
@@ -286,7 +281,7 @@ Keeping the sync graph this thin is deliberate: it is the set of edges you must 
 
 When a module must become its own service:
 1. Its sync interface becomes a network API (gRPC/REST); callers swap the in-process impl for a client.
-2. Its event subscriptions/publications swap the in-process dispatcher for a broker publisher and a Watermill router — handler code is unchanged.
+2. Its event subscriptions/publications externalise the events to a broker with `@Externalized` and `spring-modulith-events-*`; listeners stay as they are.
 3. Its tables move with it; because there were no cross-context FKs, nothing in other schemas breaks.
 4. Its idempotency guarantees already assume at-least-once, so network redelivery changes nothing.
 

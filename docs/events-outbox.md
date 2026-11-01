@@ -1,195 +1,124 @@
-# Events & the Transactional Outbox
+# Events & the Event Publication Registry
 
-Cross-module events are built on the transactional outbox pattern plus a small in-process dispatcher (`internal/platform/eventbus`). This is what gives us **at-least-once** cross-module delivery (PRD footnote [d]).
+Cross-module events are plain Java records published through Spring's `ApplicationEventPublisher` and delivered by Spring Modulith's **event publication registry**. The registry is the transactional outbox: it gives us **at-least-once** cross-module delivery (PRD footnote [d]) without a hand-written relay.
 
-## Why an outbox at all
+## Why a registry at all
 
-The naive approach — publish to the event bus right after committing the DB transaction — has a fatal gap: the process can crash *between* the commit and the publish, and the event is lost forever. For a ledger credit triggered by task approval, a lost event means a teen who was approved but never paid. Unacceptable.
+The naive approach — fire a listener right after committing the DB transaction — has a fatal gap: the process can crash *between* the commit and the listener, and the event is lost forever. For a ledger credit triggered by task approval, a lost event means a teen who was approved but never paid. Unacceptable.
 
-The outbox closes the gap by making the event part of the transaction:
+The registry closes the gap by making the event part of the transaction:
 
-1. The business change and an `outbox_events` row are written **in the same DB transaction**. They commit atomically — either both or neither.
-2. A separate **relay** polls `platform.outbox_events` and delivers undelivered rows to the dispatcher, marking them delivered.
-3. If the process crashes at any point, the row is still pending and is delivered again → **at-least-once**, never zero. Duplicates are possible, which is why consumers are idempotent.
+1. The business change and one `event_publication` row **per interested listener** are written **in the same DB transaction**. They commit atomically — either both or neither.
+2. After commit, each `@ApplicationModuleListener` runs asynchronously, in its own new transaction. When it finishes, its row gets a `completion_date`.
+3. If the process crashes or a listener throws, the row stays incomplete. With `republish-outstanding-events-on-restart: true` (set in `application.yml`) incomplete rows are redelivered on the next start → **at-least-once**, never zero. Duplicates are possible, which is why consumers are idempotent.
 
-## The outbox table
+## The table
+
+`event_publication` is created by Flyway (`V6__event_publication.sql`), not by Modulith (`schema-initialization.enabled: false`), so production schema changes stay in migrations. It is Modulith's own DDL for the version in the `pom.xml`; when upgrading Modulith, diff its `schema-postgresql.sql` against ours and add a migration.
 
 ```sql
-CREATE TABLE platform.outbox_events (
-    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    event_type      TEXT        NOT NULL,
-    aggregate_id    UUID        NOT NULL,
-    payload         JSONB       NOT NULL,
-    idempotency_key TEXT        NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    published_at    TIMESTAMPTZ,
-    attempts        INT         NOT NULL DEFAULT 0,
-    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (event_type, idempotency_key)
+CREATE TABLE event_publication (
+    id               UUID NOT NULL PRIMARY KEY,
+    listener_id      TEXT NOT NULL,
+    event_type       TEXT NOT NULL,
+    serialized_event TEXT NOT NULL,
+    publication_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    completion_date  TIMESTAMP WITH TIME ZONE
 );
-CREATE INDEX outbox_events_pending_idx ON platform.outbox_events (id) WHERE published_at IS NULL;
-CREATE INDEX outbox_events_aggregate_pending_idx ON platform.outbox_events (aggregate_id, id) WHERE published_at IS NULL;
 ```
 
-`published_at IS NULL` means pending. The partial indexes keep the relay's query cheap as the table grows. Delivered rows are retained for audit (SYS-01 spirit) and can be archived or pruned by a separate job, never by the relay. The `UNIQUE (event_type, idempotency_key)` constraint rejects a producer that enqueues the same event twice, so an event that can legitimately repeat (e.g. a task submitted again after a redo) needs the attempt number in its key.
+`completion_date IS NULL` means pending. It sits in the default schema because Modulith addresses it unqualified, and it is excluded from jOOQ code generation. It is owned by no module.
 
-## Writing an event (producer side)
+**A publication row exists only per transactional listener.** An event with no `@ApplicationModuleListener` is not stored anywhere. Until `ledger` and `notification` exist, `FamilyLinked` and `FamilyUnlinked` are published and then forgotten. This is correct, but it means a test that checks "the event is durable" needs a real listener registered.
 
-Producers never call the dispatcher directly. Inside their transaction they write an outbox row:
+## Publishing an event (producer side)
 
-```go
-err := store.ExecTx(ctx, func(tx pgx.Tx) error {
-    if err := saveTask(ctx, tx, task); err != nil {
-        return err
-    }
-    return outbox.Insert(ctx, tx, outbox.Event{
-        Type:           "TaskApprovedEvent",
-        AggregateID:    task.ID,
-        IdempotencyKey: "REWARD-TASK-" + task.ID.String(),
-        Payload:        TaskApprovedEvent{TaskID: task.ID, TeenID: task.TeenID, RewardAmount: task.Reward.Amount, Currency: task.Reward.Currency},
-    })
-})
-```
+Producers publish inside their service transaction and never call listeners directly:
 
-## The dispatcher (`eventbus.Bus`)
-
-Modules register handlers at startup; the relay publishes through the same object:
-
-```go
-bus.Handle("ledger-credit", "TaskApprovedEvent", creditWallet)   // returns an error on a duplicate name
-bus.Publish(ctx, "TaskApprovedEvent", msg)
-```
-
-`Publish` is synchronous and in-process. For each handler registered for the topic, in registration order, it:
-
-1. runs the handler on a copy of the message, with a context derived from the publish context and limited to `HANDLER_TIMEOUT` (default 10 s) per attempt, recovering panics;
-2. retries a failing handler, including one that timed out, with exponential backoff (`HANDLER_MAX_RETRIES`, zero means no retries);
-3. after the last retry, writes the message to `platform.dead_letters` (topic, handler, payload, metadata, reason) and moves on. The row is unique per `(message_uuid, handler)`, so a redelivery never duplicates it.
-
-A hung handler is therefore an ordinary failure: cut off, retried, and finally dead-lettered, never an endless loop. Handlers must honour `msg.Context()` (pass it to database calls); Go cannot kill a goroutine that ignores its context.
-
-`Publish` returns an error in exactly three cases, and in each the event must stay pending:
-
-- no handler is registered for the topic (`ErrNoHandler`);
-- the publish context itself was cancelled (shutdown) — a failure during shutdown is never dead-lettered;
-- the failure could not be recorded (the dead-letter write failed).
-
-It returns nil when every handler succeeded or its failure was durably recorded. `Topics()` lists the topics that have a handler. There are no goroutines, no router to start, and no startup-ordering requirement: the relay only picks events whose type has a registered handler, so an event whose consumer is not deployed yet simply waits.
-
-Handlers keep the Watermill `message.Message` type and the `func(*message.Message) error` signature. When a module is extracted or a durable broker is needed, the relay's target changes to a broker publisher and handlers run under a Watermill router; handler code does not change.
-
-## The relay (publisher side)
-
-A `Ticker` (see `docs/modules.md`, "Time-driven work"). The relay runs as an in-process loop (about 1 s) in the API pods, not from the CronJob, because the CronJob's one-minute granularity would delay event delivery.
-
-```go
-func (r *Relay) Tick(ctx context.Context, _ time.Time) error {
-    ids, err := r.deliverableIDs(ctx)
-    ...
-    // deliverableIDs: pending, due, handler registered for the type, no earlier unpublished event of the aggregate
-    for _, id := range ids {
-        if err := r.deliver(ctx, id); err != nil {
-            r.logDeliveryFailure(id, err)
-        }
-    }
-    return nil
-}
-
-func (r *Relay) deliver(ctx context.Context, id int64) error {
-    publishErr := r.store.ExecTx(ctx, func(tx pgx.Tx) error {
-        event, err := lockForDelivery(ctx, tx, id)
-        if errors.Is(err, pgx.ErrNoRows) {
-            return nil
-        }
-        ...
-        if err := r.publisher.Publish(ctx, event.eventType, toMessage(event)); err != nil {
-            return err
-        }
-        _, err = tx.Exec(ctx, `UPDATE platform.outbox_events SET published_at = now() WHERE id = $1`, id)
-        return err
-    })
-    if publishErr == nil || ctx.Err() != nil {
-        return publishErr
-    }
-    return errors.Join(publishErr, r.recordFailure(ctx, id))
+```java
+@Transactional
+public void approveTask(ApproveTask cmd) {
+    Task task = tasks.findForUpdate(cmd.taskId());
+    task.approve(cmd.parentId(), clock.instant());
+    tasks.save(task);
+    publisher.publishEvent(new TaskApproved(task.id(), task.teenId(), task.rewardAmount(), task.currency()));
 }
 ```
 
-Properties, each covered by a test in `internal/platform/outbox`:
+Events are records in the producing module's **root package**, so other modules may depend on them and nothing else of the producer.
 
-- **One event, one short transaction.** The row is locked with `FOR UPDATE SKIP LOCKED`, delivered, and marked published in the same transaction. A relay never waits behind a row another relay holds, and several relays or overlapping ticks never deliver an event twice concurrently.
-- **Bounded.** Every handler attempt is limited by `HANDLER_TIMEOUT`, so a lock and a connection are never held forever.
-- **Shutdown.** The whole delivery, including the final `UPDATE` and commit, uses the relay's context. A SIGTERM that arrives in the few milliseconds between a handler succeeding and the commit makes the transaction roll back, so the event is delivered once more after restart. That repeat is harmless because handlers are idempotent, and the alternative (a second, detached context for the commit) was judged not worth its complexity. A clean shutdown logs no delivery error.
-- **No starvation, but not silent.** The relay selects only events whose type has a registered handler, so a pile of events nobody consumes yet (a module not built or deployed) cannot fill the batch window. Those events are reported instead of ignored: at most once a minute the relay logs a warning per event type with the number waiting (`outbox events waiting for a handler`). When their handler is registered they are delivered in `id` order.
-- **Backoff, never parking.** A failed delivery (the dead-letter write failed, or a database error) is recorded in a *separate* transaction: `attempts` is incremented and `next_attempt_at` is pushed out by `2^attempts` seconds (the exponent is capped at 20 to avoid numeric overflow), limited to `RELAY_MAX_BACKOFF` (default 5 min). The event is retried forever with that backoff and each failure is logged at error level. Nothing is parked automatically: for a ledger, a visibly stuck event is safer than a silently abandoned one.
-- **Not a failure:** cancellation of the relay's own context (shutdown) neither increments `attempts` nor backs off.
-- **Per-aggregate order.** An event is delivered only when no earlier unpublished event of the same aggregate *that has a registered handler* exists, checked both when selecting and again under the row lock, so a relay holding a stale list cannot overtake. A backed-off event therefore holds back its successors (the next task transition) while other aggregates keep flowing. Events whose consumer is not deployed wait on their own and are outside the ordering, so they cannot block later events. Two rules make this sound:
-  - **Producers must touch the aggregate row.** The event's `aggregate_id` must be the id of a row the same transaction updates or locks (for a task, the version-checked `UPDATE`). A second transition on that aggregate then has to wait for the first to commit, so a lower `id` can never become visible after a higher one has been delivered. Identity values are assigned at insert, not at commit, so an event for an aggregate the transaction does not lock has no ordering guarantee.
-  - **Handlers must be order-tolerant.** A dead-lettered event counts as delivered, so later events of its aggregate proceed and a redriven event can arrive after them. Handlers must be state-based and idempotent, not dependent on seeing every event in sequence. Order across aggregates is not guaranteed. `created_at` is the transaction start time and is never used for ordering; `id` is assigned at insert, after the aggregate's row lock, so a later transition always gets a higher `id`.
-- **Idempotent redelivery.** If the process dies after a handler succeeded but before `published_at` is saved, the event is delivered again. Handlers must be idempotent (below).
+## Consuming an event (listener side)
 
-### Poll vs. LISTEN/NOTIFY
-
-Start with polling (every ~1s). It is simple, observable, and correct. pgx supports `LISTEN/NOTIFY`, which can cut latency, but adds a wakeup path to get right; treat it as a latency optimization layered on top of the poll, never a replacement for it (NOTIFY is fire-and-forget and can be missed — the poll is the safety net).
-
-## Consumer side — idempotency is mandatory
-
-Because delivery is at-least-once, **every consumer must be idempotent.** The outbox carries an `idempotency_key`; the consumer uses it as the uniqueness key of whatever effect it produces. The dispatcher does not deduplicate for consumers; the consumer's own unique constraint is the guard.
-
-```go
-func (h *CreditHandler) Handle(msg *message.Message) error {
-    return h.service.CreditTaskReward(msg.Context(), parse(msg))
+```java
+@ApplicationModuleListener
+void on(TaskApproved event) {
+    ledger.creditTaskReward(event.taskId(), event.teenId(), event.rewardAmount(), event.currency());
 }
 ```
 
-Inside `CreditTaskReward`, one transaction inserts the ledger entry with `idempotency_key = REWARD-TASK-{taskID}` (a `UNIQUE` column) and updates the wallet. A redelivered event hits the unique constraint, which the service treats as success, and nothing changes. The teen is credited exactly once despite at-least-once delivery. The unique index on `(ref_id) WHERE kind = 'TASK_REWARD'` is a second guard against crediting one task twice under different keys.
+`@ApplicationModuleListener` is `@Async` + `@Transactional(REQUIRES_NEW)` + `@TransactionalEventListener(AFTER_COMMIT)`. The listener's own work is atomic with marking the publication complete.
 
-### Consumer failure handling and operations
+### Consumer idempotency is mandatory
 
-- **Transient handler failure:** retried by the dispatcher; the event is delivered normally.
-- **Poison event (a handler that keeps failing):** after the retries the message is in `platform.dead_letters` and the outbox row counts as delivered, so one poison event never blocks the queue. The dead-letter row is the record of the failure. Operators fix the cause, re-enqueue the payload, and set `redriven_at`.
-- **Infrastructure failure (database, the dead-letter write):** the event stays pending and is retried with backoff; see above.
-- **Connection budget:** a delivery holds one pooled connection and a row lock while handlers run, the dead-letter write needs a second, and each handler may use its own, so `DB_MAX_CONNS` must be at least 4 (enforced) and in practice leave room for the relay, the handlers and HTTP requests (default 20).
-- **Worst-case time one event holds its connection and lock:** per handler, `(HANDLER_MAX_RETRIES + 1) × HANDLER_TIMEOUT + HANDLER_MAX_RETRIES × HANDLER_RETRY_MAX`, plus the dead-letter write; with the defaults (`HANDLER_MAX_RETRIES=1`, `HANDLER_RETRY_MAX=500ms`, `HANDLER_TIMEOUT=10s`) about 2 × 10 s + 0.5 s ≈ 20 s for a handler that always hangs, summed over the topic's handlers. The defaults are deliberately small, because the retry sleeps while the relay waits. Tune the three settings together. If handlers get long-running or relays multiply, claim rows with a lease (a short transaction that sets `locked_until`) and run handlers outside any transaction.
-- **Known limitation, dead-letter text:** the error text of a failed handler is stored as-is. Postgres rejects the NUL character (`\\x00`) in text, so a handler error containing one would make the dead-letter insert fail on every attempt; the event would stay pending and hold back its aggregate. Nothing produces such text today. If a handler starts quoting raw bytes from an external system, strip NULs and cap the length in `newDeadLetter`. Recognise it by the relay logging the same dead-letter failure on every retry.
-- **Known weakness: the retry loop sleeps inside the relay.** `Bus.Publish` retries a failing handler in-process and waits between attempts, while the relay holds its transaction, connection and row lock. Nothing else is delivered meanwhile. The defaults are small (one retry, 100 ms to 500 ms of waiting) to limit that, and for the MVP a failing handler is rare. The planned fix is to stop sleeping and let the database schedule retries: `Publish` runs each handler once and reports which failed; the relay records `attempts + 1` and a backoff in `next_attempt_at` (this machinery already exists) and moves on; on the final attempt (a `RELAY_MAX_ATTEMPTS` setting replacing the three retry settings) the failing handlers are dead-lettered and the event is marked published. That removes every sleep, bounds the time a lock is held by one handler timeout, makes retry timing survive a restart, and removes sleeps from tests. Its cost: a retry re-runs the handlers that already succeeded (safe, they are idempotent) until per-handler progress is tracked. Do this before real handlers with side effects (the ledger credit, push sending) go to production.
-- **Head-of-line blocking (accepted trade-off):** the relay delivers one event at a time, and a retrying handler (up to a few seconds of backoff) delays the events behind it. A slow consumer also slows the other consumers of the same event. Acceptable at MVP volume. If it hurts, deliver different aggregates in parallel, or move to per-consumer delivery (a job queue such as River, or a broker).
-- **Monitoring to add before production:** alert on the age of the oldest pending outbox row, on the number of rows with `attempts > 0`, and on unredriven dead letters. There is no automatic redrive tool yet.
-- **Not a replayable log.** The outbox is the durable producer-side record and published rows are retained, but consumers have no offsets, so replay is manual. If a real replay need appears (new consumer, extraction, incident), move the relay's target to a durable broker such as NATS JetStream or Redpanda. Handlers do not change; events must stay versioned and keyed by aggregate.
+Because delivery is at-least-once, **every listener must be idempotent.** Modulith does not deduplicate for consumers; the consumer's own unique constraint is the guard. `creditTaskReward` inserts the ledger entry with `idempotency_key = REWARD-TASK-{taskId}` (a `UNIQUE` column) and updates the wallet in one transaction. A redelivered event hits the unique constraint, which the service treats as success, and nothing changes. The unique index on `(ref_id) WHERE kind = 'TASK_REWARD'` is a second guard against crediting one task twice under different keys. Notification uses `notification.delivered (event_key, recipient_id)` the same way.
+
+Events do not carry an idempotency key. Each consumer derives the key of its own effect from the event's natural identifiers (`taskId`, or `(parentId, teenId, generation)` for link events). An event that can legitimately repeat for one aggregate (a task submitted again after a redo) needs a distinguishing value in its payload, such as the attempt number.
+
+### Order and state
+
+Modulith delivers asynchronously and gives **no ordering guarantee** across listeners or between events of one aggregate. The Go design's per-aggregate ordering guard is deliberately not rebuilt. Two rules replace it:
+
+- **Handlers must be state-based and idempotent,** not dependent on seeing every event in sequence. A listener looks at the current state (is the pair linked now? is the task already credited?), not at "the previous event".
+- **Producers publish inside the transaction that locks or updates the aggregate row,** so changes to one aggregate are serialised even though delivery is not. Events that can recur for one aggregate carry a monotonically increasing value (`generation`, attempt number) so consumers can tell a new fact from a replay.
+
+If a flow ever needs strict ordering (it does not today), that is a reason to add it for that flow, not globally.
+
+## Failure handling and operations
+
+- **Transient listener failure:** the exception is logged, the publication stays incomplete. Modulith does **not** retry on its own while the process runs; it retries on restart or when asked.
+- **Resubmission ticker (not built yet):** a `Ticker` that calls `IncompleteEventPublications.resubmitIncompletePublicationsOlderThan(Duration.ofMinutes(1))` gives timed retries on the existing scheduler. It must exist before real listeners with side effects (the ledger credit, push sending) go to production, because without it a failed credit waits for the next deployment.
+- **Poison event:** a listener that always fails keeps retrying on every resubmission. There is no dead-letter table; the incomplete publication is the record. Alert on it (below) and fix the listener. Because retries re-run the whole listener, it must stay idempotent.
+- **Completed publications** accumulate. Purge them on a schedule with `CompletedEventPublications.deletePublicationsOlderThan(...)`, or set `spring.modulith.events.completion-mode` to `delete`/`archive`. Decide against the audit need before production; the ledger is the audit trail, not this table.
+- **Monitoring to add before production:** the age of the oldest incomplete publication, the count of incomplete rows per `listener_id`, and listener error rates.
+- **Pool budget:** each asynchronous listener holds a connection while it runs, so size `DB_MAX_CONNS` (default 20) for HTTP requests plus the async executor's threads.
+- **Shutdown:** a listener interrupted by shutdown stays incomplete and is redelivered after restart. That repeat is harmless because listeners are idempotent.
+- **Payload compatibility:** `serialized_event` is JSON. Renaming or removing a record component breaks redelivery of rows written before the deploy. Treat a payload change as a contract change: add fields (nullable), or version the type (`TaskApprovedV2`), and drain old publications first.
+
+## Testing
+
+- Unit-test the domain method that produces the event; it is pure.
+- In an `@IntegrationTest`, `@RecordApplicationEvents` captures events in memory (`IdentityFlowTests` does this). That proves what is published, not that it is durable.
+- To prove durability and redelivery, use a real listener against Testcontainers Postgres: publish, make the listener fail once, restart or resubmit, and assert the effect happened exactly once. The ledger's first test should do exactly this.
+- `@ApplicationModuleTest` with `Scenario` runs one module in isolation and waits for asynchronous effects without sleeping.
 
 ## Event catalogue (MVP)
 
 | Event | Producer | Consumers | Effect |
 |---|---|---|---|
-| `FamilyLinkedEvent` | identity | ledger, notification | seed wallet; welcome push |
-| `FamilyUnlinkedEvent` | identity | task, notification | cancel the teen's open tasks for that parent; tell the teen |
-| `TaskAssignedEvent` | task | notification | "new task / milestone" → teen |
-| `TaskSubmittedEvent` | task | notification | "proof pending" → parent |
-| `TaskApprovedEvent` | task | ledger, notification | credit wallet; "reward credited" → teen |
-| `TaskRejectedEvent` | task | notification | "rejected" → teen |
-| `TaskRedoRequestedEvent` | task | notification | "redo" → teen |
-| `TaskCancelledEvent` | task | notification | "cancelled" → teen |
-| `TaskExpiredEvent` | task | notification | "deadline passed" → teen |
-| `PayoutRequestedEvent` | ledger | notification | high-priority "payout request" → parent |
-| `PayoutFulfilledEvent` | ledger | notification | "paid" → teen |
-| `PayoutCancelledEvent` | ledger | notification | "request cancelled / declined / expired" → teen |
-| `PenaltyAppliedEvent` | ledger | notification | "deduction" → teen |
+| `FamilyLinked` | identity | ledger, notification | seed wallet; welcome push |
+| `FamilyUnlinked` | identity | task, notification | cancel the teen's open tasks for that parent; tell the teen |
+| `TaskAssigned` | task | notification | "new task / milestone" → teen |
+| `TaskSubmitted` | task | notification | "proof pending" → parent |
+| `TaskApproved` | task | ledger, notification | credit wallet; "reward credited" → teen |
+| `TaskRejected` | task | notification | "rejected" → teen |
+| `TaskRedoRequested` | task | notification | "redo" → teen |
+| `TaskCancelled` | task | notification | "cancelled" → teen |
+| `TaskExpired` | task | notification | "deadline passed" → teen |
+| `PayoutRequested` | ledger | notification | high-priority "payout request" → parent |
+| `PayoutFulfilled` | ledger | notification | "paid" → teen |
+| `PayoutCancelled` | ledger | notification | "request cancelled / declined / expired" → teen |
+| `PenaltyApplied` | ledger | notification | "deduction" → teen |
 
-Event payloads are plain exported structs in the producing module's `events.go`. They are part of the module's **public contract** — changing a payload shape is a contract change; version it (`TaskApprovedEventV2`) rather than silently reshaping.
+Only `FamilyLinked` and `FamilyUnlinked` exist in code today. Event payloads are records in the producing module's root package and are part of its **public contract**.
 
 ## Before production
 
-These are known gaps that must be closed before real traffic; none blocks development.
+- The resubmission ticker above, plus a purge or archive policy for completed publications.
+- Alerts on the age of the oldest incomplete publication and on repeated listener failures.
+- A way to inspect and re-run a stuck publication by hand (an admin endpoint or a SQL runbook), built with the first real consumer.
 
-- Replace the in-process retry sleep with database-scheduled retries ("Known weakness" above).
+## Open decisions
 
-- A `tiyn` command to list and redrive dead letters: re-run the stored handler on the stored payload and set `redriven_at`. It needs the handlers the modules register, so it is built with the first real consumer (ledger). Until then a dead-lettered event, such as a reward credit that failed permanently, is recorded but never applied.
-- Alerts on: the age of the oldest pending outbox row, rows with `attempts > 0`, unredriven dead letters, and the unhandled-events warning.
-- The scheduled CronJob for `tiyn tick` once the first ticker (task expiry) exists.
-
-## Open decisions (flagged, not yet decided)
-
-- **Relay under scale-to-zero.** Decided: Kubernetes, with the relay as an in-process loop in always-running API pods. If the deployment ever scales the API to zero, events would sit pending until the next request; revisit then.
-- **Per-handler progress.** When one handler of a topic fails infrastructure-wise, the whole event is retried and the handlers that already succeeded run again; their idempotency makes that safe. Tracking per-handler completion is part of the same upgrade as below.
-- **Retry scheduling.** Planned change described under "Known weakness" above: move retries from an in-process sleep to `next_attempt_at`.
-- **Delivery model beyond the MVP.** The synchronous dispatcher is the simplest thing that is correct. Candidates for later, if head-of-line blocking or replay becomes a real need: River (Postgres job queue, per-consumer retries and a dashboard), Watermill's SQL pub/sub, or a broker (NATS JetStream, Redpanda). The `Bus.Handle` / `Bus.Publish` seam is the only code that would change.
+- **Ordering.** Not guaranteed, by design. Revisit only if a concrete flow cannot be made state-based.
+- **Beyond the MVP.** If head-of-line effects, replay or a second service appear, externalise events to a broker (`@Externalized` with the Modulith Kafka/AMQP/JMS modules). Producers and listeners stay as they are; the registry keeps the outbox guarantee.
+- **Scale-to-zero.** Decided: Kubernetes with always-running API pods. If the API ever scales to zero, pending publications wait until the next start; revisit then.

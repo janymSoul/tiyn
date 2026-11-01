@@ -6,152 +6,111 @@ Testability is an architectural property here, not an afterthought. The module s
 
 | Layer | Test type | Speed | Dependencies | What it proves |
 |---|---|---|---|---|
-| `domain/` (FSM, value objects) | **Unit** | microseconds | none | Transition guards, invariants, calculations are correct |
-| `service.go` (orchestration) | **Unit** w/ fakes | milliseconds | fake store + fake bus | The command sequences the right steps, handles errors, emits the right event |
-| `store/` + `service` + `http/` | **Functional** | seconds | real Postgres (Testcontainers) | Locking, constraints, idempotency, transactions actually hold end-to-end |
-| outbox relay + consumers | **Functional** | seconds | real Postgres | At-least-once delivery and idempotent consumption actually work |
+| `domain` (FSM, value objects) | **Unit** (plain JUnit) | microseconds | none | Transition guards, invariants, calculations are correct |
+| `app` service (orchestration) | **Unit** with fakes, or **integration** | milliseconds–seconds | fake stores, or real Postgres | The command sequences the right steps, handles errors, emits the right event |
+| `store` + `app` + `web` | **Integration** (`@IntegrationTest`) | seconds | real Postgres (Testcontainers) | Locking, constraints, idempotency, transactions actually hold end-to-end |
+| listeners + event registry | **Integration** | seconds | real Postgres | At-least-once delivery and idempotent consumption actually work |
+| module boundaries | **Architecture** (`ModularityTests`) | ~2 s | none | No illegal module dependency, no module touching another's tables |
 
-The guiding ratio: **many unit tests, enough functional tests to cover every transactional and locking guarantee.** Do not functionally test what a unit test already proves; do not unit-test (with mocks) a guarantee that only a real database can enforce (a mocked `FOR UPDATE` proves nothing).
+The guiding ratio: **many unit tests, enough integration tests to cover every transactional and locking guarantee.** Do not integration-test what a unit test already proves; do not unit-test (with mocks) a guarantee that only a real database can enforce (a mocked `FOR UPDATE` proves nothing).
 
 ## 1. Unit tests — pure domain
 
-The domain is pure, so these need no setup. Every FSM transition — legal and illegal — gets a test.
+The domain is pure, so these need no Spring context and no setup. Every FSM transition — legal and illegal — gets a test. `kz.tiyn.identity.domain.DomainTests` is the reference.
 
-```go
-func TestTask_Approve_fromSubmitted_succeeds(t *testing.T) {
-    task := domain.NewTask(/* ... */)
-    task.ForceState(domain.StateSubmitted) // test-only constructor helper
-    err := task.Approve(parentID)
-    require.NoError(t, err)
-    require.Equal(t, domain.StateApproved, task.State())
-}
+```java
+@Test
+void removeThenRelinkBumpsTheGenerationOnce() {
+    var link = FamilyLink.create(UUID.randomUUID(), UUID.randomUUID());
 
-func TestTask_Approve_fromAssigned_isInvalid(t *testing.T) {
-    task := domain.NewTask(/* ... */) // starts ASSIGNED
-    err := task.Approve(parentID)
-    require.ErrorIs(t, err, domain.ErrInvalidTransition)
+    assertThat(link.remove(Instant.now())).isTrue();
+    assertThat(link.remove(Instant.now())).isFalse();
+    assertThat(link.relink()).isTrue();
+    assertThat(link.generation()).isEqualTo(2);
 }
 ```
 
-Table-driven tests are the idiom for exhausting the transition matrix:
+Use `@ParameterizedTest` with a `@MethodSource` to exhaust a transition matrix (state × action → result or error).
 
-```go
-func TestTask_transitions(t *testing.T) {
-    cases := []struct {
-        from    domain.State
-        action  func(*domain.Task) error
-        wantErr error
-        wantTo  domain.State
-    }{
-        {domain.StateSubmitted, approve, nil, domain.StateApproved},
-        {domain.StateAssigned,  approve, domain.ErrInvalidTransition, domain.StateAssigned},
-        // ... every cell of the matrix
-    }
-    // ...
-}
-```
-
-**Rule:** if a bug could be a wrong guard or a miscalculated reward, there must be a unit test that would have caught it. No DB, no mocks, no HTTP.
+**Rule:** if a bug could be a wrong guard or a miscalculated reward, there must be a unit test that would have caught it. No database, no mocks, no HTTP.
 
 ## 2. Unit tests — service orchestration with fakes
 
-The service depends on the store and the event publisher through **interfaces**, so tests inject in-memory fakes. This proves the orchestration logic (did it emit the event? did it handle the store error?) without a database.
+Where a service has branching worth testing without a database, give it a narrow store interface and inject an in-memory fake (a tiny real implementation over a `Map`). Fakes beat call-order assertions because they read like the real thing and survive refactors. Do not add an interface to a store only to enable this; add it when a test needs it.
 
-```go
-type fakeStore struct {
-    tasks   map[uuid.UUID]domain.Task
-    events  []outbox.Event
-    seenIdem map[string]bool
-}
-// implements the store interface the service depends on; records what happened.
+## 3. Integration tests — real Postgres via Testcontainers
+
+The guarantees that matter most — `FOR UPDATE` serialization, the non-negative check constraint, idempotency uniqueness, transaction atomicity — **cannot** be proven with a mock. They are database behavior, so integration tests run against a real Postgres 16 container.
+
+### The `@IntegrationTest` meta-annotation
+
+`kz.tiyn.support.IntegrationTest` bundles `@SpringBootTest`, the Postgres container (`PostgresTestConfig`, wired with `@ServiceConnection`), a fake Google verifier (`FakeGoogleConfig`), and the required properties (JWT secret, a Google client id, a one-hour tick interval so the scheduler stays quiet). Flyway runs all migrations when the context starts.
+
+```java
+@IntegrationTest
+@AutoConfigureMockMvc
+class IdentityFlowTests { ... }
 ```
 
-Fakes, not mocks-with-expectations. A fake behaves like a tiny real implementation (an in-memory map); it is less brittle than call-order assertions and reads like the real thing. Use a mocking library only where a fake is genuinely more code than it is worth.
+Spring caches contexts, so each distinct context configuration starts one container. Tests that add `@AutoConfigureMockMvc` or other annotations form a separate context and a separate container. That is a few seconds each, once per context; a shared static container is an easy optimisation if it grows.
 
-> This is only possible because the service depends on an **interface**, not on `*Store` directly. Define the narrow store interface in the module and have the service accept it. Depending on a narrow interface is also what makes the code testable.
+### Isolation: unique data, no cleanup
+
+Do not clean state with `TRUNCATE` or `DELETE`: `ledger_entries` is append-only and rejects both by design, and cleanup between tests hides ordering bugs. Each test creates its own users and rows with random identifiers (`"sub-" + UUID.randomUUID()`) and asserts only on its own data. Never assert on global counts.
 
 ### No slow tests
 
-No test waits more than about 2 seconds. Never `time.Sleep` to let something happen: inject the clock where the code takes one, shrink intervals and timeouts through the options the code already exposes (millisecond retry intervals, a 50 ms handler timeout), write the due time directly (the relay compares `next_attempt_at` with the database clock, so a test sets it with SQL to skip a backoff; `Relay.Tick(ctx, now)` uses `now` only to throttle the unhandled-events warning), or wait on a channel the code under test closes. goose's lock retry period is whole seconds, so migrate tests use the one-second minimum. `time.After(...)` is only a ceiling that turns a hang into a failure; it must not elapse in a passing run. Starting the Postgres container costs a few seconds once per package; that is the only fixed cost.
+No test waits more than about 2 seconds. Never `Thread.sleep` to let something happen: inject the `Clock` where the code takes one, shrink intervals through properties, wait on a latch or use Modulith's `Scenario` for asynchronous effects, and use Awaitility with a short timeout only as a ceiling that turns a hang into a failure. Starting the Postgres container costs a few seconds once per context; that is the only fixed cost.
 
-## 3. Functional tests — real Postgres via Testcontainers
+### What integration tests must cover
 
-The guarantees that matter most — `FOR UPDATE` serialization, the non-negative check constraint, idempotency uniqueness, transaction atomicity — **cannot** be proven with a mock. They are database behavior. So functional tests run against a real Postgres 16 container.
-
-### Shared container, migrated once
-
-Spin one container per package (or per test binary), run goose migrations once into a template database, and give each test its own database cloned from it with `CREATE DATABASE ... TEMPLATE`. Spinning a container per test is too slow; sharing one container with a fresh clone per test is the balance. Do not clean state with `TRUNCATE` or `DELETE`: `ledger_entries` is append-only and rejects both by design.
-
-```go
-func setupDB(t *testing.T) *pgxpool.Pool {
-    ctx := context.Background()
-    pg, err := postgres.Run(ctx, "postgres:16",
-        postgres.WithDatabase("tiyn_test"),
-        postgres.WithUsername("test"), postgres.WithPassword("test"),
-        testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
-    )
-    require.NoError(t, err)
-    t.Cleanup(func() { _ = pg.Terminate(ctx) })
-
-    dsn, _ := pg.ConnectionString(ctx, "sslmode=disable")
-    runGooseMigrations(t, dsn)          // migrate up
-    pool, _ := pgxpool.New(ctx, dsn)
-    t.Cleanup(pool.Close)
-    return pool
-}
-```
-
-Guard functional tests so a machine without Docker can still run `go test ./internal/...`:
-
-```go
-func skipIfNoDocker(t *testing.T) {
-    if os.Getenv("TIYN_SKIP_FUNCTIONAL") != "" {
-        t.Skip("functional tests disabled")
-    }
-}
-```
-CI always runs them; a developer without Docker can opt out and still run the unit suite.
-
-### What functional tests must cover
-
-- **Concurrency on the wallet.** Fire two concurrent cash-outs that together exceed the balance; assert exactly one succeeds and the balance never goes negative. This is the single most important test in the codebase — it proves the `FOR UPDATE` + check-constraint design.
-- **Optimistic task conflict.** Two concurrent approvals of the same task; assert one wins and one gets `ErrConcurrentModification`.
+- **Concurrency on the wallet.** Fire concurrent cash-outs that together exceed the balance; assert exactly one succeeds and the balance never goes negative. This is the single most important test in the codebase — it proves the `FOR UPDATE` + check-constraint design.
+- **Optimistic task conflict.** Two concurrent approvals of the same task; assert one wins and one gets a conflict.
 - **Idempotency.** Submit the same reward/payout command twice; assert exactly one ledger entry.
-- **Transaction atomicity.** Force a failure after the ledger insert but before the outbox insert (inject an error); assert nothing was committed.
-- **Outbox + relay.** Commit a command, run the relay, assert the event was published exactly as a pending→published transition; crash the relay mid-batch (simulate) and assert redelivery, then assert the idempotent consumer credits only once.
+- **Transaction atomicity.** Force a failure after the state change but before the event is published (inject an error); assert nothing was committed.
+- **Races on unique keys.** `IdentityConcurrencyTests` starts several threads on one latch against the same Google subject and the same join, then asserts one user, one link and one event. Use it as the template.
+- **Event durability.** Publish, make a real listener fail once, resubmit, and assert the effect happened exactly once (`docs/events-outbox.md`, "Testing").
 
-### HTTP-level functional tests
+### HTTP-level flow tests
 
-The top-level flow tests drive real HTTP via `httptest.Server` (or chi's handler + `httptest.NewRecorder`) with a real DB behind it, exercising a full scenario from the PRD:
+Drive the real HTTP stack with `MockMvc` and a real database behind it, exercising a full scenario from the PRD:
 
 ```
 link family → parent creates milestone → teen submits proof → parent approves
-  → assert ledger credited, assert TaskApprovedEvent delivered, assert push enqueued
+  → assert ledger credited, assert TaskApproved delivered, assert push enqueued
 ```
 
-One such black-box test per PRD user scenario (Scenario 1: milestone; Scenario 2: cash-out loop) is the acceptance backbone.
+One such black-box test per PRD user scenario (Scenario 1: milestone; Scenario 2: cash-out loop) is the acceptance backbone. `IdentityFlowTests` is the reference for style: helper methods for sign-in and bearer headers, JSON assertions with `jsonPath`.
+
+## 4. Architecture tests
+
+`ModularityTests` runs on every build:
+
+- `ApplicationModules.of(TiynApplication.class).verify()` fails on a dependency that crosses a module's internal packages, a cycle between modules, or a reference to a non-exposed type.
+- `eachModuleTouchesOnlyItsOwnTables` is an ArchUnit rule: code outside `kz.tiyn.<owner>` may not depend on `kz.tiyn.platform.jooq.<owner>`. Add every new module to `TABLE_OWNERS`.
 
 ## Fakes for external systems
 
-- **S3 / media:** the `media.PresignService` interface is faked in service tests; functional tests can run against a SeaweedFS container (same S3 API) if upload behavior is under test, otherwise fake it — we never handle bytes, so there is little to test beyond key derivation (which is a unit test).
-- **FCM / push:** the notification module's FCM client is behind an interface; assert "a push with this payload to this device" against a fake. Never call real FCM in tests.
-- **Event bus:** in unit tests, fake the dead-letter store (`eventbus.DeadLetterStore`) and drive `Bus.Publish` directly. In functional tests, use the real bus, relay and Postgres so retries, dead letters, ordering and backoff are exercised.
+- **Google:** `FakeGoogleConfig` supplies a `@Primary` `GoogleVerifier`; build tokens with `FakeGoogleConfig.tokenFor(sub, name)`. The real `JwksGoogleVerifier` has its own unit tests that point it at an unreachable key set and at malformed tokens.
+- **Our JWTs:** `TestTokens.sign(...)` builds tokens with any secret, algorithm, issuer, subject, role and expiry, for the negative cases in `PlatformSecurityTests`. Issue valid ones with `AccessTokenIssuer`.
+- **S3 / media:** the `media.Storage` interface is faked in service tests. Use a SeaweedFS container (same S3 API) only when upload behaviour itself is under test.
+- **FCM / push:** the notification module's FCM client sits behind an interface; assert "a push with this payload to this device" against a fake. Never call real FCM in tests.
 
 ## Coverage expectations
 
-- `internal/*/domain/` — near-total line + branch coverage. It is pure logic; there is no excuse.
-- `internal/*/` service — every command path and its error branches.
-- Functional — every guarantee in `docs/transactions.md`'s checklist and every PRD user scenario.
+- `domain` — near-total line and branch coverage. It is pure logic; there is no excuse.
+- `app` — every command path and its error branches.
+- Integration — every guarantee in `docs/transactions.md`'s checklist and every PRD user scenario.
 
 Coverage percentage is a guide, not a target; a 100%-covered FSM with no concurrency test is worse than an 80%-covered one that proves the wallet can't go negative. Test the guarantees, and coverage follows.
 
 ## Commands
 
 ```bash
-go test ./internal/...            # unit + functional for module code (needs Docker for functional)
-go test ./test/...                # top-level scenario/acceptance tests
-TIYN_SKIP_FUNCTIONAL=1 go test ./... # unit only, no Docker
-go test -race ./...               # ALWAYS runnable; the race detector is mandatory in CI
+./mvnw verify                       # build, jOOQ codegen, all tests, spotless:check (needs Docker)
+./mvnw -Dtest=DomainTests test      # a single class
+./mvnw -Dtest=ModularityTests test  # boundaries only
+./mvnw spotless:apply               # format before committing
 ```
 
-The `-race` flag is non-optional in CI: this is a concurrent system (relay goroutine, concurrent HTTP handlers, the event bus). A data race is a bug even if a test passes without `-race`.
+Docker is required for the build itself, not just for tests: jOOQ code generation starts a Postgres container. CI must provide a Docker daemon.
