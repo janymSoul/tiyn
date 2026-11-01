@@ -12,7 +12,7 @@ final class Wallet {
     private final UUID teenId;
     private final String currency;
     private long balanceAmount;
-    private final long lockedAmount;
+    private long lockedAmount;
     private final long openRequestedAmount;
 
     private Wallet(UUID teenId, String currency, long balanceAmount, long lockedAmount, long openRequestedAmount) {
@@ -54,6 +54,28 @@ final class Wallet {
         balanceAmount -= amount;
         return new LedgerEntry(
                 entryId, teenId, currency, EntryKind.PAYOUT, -amount, 0, payoutId, LedgerEntry.payoutKey(payoutId));
+    }
+
+    LedgerEntry lockForGoal(UUID entryId, UUID goalId, long amount, String idempotencyKey) {
+        if (amount <= 0) {
+            throw new LedgerException(LedgerError.INVALID_AMOUNT);
+        }
+        if (amount > availableAmount()) {
+            throw new LedgerException(LedgerError.INSUFFICIENT_FUNDS);
+        }
+        lockedAmount += amount;
+        return new LedgerEntry(entryId, teenId, currency, EntryKind.GOAL_LOCK, 0, amount, goalId, idempotencyKey);
+    }
+
+    LedgerEntry unlockFromGoal(UUID entryId, UUID goalId, long amount, long saved, String idempotencyKey) {
+        if (amount <= 0) {
+            throw new LedgerException(LedgerError.INVALID_AMOUNT);
+        }
+        if (amount > saved) {
+            throw new LedgerException(LedgerError.INSUFFICIENT_GOAL_FUNDS);
+        }
+        lockedAmount -= amount;
+        return new LedgerEntry(entryId, teenId, currency, EntryKind.GOAL_UNLOCK, 0, -amount, goalId, idempotencyKey);
     }
 
     void requireCanRequest(long amount) {

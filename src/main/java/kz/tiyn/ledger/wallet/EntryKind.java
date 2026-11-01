@@ -2,5 +2,7 @@ package kz.tiyn.ledger.wallet;
 
 enum EntryKind {
     TASK_REWARD,
-    PAYOUT
+    PAYOUT,
+    GOAL_LOCK,
+    GOAL_UNLOCK
 }

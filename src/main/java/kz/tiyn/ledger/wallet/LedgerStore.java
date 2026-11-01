@@ -2,6 +2,7 @@ package kz.tiyn.ledger.wallet;
 
 import static kz.tiyn.platform.jooq.ledger.Tables.LEDGER_ENTRIES;
 
+import java.util.Optional;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 
@@ -17,6 +18,20 @@ class LedgerStore {
     boolean exists(String idempotencyKey) {
         return dsl.fetchExists(
                 dsl.selectOne().from(LEDGER_ENTRIES).where(LEDGER_ENTRIES.IDEMPOTENCY_KEY.eq(idempotencyKey)));
+    }
+
+    Optional<LedgerEntry> findByKey(String idempotencyKey) {
+        return dsl.selectFrom(LEDGER_ENTRIES)
+                .where(LEDGER_ENTRIES.IDEMPOTENCY_KEY.eq(idempotencyKey))
+                .fetchOptional(r -> new LedgerEntry(
+                        r.getId(),
+                        r.getTeenId(),
+                        r.getCurrency(),
+                        EntryKind.valueOf(r.getKind()),
+                        r.getBalanceDelta(),
+                        r.getLockedDelta(),
+                        r.getRefId(),
+                        r.getIdempotencyKey()));
     }
 
     void append(LedgerEntry entry) {

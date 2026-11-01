@@ -11,7 +11,11 @@ public enum LedgerError {
     INVALID_IDEMPOTENCY_KEY,
     PAYOUT_ALREADY_OPEN,
     INVALID_TRANSITION,
-    INVALID_FILTER;
+    INVALID_FILTER,
+    INVALID_NAME,
+    EXCEEDS_TARGET,
+    INSUFFICIENT_GOAL_FUNDS,
+    GOAL_CLOSED;
 
     public String code() {
         return name().toLowerCase();

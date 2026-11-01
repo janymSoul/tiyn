@@ -75,6 +75,47 @@ class WalletTests {
     }
 
     @Test
+    void lockingMovesMoneyFromAvailableIntoTheGoalWithoutChangingTheBalance() {
+        Wallet wallet = Wallet.restore(TEEN, "KZT", 1500, 200, 300);
+        UUID entryId = UUID.randomUUID();
+        UUID goalId = UUID.randomUUID();
+
+        LedgerEntry entry = wallet.lockForGoal(entryId, goalId, 1000, "k");
+
+        assertThat(wallet.balanceAmount()).isEqualTo(1500);
+        assertThat(wallet.lockedAmount()).isEqualTo(1200);
+        assertThat(wallet.availableAmount()).isZero();
+        assertThat(entry).isEqualTo(new LedgerEntry(entryId, TEEN, "KZT", EntryKind.GOAL_LOCK, 0, 1000, goalId, "k"));
+    }
+
+    @Test
+    void lockingCannotUseHeldOrAlreadyLockedMoney() {
+        Wallet wallet = Wallet.restore(TEEN, "KZT", 1500, 200, 300);
+
+        assertError(
+                () -> wallet.lockForGoal(UUID.randomUUID(), UUID.randomUUID(), 1001, "k"),
+                LedgerError.INSUFFICIENT_FUNDS);
+        assertError(() -> wallet.lockForGoal(UUID.randomUUID(), UUID.randomUUID(), 0, "k"), LedgerError.INVALID_AMOUNT);
+        assertThat(wallet.lockedAmount()).isEqualTo(200);
+    }
+
+    @Test
+    void unlockingReleasesAtMostWhatTheGoalHolds() {
+        Wallet wallet = Wallet.restore(TEEN, "KZT", 1500, 700, 0);
+        UUID entryId = UUID.randomUUID();
+        UUID goalId = UUID.randomUUID();
+
+        LedgerEntry entry = wallet.unlockFromGoal(entryId, goalId, 400, 500, "k");
+
+        assertThat(wallet.lockedAmount()).isEqualTo(300);
+        assertThat(wallet.balanceAmount()).isEqualTo(1500);
+        assertThat(entry).isEqualTo(new LedgerEntry(entryId, TEEN, "KZT", EntryKind.GOAL_UNLOCK, 0, -400, goalId, "k"));
+        assertError(
+                () -> wallet.unlockFromGoal(UUID.randomUUID(), goalId, 101, 100, "k"),
+                LedgerError.INSUFFICIENT_GOAL_FUNDS);
+    }
+
+    @Test
     void onlyTengeIsSupported() {
         assertThat(Wallet.requireSupported("KZT")).isEqualTo("KZT");
         assertError(() -> Wallet.requireSupported("USD"), LedgerError.UNSUPPORTED_CURRENCY);
