@@ -26,7 +26,7 @@ The backend is Java 21, Spring Boot 3.5 and Spring Modulith, with jOOQ over Post
 
 Before you say a task is finished, all of the following must hold:
 
-- [ ] `./mvnw spotless:apply && ./mvnw verify` is green (compiles, generates jOOQ, passes all tests including `ModularityTests`, `spotless:check` clean). Docker must be running: the build starts Postgres for code generation.
+- [ ] `./mvnw spotless:apply && ./mvnw verify` is green (compiles, generates jOOQ, passes all tests including `ModularityTests`, and the quality gates are clean: `spotless:check`, Checkstyle, SpotBugs and the JaCoCo coverage floor). Docker must be running: the build starts Postgres for code generation.
 - [ ] No module uses another module's internals or tables (`ModularityTests` covers both; new modules are added to `TABLE_OWNERS`)
 - [ ] No new cross-context foreign keys in migrations
 - [ ] New cross-module effects go through an event, not a direct DB write

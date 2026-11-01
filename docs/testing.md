@@ -120,3 +120,16 @@ Coverage percentage is a guide, not a target; a 100%-covered FSM with no concurr
 ```
 
 Docker is required for the build itself, not just for tests: jOOQ code generation starts a Postgres container. CI must provide a Docker daemon.
+
+## Build, quality gates and CI
+
+`./mvnw verify` is the single gate, locally and in CI. After the tests it runs, in this order:
+- **JaCoCo** report (`target/site/jacoco`) and a coverage floor: line 93%, branch 78%, measured at 95.5% and 81.1% when the gate was added. Raise the floor when coverage rises; never lower it to get a build through. Generated jOOQ code and `TiynApplication` are excluded.
+- **Spotless** `check` (Palantir formatting, unused imports).
+- **Checkstyle** with `config/checkstyle/checkstyle.xml`. It checks correctness and naming, not formatting (Spotless owns that, and a style-guide rule set would fight it). A `private static final Logger log` is allowed. Generated code is never checked.
+- **SpotBugs** at Medium and above, with `config/spotbugs/exclude.xml`: generated jOOQ code, and `EI_EXPOSE_REP`/`EI_EXPOSE_REP2`, which only report that records and constructor-injected beans keep references by design. Add an exclusion only with a reason, and prefer fixing the code.
+
+The build needs Docker (jOOQ code generation and the tests start Postgres), so the jar cannot be built inside `docker build`. The `Dockerfile` only packages the jar that `./mvnw package` produced: `./mvnw -DskipTests package && docker build -t tiyn:local .`. It uses Spring Boot layers, runs as a non-root user and takes all configuration from environment variables; there is no `HEALTHCHECK` (use the actuator `/actuator/health` probes in Kubernetes). Without `TIYN_MEDIA_STORAGE` and `TIYN_NOTIFICATION_SENDER` the container refuses to start, by design.
+
+`.github/workflows/ci.yml` runs `./mvnw verify` on every pull request and on pushes to `main`, uploads the coverage report and the jar, and builds the image. Only a push to `main` publishes `ghcr.io/<owner>/tiyn:<sha>` and `:latest` (using `GITHUB_TOKEN`; the owner is lower-cased because GHCR requires it). GHCR is hosted outside Kazakhstan: before real user data, point the image step at the registry chosen for the production environment. Branch protection ("require CI to pass") is a GitHub setting, not part of the workflow.
+
