@@ -216,7 +216,7 @@ public interface BalanceReader {
 
 **The wallet is created lazily.** The first credit runs `INSERT ... ON CONFLICT DO NOTHING` and then locks the row, so concurrent first credits are safe. There is deliberately no `FamilyLinked` listener: events are delivered unordered, so a credit can arrive before any link handler, and the credit must be able to create the wallet itself. A teen without a wallet reads as a zero balance.
 
-**Built so far (steps 6a, 6b):** the `Wallet` aggregate, the append-only `LedgerEntry` (kinds `TASK_REWARD`, `PAYOUT`), `RewardListener`, `BalanceReader`/`Balance` and `GET /balance` (teen only; amounts in minor units; `available` already excludes the open payout request). Payouts live in the same `wallet` feature package because fulfilment changes `Payout`, `Wallet` and the journal in one transaction. Penalties and goals are step 6c.
+**Built so far (steps 6a, 6b, 6c-goals):** the `Wallet` aggregate, the append-only `LedgerEntry` (kinds `TASK_REWARD`, `PAYOUT`, `GOAL_LOCK`, `GOAL_UNLOCK`), `RewardListener`, `BalanceReader`/`Balance` and `GET /balance` (teen only; amounts in minor units; `available` already excludes the open payout request). Payouts live in the same `wallet` feature package because fulfilment changes `Payout`, `Wallet` and the journal in one transaction. Savings goals live in the same package for the same reason (a lock changes the wallet, the journal and the goal together). Penalties are still to do.
 
 **Payout API.** The teen names the parent (who must be linked); the payout is addressed to that parent only.
 
@@ -230,6 +230,18 @@ public interface BalanceReader {
 | `POST /payouts/{id}/cancel` | teen | `TEEN_CANCELLED` |
 
 Errors: `forbidden` 403, `not_found` 404, `invalid_amount` / `amount_too_small` / `insufficient_funds` / `parent_required` / `invalid_idempotency_key` / `invalid_filter` 422, `payout_already_open` / `invalid_transition` 409. Repeating the same cancellation is a no-op; resolving a payout another way is `invalid_transition`. The fulfil debit must fit `balance − locked` (funds locked in goals can never be paid out).
+
+**Savings goals API** (teen only; a parent gets `forbidden`; goals are private to the teen). A goal is a label on part of the wallet's money: locking moves nothing, it writes a `GOAL_LOCK` entry (`balance_delta = 0`, `locked_delta = +amount`) and raises `wallets.locked_amount`, which lowers *available*. The money stays in the total balance. A goal's `savedAmount` is derived: the sum of `locked_delta` over the entries whose `ref_id` is the goal, so the goals and the wallet's locked total cannot drift apart (a test asserts `locked_amount = sum of saved`).
+
+| Route | Notes |
+|---|---|
+| `POST /goals` | `{name, targetAmount}`; name 1 to 100 characters, target > 0; 201 |
+| `GET /goals`, `GET /goals/{id}` | with `savedAmount`; another teen's goal is `not_found`; list capped at 100 |
+| `POST /goals/{id}/lock` | `{amount}` + required `Idempotency-Key`; must fit *available* and the goal's remaining target |
+| `POST /goals/{id}/unlock` | `{amount}` + required `Idempotency-Key`; at most what the goal holds |
+| `POST /goals/{id}/close` | releases everything saved (`GOAL_UNLOCK`, key `GOAL-CLOSE-{goalId}`) and closes; repeating is a no-op |
+
+Errors: `invalid_name`, `exceeds_target`, `insufficient_funds`, `insufficient_goal_funds`, `invalid_amount`, `invalid_idempotency_key` 422; `goal_closed` 409. The ledger key is `GOAL-LOCK:{teenId}:{key}` / `GOAL-UNLOCK:{teenId}:{key}`; a replay with the same goal and amount changes nothing, the same key for a different request is `invalid_idempotency_key`. Every goal command takes the wallet row lock first, so the available check, the saved amounts and `locked_amount` are serialised per teen. Reaching the target does nothing automatically, and goals publish no events yet.
 
 **Config.** `tiyn.ledger.min-payout-amount` (env `LEDGER_MIN_PAYOUT_AMOUNT`, default 10000 minor units = 100 KZT) and `tiyn.ledger.payout-expiry` (env `LEDGER_PAYOUT_EXPIRY`, default `P7D`).
 

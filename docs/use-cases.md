@@ -190,7 +190,7 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 
 ## UC-12 Teen sets a savings goal
 
-**Flow.** Teen creates a goal (name, target), moves part of their available balance into it, sees a progress bar.
+**Flow.** Teen creates a goal (name, target), locks part of their available balance into it, sees a progress bar (`savedAmount` of `targetAmount`). The money stays in the total balance but is excluded from *available*. The teen can unlock part of it or close the goal, which releases everything saved. A lock cannot take the goal past its target (`exceeds_target`). Goals are visible to the teen only.
 
 **Support needed.** ledger: `savings_goals`; locking funds is a ledger entry (available → locked), not a separate balance. The amount saved in a goal is derived from the entries referencing it. Locked funds are excluded from *available*, so they cannot be requested as a payout until unlocked.
 
