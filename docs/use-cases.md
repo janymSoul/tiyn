@@ -112,7 +112,7 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 **Flow.** Parent cancels a task in `ASSIGNED` or `SUBMITTED` (e.g. created by mistake, or the plan changed). FSM → `CANCELLED`, `TaskCancelled` → teen is notified. For a recurring series, the parent chooses "this occurrence" or "this and all future" (the series is closed, so no further occurrences are created). Cancelling a milestone also cancels its open tasks, each notifying the teen.
 
-**Alternates.** Already `APPROVED`/`REJECTED`/`EXPIRED` → an invalid-transition error (409). Cancelling an approved task does not claw back money; use a penalty (UC-11) for that.
+**Alternates.** Already `APPROVED`/`REJECTED`/`EXPIRED` → an invalid-transition error (409). Cancelling an approved task does not claw back money, and there is no manual penalty to do it (UC-11 covers only missed tasks).
 
 ---
 
