@@ -15,18 +15,19 @@ class DeliveredStore {
         this.dsl = dsl;
     }
 
-    boolean exists(String eventKey, UUID recipientId) {
-        return dsl.fetchExists(dsl.selectOne()
-                .from(DELIVERED)
-                .where(DELIVERED.EVENT_KEY.eq(eventKey))
-                .and(DELIVERED.RECIPIENT_ID.eq(recipientId)));
+    boolean claim(String eventKey, UUID recipientId) {
+        return dsl.insertInto(DELIVERED)
+                        .set(DELIVERED.EVENT_KEY, eventKey)
+                        .set(DELIVERED.RECIPIENT_ID, recipientId)
+                        .onConflictDoNothing()
+                        .execute()
+                == 1;
     }
 
-    void mark(String eventKey, UUID recipientId) {
-        dsl.insertInto(DELIVERED)
-                .set(DELIVERED.EVENT_KEY, eventKey)
-                .set(DELIVERED.RECIPIENT_ID, recipientId)
-                .onConflictDoNothing()
+    void release(String eventKey, UUID recipientId) {
+        dsl.deleteFrom(DELIVERED)
+                .where(DELIVERED.EVENT_KEY.eq(eventKey))
+                .and(DELIVERED.RECIPIENT_ID.eq(recipientId))
                 .execute();
     }
 }

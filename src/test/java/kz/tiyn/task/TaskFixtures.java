@@ -28,17 +28,28 @@ public final class TaskFixtures {
         this.json = json;
     }
 
-    public Family linkedFamily() throws Exception {
+    public record Unjoined(Family family, String joinCode) {}
+
+    public Unjoined unjoinedFamily() throws Exception {
         JsonNode parent = signIn("PARENT", "Aigul");
         JsonNode teen = signIn("TEEN", "Dana");
-        Person p = person(parent);
-        Person t = person(teen);
+        return new Unjoined(
+                new Family(person(parent), person(teen)),
+                parent.at("/user/joinCode").asText());
+    }
+
+    public void join(Unjoined unjoined) throws Exception {
         mvc.perform(post("/links/join")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Authorization", t.bearer())
-                        .content("{\"code\":\"" + parent.at("/user/joinCode").asText() + "\"}"))
+                        .header("Authorization", unjoined.family().teen().bearer())
+                        .content("{\"code\":\"" + unjoined.joinCode() + "\"}"))
                 .andReturn();
-        return new Family(p, t);
+    }
+
+    public Family linkedFamily() throws Exception {
+        Unjoined unjoined = unjoinedFamily();
+        join(unjoined);
+        return unjoined.family();
     }
 
     public Person unlinkedTeen() throws Exception {

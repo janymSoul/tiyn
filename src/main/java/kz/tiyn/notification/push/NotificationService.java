@@ -25,18 +25,25 @@ class NotificationService {
     }
 
     void notify(String eventKey, UUID recipientId, NotificationType type, List<String> args, Map<String, String> data) {
-        if (delivered.exists(eventKey, recipientId)) {
+        if (!delivered.claim(eventKey, recipientId)) {
             return;
         }
-        for (DeviceToken device : devices.findByUser(recipientId)) {
-            Push push = messages.render(type, device.locale(), args, data);
-            try {
-                sender.send(device.token(), push);
-            } catch (PushRejectedException e) {
-                log.info("device token rejected, removing it: {}", e.getMessage());
-                devices.deleteToken(device.token());
+        try {
+            for (DeviceToken device : devices.findByUser(recipientId)) {
+                send(device, messages.render(type, device.locale(), args, data));
             }
+        } catch (RuntimeException e) {
+            delivered.release(eventKey, recipientId);
+            throw e;
         }
-        delivered.mark(eventKey, recipientId);
+    }
+
+    private void send(DeviceToken device, Push push) {
+        try {
+            sender.send(device.token(), push);
+        } catch (PushRejectedException e) {
+            log.info("device token rejected, removing it: {}", e.getMessage());
+            devices.deleteToken(device.token());
+        }
     }
 }
