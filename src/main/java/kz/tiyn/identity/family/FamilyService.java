@@ -7,9 +7,9 @@ import kz.tiyn.identity.account.AccountDirectory;
 import kz.tiyn.identity.account.User;
 import kz.tiyn.identity.account.error.IdentityError;
 import kz.tiyn.identity.account.error.IdentityException;
+import kz.tiyn.platform.event.DomainEvents;
 import kz.tiyn.platform.security.Role;
 import kz.tiyn.platform.tx.ConflictRetry;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -19,15 +19,11 @@ class FamilyService {
     private final AccountDirectory accounts;
     private final LinkStore links;
     private final TransactionTemplate tx;
-    private final ApplicationEventPublisher events;
+    private final DomainEvents events;
     private final Clock clock;
 
     FamilyService(
-            AccountDirectory accounts,
-            LinkStore links,
-            TransactionTemplate tx,
-            ApplicationEventPublisher events,
-            Clock clock) {
+            AccountDirectory accounts, LinkStore links, TransactionTemplate tx, DomainEvents events, Clock clock) {
         this.accounts = accounts;
         this.links = links;
         this.tx = tx;
@@ -76,7 +72,7 @@ class FamilyService {
             return;
         }
         links.save(link);
-        raised.forEach(events::publishEvent);
+        events.publishAll(raised);
     }
 
     private static java.util.function.Supplier<IdentityException> conflict() {

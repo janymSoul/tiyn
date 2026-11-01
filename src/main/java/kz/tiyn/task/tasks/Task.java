@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import kz.tiyn.platform.event.EventLog;
 import kz.tiyn.task.TaskApproved;
 import kz.tiyn.task.TaskAssigned;
 import kz.tiyn.task.TaskCancelled;
@@ -39,7 +40,7 @@ final class Task {
     private String decisionNote;
     private final List<Proof> proofs;
     private final int persistedProofs;
-    private final List<Object> events = new ArrayList<>();
+    private final EventLog events = new EventLog();
 
     private Task(TaskSnapshot s, List<Proof> proofs) {
         this.id = s.id();
@@ -95,7 +96,7 @@ final class Task {
                 null,
                 null);
         Task task = new Task(snapshot, List.of());
-        task.events.add(new TaskAssigned(id, draft.teenId(), kind.name(), reward.amount(), reward.currency()));
+        task.events.record(new TaskAssigned(id, draft.teenId(), kind.name(), reward.amount(), reward.currency()));
         return task;
     }
 
@@ -114,7 +115,7 @@ final class Task {
         proofs.add(Proof.submitted(proofId, proofs.size() + 1, objectKey, textBody, now));
         state = TaskState.SUBMITTED;
         submittedAt = now;
-        events.add(new TaskSubmitted(id, parentId, teenId, objectKey != null ? objectKey : "text"));
+        events.record(new TaskSubmitted(id, parentId, teenId, objectKey != null ? objectKey : "text"));
     }
 
     void approve(UUID byParentId, Instant now) {
@@ -123,7 +124,7 @@ final class Task {
         }
         requireState(TaskState.SUBMITTED);
         decide(TaskState.APPROVED, byParentId, null, now);
-        events.add(new TaskApproved(id, teenId, reward.amount(), reward.currency()));
+        events.record(new TaskApproved(id, teenId, reward.amount(), reward.currency()));
     }
 
     void reject(UUID byParentId, String note, Instant now) {
@@ -133,14 +134,14 @@ final class Task {
         requireState(TaskState.SUBMITTED);
         String cleaned = cleanNote(note);
         decide(TaskState.REJECTED, byParentId, cleaned, now);
-        events.add(new TaskRejected(id, teenId, cleaned));
+        events.record(new TaskRejected(id, teenId, cleaned));
     }
 
     void requestRedo(UUID byParentId, String note, Instant now) {
         requireState(TaskState.SUBMITTED);
         String cleaned = cleanNote(note);
         decide(TaskState.ASSIGNED, byParentId, cleaned, now);
-        events.add(new TaskRedoRequested(id, teenId, cleaned));
+        events.record(new TaskRedoRequested(id, teenId, cleaned));
     }
 
     void cancel(UUID byParentId, Instant now) {
@@ -151,13 +152,11 @@ final class Task {
             throw new TaskException(TaskError.INVALID_TRANSITION);
         }
         decide(TaskState.CANCELLED, byParentId, null, now);
-        events.add(new TaskCancelled(id, teenId));
+        events.record(new TaskCancelled(id, teenId));
     }
 
     List<Object> pullEvents() {
-        List<Object> raised = List.copyOf(events);
-        events.clear();
-        return raised;
+        return events.drain();
     }
 
     List<Proof> unsavedProofs() {

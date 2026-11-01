@@ -9,6 +9,7 @@ import java.util.function.Supplier;
 import kz.tiyn.identity.FamilyDirectory;
 import kz.tiyn.media.InvalidMediaException;
 import kz.tiyn.media.Storage;
+import kz.tiyn.platform.event.DomainEvents;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.platform.security.Role;
 import kz.tiyn.platform.tx.ConflictRetry;
@@ -16,7 +17,6 @@ import kz.tiyn.task.tasks.dto.CreateTaskRequest;
 import kz.tiyn.task.tasks.dto.ProofResponse;
 import kz.tiyn.task.tasks.error.TaskError;
 import kz.tiyn.task.tasks.error.TaskException;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -28,7 +28,7 @@ class TaskService {
     private final FamilyDirectory family;
     private final Storage storage;
     private final TransactionTemplate tx;
-    private final ApplicationEventPublisher events;
+    private final DomainEvents events;
     private final TaskProperties properties;
     private final Clock clock;
 
@@ -38,7 +38,7 @@ class TaskService {
             FamilyDirectory family,
             Storage storage,
             TransactionTemplate tx,
-            ApplicationEventPublisher events,
+            DomainEvents events,
             TaskProperties properties,
             Clock clock) {
         this.tasks = tasks;
@@ -70,7 +70,7 @@ class TaskService {
         Task task = Task.assign(UUID.randomUUID(), draft, clock.instant(), properties.maxRewardAmount());
         tx.executeWithoutResult(status -> {
             tasks.insert(task);
-            publish(task);
+            events.publishAll(task.pullEvents());
         });
         return task;
     }
@@ -148,7 +148,7 @@ class TaskService {
             }
             task.submit(caller.userId(), UUID.randomUUID(), objectKey, text, clock.instant());
             tasks.update(task);
-            publish(task);
+            events.publishAll(task.pullEvents());
             return task;
         }));
     }
@@ -161,7 +161,7 @@ class TaskService {
             List<Object> raised = task.pullEvents();
             if (!raised.isEmpty()) {
                 tasks.update(task);
-                raised.forEach(events::publishEvent);
+                events.publishAll(raised);
             }
             return task;
         }));
@@ -206,10 +206,6 @@ class TaskService {
         } catch (IllegalArgumentException e) {
             throw new TaskException(TaskError.INVALID_MILESTONE);
         }
-    }
-
-    private void publish(Task task) {
-        task.pullEvents().forEach(events::publishEvent);
     }
 
     private URI view(String objectKey) {

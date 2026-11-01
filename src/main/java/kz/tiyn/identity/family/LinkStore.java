@@ -2,12 +2,10 @@ package kz.tiyn.identity.family;
 
 import static kz.tiyn.platform.jooq.identity.Tables.FAMILY_LINKS;
 
-import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.identity.tables.records.FamilyLinksRecord;
+import kz.tiyn.platform.time.Instants;
 import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.DSLContext;
 import org.springframework.dao.DuplicateKeyException;
@@ -57,17 +55,15 @@ class LinkStore {
     }
 
     private int update(FamilyLink link) {
-        OffsetDateTime removedAt =
-                link.removedAt() == null ? null : OffsetDateTime.ofInstant(link.removedAt(), ZoneOffset.UTC);
         return dsl.update(FAMILY_LINKS)
                 .set(FAMILY_LINKS.GENERATION, link.generation())
-                .set(FAMILY_LINKS.REMOVED_AT, removedAt)
+                .set(FAMILY_LINKS.REMOVED_AT, Instants.toUtc(link.removedAt()))
                 .where(FAMILY_LINKS.PARENT_ID.eq(link.parentId()).and(FAMILY_LINKS.TEEN_ID.eq(link.teenId())))
                 .execute();
     }
 
     private static FamilyLink toLink(FamilyLinksRecord r) {
-        Instant removedAt = r.getRemovedAt() == null ? null : r.getRemovedAt().toInstant();
-        return FamilyLink.restore(r.getParentId(), r.getTeenId(), r.getGeneration(), removedAt);
+        return FamilyLink.restore(
+                r.getParentId(), r.getTeenId(), r.getGeneration(), Instants.fromUtc(r.getRemovedAt()));
     }
 }

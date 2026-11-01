@@ -1,7 +1,6 @@
 package kz.tiyn.identity.family;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -10,6 +9,7 @@ import kz.tiyn.identity.FamilyUnlinked;
 import kz.tiyn.identity.account.User;
 import kz.tiyn.identity.account.error.IdentityError;
 import kz.tiyn.identity.account.error.IdentityException;
+import kz.tiyn.platform.event.EventLog;
 import kz.tiyn.platform.security.Role;
 
 final class FamilyLink {
@@ -18,7 +18,7 @@ final class FamilyLink {
     private final UUID teenId;
     private int generation;
     private Instant removedAt;
-    private final List<Object> events = new ArrayList<>();
+    private final EventLog events = new EventLog();
 
     private FamilyLink(UUID parentId, UUID teenId, int generation, Instant removedAt) {
         this.parentId = parentId;
@@ -44,7 +44,7 @@ final class FamilyLink {
         }
         generation++;
         removedAt = null;
-        events.add(new FamilyLinked(parentId, teenId, generation));
+        events.record(new FamilyLinked(parentId, teenId, generation));
     }
 
     void unlink(Instant now) {
@@ -52,13 +52,11 @@ final class FamilyLink {
             return;
         }
         removedAt = now;
-        events.add(new FamilyUnlinked(parentId, teenId, generation));
+        events.record(new FamilyUnlinked(parentId, teenId, generation));
     }
 
     List<Object> pullEvents() {
-        List<Object> raised = List.copyOf(events);
-        events.clear();
-        return raised;
+        return events.drain();
     }
 
     boolean isActive() {

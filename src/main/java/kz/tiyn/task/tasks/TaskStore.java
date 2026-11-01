@@ -3,13 +3,11 @@ package kz.tiyn.task.tasks;
 import static kz.tiyn.platform.jooq.task.Tables.TASKS;
 import static kz.tiyn.platform.jooq.task.Tables.TASK_PROOFS;
 
-import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.task.tables.records.TasksRecord;
+import kz.tiyn.platform.time.Instants;
 import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
@@ -40,7 +38,7 @@ class TaskStore {
                 .set(TASKS.REWARD_AMOUNT, task.reward().amount())
                 .set(TASKS.CURRENCY, task.reward().currency())
                 .set(TASKS.STATE, task.state().name())
-                .set(TASKS.DEADLINE_AT, utc(task.deadlineAt()))
+                .set(TASKS.DEADLINE_AT, Instants.toUtc(task.deadlineAt()))
                 .execute();
     }
 
@@ -75,8 +73,8 @@ class TaskStore {
     void update(Task task) {
         int updated = dsl.update(TASKS)
                 .set(TASKS.STATE, task.state().name())
-                .set(TASKS.SUBMITTED_AT, task.submittedAt() == null ? null : utc(task.submittedAt()))
-                .set(TASKS.DECIDED_AT, task.decidedAt() == null ? null : utc(task.decidedAt()))
+                .set(TASKS.SUBMITTED_AT, Instants.toUtc(task.submittedAt()))
+                .set(TASKS.DECIDED_AT, Instants.toUtc(task.decidedAt()))
                 .set(TASKS.DECIDED_BY, task.decidedBy())
                 .set(TASKS.DECISION_NOTE, task.decisionNote())
                 .set(TASKS.VERSION, task.version() + 1)
@@ -114,10 +112,10 @@ class TaskStore {
                 r.getRewardAmount(),
                 r.getCurrency(),
                 TaskState.valueOf(r.getState()),
-                r.getDeadlineAt().toInstant(),
+                Instants.fromUtc(r.getDeadlineAt()),
                 r.getVersion(),
-                instant(r.getSubmittedAt()),
-                instant(r.getDecidedAt()),
+                Instants.fromUtc(r.getSubmittedAt()),
+                Instants.fromUtc(r.getDecidedAt()),
                 r.getDecidedBy(),
                 r.getDecisionNote());
         List<Proof> proofs = dsl.selectFrom(TASK_PROOFS)
@@ -131,13 +129,5 @@ class TaskStore {
                         p.getTextBody(),
                         p.getCreatedAt().toInstant()));
         return Task.restore(snapshot, proofs);
-    }
-
-    private static Instant instant(OffsetDateTime value) {
-        return value == null ? null : value.toInstant();
-    }
-
-    private static OffsetDateTime utc(Instant value) {
-        return OffsetDateTime.ofInstant(value, ZoneOffset.UTC);
     }
 }
