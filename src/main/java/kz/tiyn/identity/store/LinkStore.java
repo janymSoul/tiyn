@@ -38,7 +38,13 @@ public class LinkStore {
                 .and(FAMILY_LINKS.REMOVED_AT.isNull()));
     }
 
-    public void insert(FamilyLink link) {
+    public void save(FamilyLink link) {
+        if (update(link) == 0) {
+            insert(link);
+        }
+    }
+
+    private void insert(FamilyLink link) {
         try {
             dsl.insertInto(FAMILY_LINKS)
                     .set(FAMILY_LINKS.PARENT_ID, link.parentId())
@@ -50,10 +56,10 @@ public class LinkStore {
         }
     }
 
-    public void update(FamilyLink link) {
+    private int update(FamilyLink link) {
         OffsetDateTime removedAt =
                 link.removedAt() == null ? null : OffsetDateTime.ofInstant(link.removedAt(), ZoneOffset.UTC);
-        dsl.update(FAMILY_LINKS)
+        return dsl.update(FAMILY_LINKS)
                 .set(FAMILY_LINKS.GENERATION, link.generation())
                 .set(FAMILY_LINKS.REMOVED_AT, removedAt)
                 .where(FAMILY_LINKS.PARENT_ID.eq(link.parentId()).and(FAMILY_LINKS.TEEN_ID.eq(link.teenId())))

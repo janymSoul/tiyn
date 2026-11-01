@@ -32,7 +32,7 @@ We apply Domain-Driven Design pragmatically: strategic DDD everywhere (bounded c
 | Context | Aggregate (root) | Contains | Invariants it protects | Concurrency |
 |---|---|---|---|---|
 | identity | `User` | join code | one Google subject, one user; a parent has one join code | unique constraints |
-| identity | `FamilyLink` | parent id, teen id, removed flag | a parent and a teen are linked at most once; a link is not to oneself | primary key |
+| identity | `FamilyLink` | parent id, teen id, removed flag | a parent and a teen are linked at most once; a link joins a `PARENT` to a `TEEN`; first link, relink and no-op are decided inside the aggregate, which also records its own events | primary key |
 | task | `Task` | proofs | legal state transitions; tasks in a milestone are one-time and for the same teen | version column |
 | task | `TaskSeries` | recurrence rule | one occurrence per period | unique `(series, date)` |
 | ledger | `Wallet` | ledger entries (append-only), payouts, savings goals | balance never negative; locked never above balance; at most one open payout; one reward per task; one debit per payout | wallet row `FOR UPDATE` |

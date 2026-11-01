@@ -20,13 +20,19 @@ The domain is pure, so these need no Spring context and no setup. Every FSM tran
 
 ```java
 @Test
-void removeThenRelinkBumpsTheGenerationOnce() {
-    var link = FamilyLink.create(UUID.randomUUID(), UUID.randomUUID());
+void unlinkThenRelinkBumpsTheGenerationOnceAndEachStepRecordsItsEvent() {
+    var link = FamilyLink.between(parent, teen);
+    link.link();
 
-    assertThat(link.remove(Instant.now())).isTrue();
-    assertThat(link.remove(Instant.now())).isFalse();
-    assertThat(link.relink()).isTrue();
+    link.unlink(Instant.now());
+    link.unlink(Instant.now());
+    link.link();
+
     assertThat(link.generation()).isEqualTo(2);
+    assertThat(link.pullEvents()).containsExactly(
+            new FamilyLinked(parent.id(), teen.id(), 1),
+            new FamilyUnlinked(parent.id(), teen.id(), 1),
+            new FamilyLinked(parent.id(), teen.id(), 2));
 }
 ```
 

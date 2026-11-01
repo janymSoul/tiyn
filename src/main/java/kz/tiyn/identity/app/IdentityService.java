@@ -2,11 +2,10 @@ package kz.tiyn.identity.app;
 
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
-import kz.tiyn.identity.FamilyLinked;
-import kz.tiyn.identity.FamilyUnlinked;
 import kz.tiyn.identity.domain.FamilyLink;
 import kz.tiyn.identity.domain.IdentityError;
 import kz.tiyn.identity.domain.IdentityException;
@@ -71,13 +70,10 @@ public class IdentityService {
 
     public String join(UUID teenId, String rawCode) {
         User teen = me(teenId);
-        if (teen.role() != Role.TEEN) {
-            throw new IdentityException(IdentityError.FORBIDDEN);
-        }
         JoinCode code = JoinCode.parse(rawCode);
         User parent = users.findByJoinCode(code.value())
                 .orElseThrow(() -> new IdentityException(IdentityError.INVALID_JOIN_CODE));
-        withRetry(() -> linkOnce(parent.id(), teenId));
+        withRetry(() -> linkOnce(parent, teen));
         return parent.displayName();
     }
 
@@ -104,18 +100,12 @@ public class IdentityService {
         });
     }
 
-    private Void linkOnce(UUID parentId, UUID teenId) {
+    private Void linkOnce(User parent, User teen) {
         return tx.execute(status -> {
-            Optional<FamilyLink> existing = links.findForUpdate(parentId, teenId);
-            if (existing.isEmpty()) {
-                FamilyLink created = FamilyLink.create(parentId, teenId);
-                links.insert(created);
-                events.publishEvent(new FamilyLinked(parentId, teenId, created.generation()));
-            } else if (existing.get().relink()) {
-                links.update(existing.get());
-                events.publishEvent(
-                        new FamilyLinked(parentId, teenId, existing.get().generation()));
-            }
+            FamilyLink link =
+                    links.findForUpdate(parent.id(), teen.id()).orElseGet(() -> FamilyLink.between(parent, teen));
+            link.link();
+            saveAndPublish(link);
             return null;
         });
     }
@@ -124,12 +114,19 @@ public class IdentityService {
         return tx.execute(status -> {
             FamilyLink link = links.findForUpdate(parentId, teenId)
                     .orElseThrow(() -> new IdentityException(IdentityError.NOT_FOUND));
-            if (link.remove(clock.instant())) {
-                links.update(link);
-                events.publishEvent(new FamilyUnlinked(parentId, teenId, link.generation()));
-            }
+            link.unlink(clock.instant());
+            saveAndPublish(link);
             return null;
         });
+    }
+
+    private void saveAndPublish(FamilyLink link) {
+        List<Object> raised = link.pullEvents();
+        if (raised.isEmpty()) {
+            return;
+        }
+        links.save(link);
+        raised.forEach(events::publishEvent);
     }
 
     private <T> T withRetry(Supplier<T> work) {
