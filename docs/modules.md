@@ -289,13 +289,27 @@ Called by the task module on submission and review.
 
 **Responsibility.** Asynchronous push delivery to FCM/APNs (SYS-03). Purely reactive: it subscribes to domain events and turns them into localized push messages. The *only* module that knows about FCM.
 
-**Offers (sync interface):** none for domain callers. It exposes an endpoint for clients to register/refresh a device token and locale.
+**Offers (sync interface):** none for domain callers. Clients register a device with `PUT /devices {token, platform, locale}` (platform `ANDROID` or `IOS`, locale `ru` or `kk`; upsert by token, a token that moves to another account is reassigned) and remove it with `DELETE /devices?token=` (only the caller's own).
 
-**Subscribes:** `TaskAssigned` (→ teen), `TaskSubmitted` (→ parent: "Proof pending"), `TaskApproved` (→ teen: "Reward credited"), `TaskRejected`/`TaskRedoRequested`/`TaskCancelled`/`TaskExpired` (→ teen), `PayoutRequested` (→ parent: high-priority "Payout request"), `PayoutFulfilled`/`PayoutCancelled` (→ teen), `PenaltyApplied` (→ teen), `FamilyLinked` (→ welcome).
+**Subscribes, and who is told:**
 
-**Localization:** picks RU/KK copy per the recipient's locale, which the client sends with its device token. Events carry only IDs, so no call back into identity is needed.
+| Event | Recipient |
+|---|---|
+| `TaskAssigned`, `TaskApproved`, `TaskRejected`, `TaskRedoRequested`, `TaskCancelled`, `TaskExpired`, `PenaltyApplied`, `PayoutFulfilled` | teen |
+| `TaskSubmitted`, `PayoutRequested` (high priority) | parent |
+| `PayoutCancelled` | parent when `TEEN_CANCELLED`; otherwise the teen (`DECLINED`, `EXPIRED`, `UNLINKED`) |
+| `FamilyLinked` | both sides |
+| `FamilyUnlinked` | teen |
 
-**Owns:** `device_tokens`, and the `delivered` table, keyed by event and recipient, which makes it idempotent (a device must not get the same push twice from a redelivered event).
+A missed task with a penalty sends the teen the deadline message with the deduction, and `PenaltyApplied` sends its own. Goals publish no events, so they send nothing.
+
+**Localization:** `Messages` renders RU or KK copy from `notification/messages_ru.properties` and `messages_kk.properties`, by the locale stored with the device (unknown means RU). Events carry only ids, so the copy is generic (no titles or names); each push carries a `data` map (`type` plus `taskId` or `payoutId`) for deep links. Amounts come from minor units ("1 500 ₸"). **The Kazakh text needs a native speaker's review.**
+
+**Delivery.** `PushSender` is the only FCM boundary; `LoggingPushSender` (type and priority only, never the text) stands in until the Firebase adapter exists (needs a Firebase project and service-account key). `NotificationService.notify` first claims `(event_key, recipient_id)` in `delivered` (`INSERT ... ON CONFLICT DO NOTHING`); only the claimant sends, so a redelivered or concurrent event never pushes twice. If sending fails, the claim is released and the exception propagates, so the event publication stays incomplete and is retried. A token the push service rejects (`PushRejectedException`) is deleted. Trade-off: a crash between the claim and the send loses that push (a push is a hint; the app reads state from the API). No network call happens inside a DB transaction. Event keys: `TaskAssigned:{taskId}`, `TaskSubmitted:{taskId}:{attemptNo}`, `TaskRedoRequested:{taskId}:{attemptNo}`, `Task*:{taskId}`, `Payout*:{payoutId}`, `PenaltyApplied:{entryId}`, `Family*:{parentId}:{teenId}:{generation}`. A user with no device is simply skipped.
+
+**Housekeeping.** `DeliveredPurgeTicker` deletes `delivered` rows older than `tiyn.notification.delivered-retention` (env `NOTIFICATION_DELIVERED_RETENTION`, default `P30D`). Stale device tokens are not purged yet.
+
+**Owns:** `device_tokens`, and the `delivered` table, keyed by event and recipient, which makes it idempotent.
 
 ---
 
@@ -327,6 +341,7 @@ task.service ──▶ identity.FamilyDirectory
 task.service ──▶ media.Storage
 http (dashboard) ──▶ ledger.BalanceReader
 http (dashboard) ──▶ task.PendingReader
+notification ──▶ (events of) task, ledger, identity; nothing depends on notification
 ```
 No cycles. All other relationships are event-driven (via Modulith events): task→ledger, task→notification, ledger→notification, identity→ledger, identity→notification.
 
