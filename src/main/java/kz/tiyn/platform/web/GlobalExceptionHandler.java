@@ -5,10 +5,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
@@ -39,6 +44,26 @@ class GlobalExceptionHandler {
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     ResponseEntity<ErrorBody> handleMethod(HttpRequestMethodNotSupportedException e) {
         return respond(HttpStatus.METHOD_NOT_ALLOWED, "method_not_allowed");
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    ResponseEntity<ErrorBody> handleMediaType(HttpMediaTypeNotSupportedException e) {
+        return respond(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type");
+    }
+
+    @ExceptionHandler({MissingServletRequestParameterException.class, MethodArgumentTypeMismatchException.class})
+    ResponseEntity<ErrorBody> handleBadRequest(Exception e) {
+        return respond(HttpStatus.BAD_REQUEST, "invalid_request");
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    ResponseEntity<ErrorBody> handleUnauthenticated(AuthenticationException e) {
+        return respond(HttpStatus.UNAUTHORIZED, "unauthenticated");
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    ResponseEntity<ErrorBody> handleForbidden(AccessDeniedException e) {
+        return respond(HttpStatus.FORBIDDEN, "forbidden");
     }
 
     @ExceptionHandler(Exception.class)

@@ -81,6 +81,15 @@ class IdentityFlowTests {
     }
 
     @Test
+    void aNonJsonContentTypeIsA415NotA500() throws Exception {
+        mvc.perform(MockMvcRequestBuilders.post("/auth/google")
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .content("x"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.error").value("unsupported_media_type"));
+    }
+
+    @Test
     void meReturnsTheCallersAccount() throws Exception {
         JsonNode parent = signIn(uniqueSub(), "PARENT", "Aigul");
 

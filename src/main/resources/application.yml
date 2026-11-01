@@ -24,7 +24,7 @@ tiyn:
     secret: ${JWT_SECRET}
     ttl: ${JWT_TTL:168h}
   google:
-    client-ids: ${GOOGLE_CLIENT_IDS:}
+    client-ids: ${GOOGLE_CLIENT_IDS}
   tick:
     interval: ${TICK_INTERVAL:PT1M}
 

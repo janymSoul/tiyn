@@ -1,8 +1,11 @@
 package kz.tiyn.platform.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
+import kz.tiyn.platform.web.ErrorBody;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.convert.converter.Converter;
@@ -25,8 +28,9 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.access.AccessDeniedHandler;
 
 @Configuration
 class SecurityConfig {
@@ -36,6 +40,9 @@ class SecurityConfig {
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper json) throws Exception {
+        AuthenticationEntryPoint unauthenticated =
+                (req, res, e) -> write(json, res, HttpStatus.UNAUTHORIZED, "unauthenticated");
+        AccessDeniedHandler forbidden = (req, res, e) -> write(json, res, HttpStatus.FORBIDDEN, "forbidden");
         return http.csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(a -> a.requestMatchers(HttpMethod.POST, "/auth/google")
@@ -45,12 +52,9 @@ class SecurityConfig {
                         .anyRequest()
                         .authenticated())
                 .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(principalConverter()))
-                        .authenticationEntryPoint(
-                                (req, res, e) -> write(json, res, HttpStatus.UNAUTHORIZED, "unauthenticated"))
-                        .accessDeniedHandler((req, res, e) -> write(json, res, HttpStatus.FORBIDDEN, "forbidden")))
-                .exceptionHandling(e -> e.authenticationEntryPoint(
-                                (req, res, ex) -> write(json, res, HttpStatus.UNAUTHORIZED, "unauthenticated"))
-                        .accessDeniedHandler((req, res, ex) -> write(json, res, HttpStatus.FORBIDDEN, "forbidden")))
+                        .authenticationEntryPoint(unauthenticated)
+                        .accessDeniedHandler(forbidden))
+                .exceptionHandling(e -> e.authenticationEntryPoint(unauthenticated).accessDeniedHandler(forbidden))
                 .build();
     }
 
@@ -94,10 +98,9 @@ class SecurityConfig {
         };
     }
 
-    private void write(ObjectMapper json, jakarta.servlet.http.HttpServletResponse res, HttpStatus status, String code)
-            throws java.io.IOException {
+    private void write(ObjectMapper json, HttpServletResponse res, HttpStatus status, String code) throws IOException {
         res.setStatus(status.value());
         res.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        json.writeValue(res.getOutputStream(), new kz.tiyn.platform.web.ErrorBody(code));
+        json.writeValue(res.getOutputStream(), new ErrorBody(code));
     }
 }

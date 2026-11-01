@@ -23,6 +23,7 @@ class IdentityExceptionHandler {
             case INVALID_ROLE, INVALID_DISPLAY_NAME, INVALID_JOIN_CODE -> HttpStatus.UNPROCESSABLE_ENTITY;
             case INVALID_TEEN_ID -> HttpStatus.BAD_REQUEST;
             case CONFLICT -> HttpStatus.CONFLICT;
+            case IDENTITY_PROVIDER_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
         };
     }
 }

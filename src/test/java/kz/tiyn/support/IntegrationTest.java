@@ -13,5 +13,9 @@ import org.springframework.test.context.TestPropertySource;
 @SpringBootTest
 @Import({PostgresTestConfig.class, FakeGoogleConfig.class})
 @TestPropertySource(
-        properties = {"tiyn.jwt.secret=" + TestTokens.SECRET, "tiyn.tick.interval=PT1H"})
+        properties = {
+            "tiyn.jwt.secret=" + TestTokens.SECRET,
+            "tiyn.google.client-ids=test-client-id",
+            "tiyn.tick.interval=PT1H"
+        })
 public @interface IntegrationTest {}

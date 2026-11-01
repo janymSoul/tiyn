@@ -9,7 +9,8 @@ public enum IdentityError {
     INVALID_DISPLAY_NAME,
     INVALID_JOIN_CODE,
     INVALID_TEEN_ID,
-    CONFLICT;
+    CONFLICT,
+    IDENTITY_PROVIDER_UNAVAILABLE;
 
     public String code() {
         return name().toLowerCase();

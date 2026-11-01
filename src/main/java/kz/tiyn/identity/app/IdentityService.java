@@ -132,17 +132,14 @@ public class IdentityService {
     }
 
     private <T> T withRetry(Supplier<T> work) {
-        for (int attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; ; attempt++) {
             try {
                 return work.get();
             } catch (ConflictException e) {
-                continue;
+                if (attempt == MAX_ATTEMPTS) {
+                    throw new IdentityException(IdentityError.CONFLICT);
+                }
             }
-        }
-        try {
-            return work.get();
-        } catch (ConflictException e) {
-            throw new IdentityException(IdentityError.CONFLICT);
         }
     }
 
