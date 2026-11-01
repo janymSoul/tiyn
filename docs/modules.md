@@ -187,7 +187,7 @@ Error codes: `not_found` 404, `forbidden` 403; `invalid_transition`, `deadline_p
 **Design:** double-entry-style append-only `ledger_entries` (never updated or deleted — corrections are compensating entries). A `wallets` row per teen and currency caches the balance with `CHECK (balance_amount >= 0)` and is mutated only under `SELECT … FOR UPDATE` (pessimistic lock). Every credit/debit carries an idempotency key with a `UNIQUE` constraint.
 
 **Available balance.** What a teen may request or lock is
-`available = approved balance − sum(open REQUESTED payouts) − funds locked in savings goals`.
+`available = balance − sum(open REQUESTED payouts) − funds locked in savings goals`.
 Requesting a payout does not debit anything; it only reduces *available* (computed under the wallet lock). A teen may have **at most one** open request, enforced by a partial unique index on `payouts (teen_id) WHERE state = 'REQUESTED'`. The debit entry is written when the parent confirms.
 
 **Debit checks.** Every debit (payout confirmation, penalty, goal lock) first compares the amount with available funds under the wallet lock and returns a domain error (HTTP 422) if it does not fit. The wallet `CHECK`s (`balance_amount >= 0`, `locked_amount <= balance_amount`) are a backstop, not the user-facing rule: a debit larger than available but smaller than the balance (funds locked in a goal) would only trip the second one. The store maps those constraint violations to the same domain error.
@@ -207,7 +207,7 @@ public interface BalanceReader {
     Balance balance(UUID teenId);
 }
 ```
-`Balance` is a value object with approved, locked and available amounts.
+`Balance` is a value object with `balanceAmount` (the wallet total: rewards minus payouts and penalties), `lockedAmount` and `availableAmount`.
 (Read-only. "Pending" is not here; it comes from `task.PendingReader`. All *writes* arrive via events or payout commands, never a generic "setBalance".)
 
 **Publishes:** `PayoutRequested(payoutId, teenId, parentId, amount, currency)`, `PayoutFulfilled(payoutId, teenId, parentId, amount, currency)`, `PayoutCancelled(payoutId, teenId, parentId, reason)` (reason: `TEEN_CANCELLED`, `DECLINED`, `EXPIRED`, `UNLINKED`), all → notification (not built yet). `PenaltyApplied` comes with penalties. The payout store publishes what the `Payout` aggregate recorded.

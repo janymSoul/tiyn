@@ -63,7 +63,7 @@ class LedgerFlowTests {
 
     private void awaitBalance(Family f, long approved) {
         await().atMost(Duration.ofSeconds(15))
-                .untilAsserted(() -> assertThat(balances.balance(f.teen().id()).approvedAmount())
+                .untilAsserted(() -> assertThat(balances.balance(f.teen().id()).balanceAmount())
                         .isEqualTo(approved));
     }
 
@@ -76,7 +76,7 @@ class LedgerFlowTests {
 
         mvc.perform(get("/balance").header("Authorization", f.teen().bearer()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.approvedAmount").value(500_00))
+                .andExpect(jsonPath("$.balanceAmount").value(500_00))
                 .andExpect(jsonPath("$.lockedAmount").value(0))
                 .andExpect(jsonPath("$.availableAmount").value(500_00))
                 .andExpect(jsonPath("$.currency").value("KZT"));
@@ -100,7 +100,7 @@ class LedgerFlowTests {
 
         fx.send("/tasks/" + id + "/approve", "", f.parent().bearer()).andExpect(status().isOk());
 
-        assertThat(balances.balance(f.teen().id()).approvedAmount()).isEqualTo(300);
+        assertThat(balances.balance(f.teen().id()).balanceAmount()).isEqualTo(300);
         assertThat(jdbc.queryForObject(
                         "SELECT count(*) FROM ledger.ledger_entries WHERE ref_id = ?", Integer.class, id))
                 .isEqualTo(1);
@@ -117,8 +117,8 @@ class LedgerFlowTests {
         });
 
         await().atMost(Duration.ofSeconds(15))
-                .untilAsserted(() ->
-                        assertThat(balances.balance(teen).approvedAmount()).isEqualTo(900));
+                .untilAsserted(
+                        () -> assertThat(balances.balance(teen).balanceAmount()).isEqualTo(900));
         await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(jdbc.queryForObject(
                         "SELECT count(*) FROM ledger.ledger_entries WHERE teen_id = ?", Integer.class, teen))
                 .isEqualTo(1));
@@ -130,7 +130,7 @@ class LedgerFlowTests {
 
         mvc.perform(get("/balance").header("Authorization", f.teen().bearer()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.approvedAmount").value(0))
+                .andExpect(jsonPath("$.balanceAmount").value(0))
                 .andExpect(jsonPath("$.availableAmount").value(0));
         mvc.perform(get("/balance").header("Authorization", f.parent().bearer()))
                 .andExpect(status().isForbidden())

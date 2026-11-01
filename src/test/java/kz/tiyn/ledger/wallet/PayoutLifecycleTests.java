@@ -55,7 +55,7 @@ class PayoutLifecycleTests {
                 .andExpect(status().isOk());
         fx.send("/tasks/" + task + "/approve", "", f.parent().bearer()).andExpect(status().isOk());
         await().atMost(Duration.ofSeconds(15))
-                .untilAsserted(() -> assertThat(balances.balance(f.teen().id()).approvedAmount())
+                .untilAsserted(() -> assertThat(balances.balance(f.teen().id()).balanceAmount())
                         .isEqualTo(500_00));
         String body = "{\"parentId\":\"" + f.parent().id() + "\",\"amount\":30000}";
         String response = fx.send("/payouts", body, f.teen().bearer(), "Idempotency-Key", "k-" + task)

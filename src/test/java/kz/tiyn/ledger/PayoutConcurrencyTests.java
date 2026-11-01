@@ -56,7 +56,7 @@ class PayoutConcurrencyTests {
                 .andExpect(status().isOk());
         fx.send("/tasks/" + id + "/approve", "", f.parent().bearer()).andExpect(status().isOk());
         await().atMost(Duration.ofSeconds(15))
-                .untilAsserted(() -> assertThat(balances.balance(f.teen().id()).approvedAmount())
+                .untilAsserted(() -> assertThat(balances.balance(f.teen().id()).balanceAmount())
                         .isEqualTo(500_00));
         return f;
     }
@@ -111,7 +111,7 @@ class PayoutConcurrencyTests {
 
         assertThat(statuses).allMatch(s -> s == 200);
         assertThat(debits(id)).isEqualTo(1);
-        assertThat(balances.balance(f.teen().id()).approvedAmount()).isEqualTo(200_00);
+        assertThat(balances.balance(f.teen().id()).balanceAmount()).isEqualTo(200_00);
     }
 
     @Test
@@ -132,7 +132,7 @@ class PayoutConcurrencyTests {
 
             assertThat(statuses).allMatch(s -> s == 200 || s == 409);
             String state = jdbc.queryForObject("SELECT state FROM ledger.payouts WHERE id = ?", String.class, id);
-            long approved = balances.balance(f.teen().id()).approvedAmount();
+            long approved = balances.balance(f.teen().id()).balanceAmount();
             if (state.equals("FULFILLED")) {
                 assertThat(debits(id)).isEqualTo(1);
                 assertThat(approved).isEqualTo(200_00);

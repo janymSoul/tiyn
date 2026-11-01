@@ -27,6 +27,6 @@ class BalanceController {
         }
         Balance balance = balances.balance(caller.userId());
         return new BalanceResponse(
-                balance.approvedAmount(), balance.lockedAmount(), balance.availableAmount(), balance.currency());
+                balance.balanceAmount(), balance.lockedAmount(), balance.availableAmount(), balance.currency());
     }
 }

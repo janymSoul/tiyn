@@ -118,7 +118,7 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 ## UC-07 Teen views balance and tasks
 
-**Flow.** Dashboard shows *Approved* and *Available* balance, *Pending* funds (TEN-01), and tasks grouped into "Daily Chores" and "Major Milestones" (TEN-02). A milestone shows progress computed from its approved tasks ("3 of 5").
+**Flow.** Dashboard shows *Balance* and *Available* amounts, *Pending* funds (TEN-01), and tasks grouped into "Daily Chores" and "Major Milestones" (TEN-02). A milestone shows progress computed from its approved tasks ("3 of 5").
 
 **Support needed.**
 - ledger: `BalanceReader.balance` → approved, locked, available.

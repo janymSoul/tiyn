@@ -50,7 +50,7 @@ class PayoutFlowTests {
                 .andExpect(status().isOk());
         fx.send("/tasks/" + id + "/approve", "", f.parent().bearer()).andExpect(status().isOk());
         await().atMost(Duration.ofSeconds(15))
-                .untilAsserted(() -> assertThat(balances.balance(f.teen().id()).approvedAmount())
+                .untilAsserted(() -> assertThat(balances.balance(f.teen().id()).balanceAmount())
                         .isEqualTo(reward));
         return f;
     }
@@ -80,7 +80,7 @@ class PayoutFlowTests {
                 .andExpect(jsonPath("$.parentId").value(f.parent().id().toString()));
 
         Balance balance = balances.balance(f.teen().id());
-        assertThat(balance.approvedAmount()).isEqualTo(500_00);
+        assertThat(balance.balanceAmount()).isEqualTo(500_00);
         assertThat(balance.availableAmount()).isEqualTo(200_00);
     }
 
@@ -174,7 +174,7 @@ class PayoutFlowTests {
         fx.send("/payouts/" + id + "/fulfil", "", f.parent().bearer()).andExpect(status().isOk());
 
         Balance balance = balances.balance(f.teen().id());
-        assertThat(balance.approvedAmount()).isEqualTo(200_00);
+        assertThat(balance.balanceAmount()).isEqualTo(200_00);
         assertThat(balance.availableAmount()).isEqualTo(200_00);
         assertThat(jdbc.queryForList(
                         "SELECT balance_delta FROM ledger.ledger_entries WHERE kind = 'PAYOUT' AND ref_id = ?",
@@ -193,7 +193,7 @@ class PayoutFlowTests {
         fx.send("/payouts/" + id + "/fulfil", "", f.parent().bearer())
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("invalid_transition"));
-        assertThat(balances.balance(f.teen().id()).approvedAmount()).isEqualTo(500_00);
+        assertThat(balances.balance(f.teen().id()).balanceAmount()).isEqualTo(500_00);
     }
 
     @Test
@@ -204,7 +204,7 @@ class PayoutFlowTests {
 
         fx.send("/payouts/" + id + "/fulfil", "", other.parent().bearer()).andExpect(status().isNotFound());
         fx.send("/payouts/" + id + "/fulfil", "", f.teen().bearer()).andExpect(status().isForbidden());
-        assertThat(balances.balance(f.teen().id()).approvedAmount()).isEqualTo(500_00);
+        assertThat(balances.balance(f.teen().id()).balanceAmount()).isEqualTo(500_00);
     }
 
     @Test
