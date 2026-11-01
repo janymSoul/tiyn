@@ -33,6 +33,9 @@ tiyn:
     fcm:
       credentials-file: ${FCM_CREDENTIALS_FILE:}
       dry-run: ${FCM_DRY_RUN:false}
+  dashboard:
+    recent-window: ${DASHBOARD_RECENT_WINDOW:P7D}
+    max-tasks: ${DASHBOARD_MAX_TASKS:50}
   media:
     s3:
       endpoint: ${S3_ENDPOINT:}
