@@ -184,7 +184,7 @@ final class Task {
             return;
         }
         state = TaskState.EXPIRED;
-        events.record(new TaskExpired(id, teenId));
+        events.record(new TaskExpired(id, teenId, 0, reward.currency()));
     }
 
     void cancel(UUID byParentId, Instant now) {

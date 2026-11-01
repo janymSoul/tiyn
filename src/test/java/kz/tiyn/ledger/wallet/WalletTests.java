@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.UUID;
+import kz.tiyn.ledger.PenaltyApplied;
 import kz.tiyn.ledger.wallet.error.LedgerError;
 import kz.tiyn.ledger.wallet.error.LedgerException;
 import org.junit.jupiter.api.Test;
@@ -113,6 +114,33 @@ class WalletTests {
         assertError(
                 () -> wallet.unlockFromGoal(UUID.randomUUID(), goalId, 101, 100, "k"),
                 LedgerError.INSUFFICIENT_GOAL_FUNDS);
+    }
+
+    @Test
+    void aPenaltyLowersTheBalanceEvenBelowZeroAndRecordsItsEvent() {
+        Wallet wallet = Wallet.restore(TEEN, "KZT", 300, 100, 0);
+        UUID entryId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+
+        LedgerEntry entry = wallet.applyPenalty(entryId, taskId, 500);
+
+        assertThat(wallet.balanceAmount()).isEqualTo(-200);
+        assertThat(wallet.availableAmount()).isEqualTo(-300);
+        assertThat(entry)
+                .isEqualTo(new LedgerEntry(
+                        entryId, TEEN, "KZT", EntryKind.PENALTY, -500, 0, taskId, "PENALTY-TASK-" + taskId));
+        assertThat(wallet.pullEvents()).containsExactly(new PenaltyApplied(entryId, TEEN, taskId, 500, "KZT"));
+        assertThat(wallet.pullEvents()).isEmpty();
+        assertError(() -> wallet.applyPenalty(UUID.randomUUID(), taskId, 0), LedgerError.INVALID_AMOUNT);
+    }
+
+    @Test
+    void nothingCanBeRequestedOrLockedWhileAvailableIsNegative() {
+        Wallet wallet = Wallet.restore(TEEN, "KZT", -200, 0, 0);
+
+        assertError(() -> wallet.requireCanRequest(1), LedgerError.INSUFFICIENT_FUNDS);
+        assertError(
+                () -> wallet.lockForGoal(UUID.randomUUID(), UUID.randomUUID(), 1, "k"), LedgerError.INSUFFICIENT_FUNDS);
     }
 
     @Test

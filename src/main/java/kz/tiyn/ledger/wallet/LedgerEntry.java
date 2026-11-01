@@ -28,6 +28,10 @@ record LedgerEntry(
         return "GOAL-CLOSE-" + goalId;
     }
 
+    static String penaltyKey(UUID taskId) {
+        return "PENALTY-TASK-" + taskId;
+    }
+
     static String payoutKey(UUID payoutId) {
         return "PAYOUT-" + payoutId;
     }

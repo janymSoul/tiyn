@@ -11,15 +11,18 @@ import org.jooq.Field;
 import org.jooq.Record5;
 import org.jooq.SelectConditionStep;
 import org.jooq.impl.DSL;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Repository;
 
 @Repository
 class WalletStore {
 
     private final DSLContext dsl;
+    private final ApplicationEventPublisher events;
 
-    WalletStore(DSLContext dsl) {
+    WalletStore(DSLContext dsl, ApplicationEventPublisher events) {
         this.dsl = dsl;
+        this.events = events;
     }
 
     void ensure(UUID teenId, String currency) {
@@ -44,6 +47,7 @@ class WalletStore {
                 .set(WALLETS.LOCKED_AMOUNT, wallet.lockedAmount())
                 .where(WALLETS.TEEN_ID.eq(wallet.teenId()).and(WALLETS.CURRENCY.eq(wallet.currency())))
                 .execute();
+        wallet.pullEvents().forEach(events::publishEvent);
     }
 
     private SelectConditionStep<Record5<UUID, String, Long, Long, BigDecimal>> select(UUID teenId, String currency) {
