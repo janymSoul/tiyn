@@ -144,7 +144,7 @@ public interface PendingReader {
     long pendingReward(UUID teenId);
 }
 ```
-Used by the dashboard handler to show "Pending" funds (TEN-01). Pending is task-owned data, so the task module answers it; the ledger never reads task tables.
+Used by the dashboard module to show "Pending" funds (TEN-01). Pending is task-owned data, so the task module answers it; the ledger never reads task tables.
 
 **Publishes:**
 - `TaskAssigned(taskId, teenId, kind, rewardAmount, currency)` → notification (tell the teen: "new task / milestone").
@@ -315,6 +315,27 @@ A missed task with a penalty sends the teen the deadline message with the deduct
 
 ---
 
+## 6. Dashboard
+
+**Responsibility.** The teen's home screen in one call (UC-07, TEN-01, TEN-02). It owns no tables and publishes no events; it only composes read contracts of other modules, so the client makes one round trip instead of four (`/balance`, `/tasks`, `/goals`, `/payouts`).
+
+**Endpoint.** `GET /dashboard` (teen only; a parent gets 403):
+```json
+{
+  "balance": {"balanceAmount": 0, "lockedAmount": 0, "availableAmount": 0, "currency": "KZT"},
+  "pendingAmount": 0,
+  "chores": [],
+  "milestones": [],
+  "goals": [],
+  "openPayout": {"id": "...", "parentId": "...", "amount": 0, "currency": "KZT", "requestedAt": "..."}
+}
+```
+`pendingAmount` is the sum of rewards of `SUBMITTED` tasks. `chores` is every task that is not a milestone; a task inside a milestone carries `milestoneId` so the client nests it. `milestones` carry `approvedTasks` and `totalTasks` ("3 of 5"). `goals` lists active goals with their saved amount. `openPayout` is omitted when the teen has no request open. The dashboard has its own response records; the suppliers' types never cross the module boundary.
+
+**Which tasks.** Open work (`ASSIGNED`, `SUBMITTED`) ordered by deadline, then tasks decided in the last `tiyn.dashboard.recent-window` (env `DASHBOARD_RECENT_WINDOW`, default `P7D`) newest first, capped at `tiyn.dashboard.max-tasks` (env `DASHBOARD_MAX_TASKS`, default 50), so open work is never pushed out by history. "Decided" is `decided_at`, falling back to `updated_at` for tasks that have none (expired). Full history stays on `GET /tasks`.
+
+**Contracts it consumes** (each owned by the supplier, in its root package): `ledger.WalletOverviewReader` (balance, active goals and the open payout, read in one read-only transaction so they are one snapshot), `task.TaskBoardReader` (tasks plus milestone progress in two queries, no N+1), `task.PendingReader`. Pending and balance come from different modules, so for a moment after an approval a reward can show in neither; the UI must not promise "immediately credited".
+
 ## Time-driven work
 
 Some state changes happen because time passes, not because a request arrives: expiring overdue tasks, creating the next occurrence of a recurring task, and cancelling stale payout requests. No request wakes the process for these, so something must.
@@ -341,8 +362,9 @@ Tickers run one after another under a single lock, so a slow ticker delays the r
 ```
 task.service ──▶ identity.FamilyDirectory
 task.service ──▶ media.Storage
-http (dashboard) ──▶ ledger.BalanceReader
-http (dashboard) ──▶ task.PendingReader
+dashboard ──▶ ledger.WalletOverviewReader
+dashboard ──▶ task.TaskBoardReader
+dashboard ──▶ task.PendingReader
 notification ──▶ (events of) task, ledger, identity; nothing depends on notification
 ```
 No cycles. All other relationships are event-driven (via Modulith events): task→ledger, task→notification, ledger→notification, identity→ledger, identity→notification.
