@@ -187,7 +187,7 @@ Error codes: `not_found` 404, `forbidden` 403; `invalid_transition`, `deadline_p
 **Design:** double-entry-style append-only `ledger_entries` (never updated or deleted — corrections are compensating entries). A `wallets` row per teen and currency caches the balance with `CHECK (balance_amount >= 0)` and is mutated only under `SELECT … FOR UPDATE` (pessimistic lock). Every credit/debit carries an idempotency key with a `UNIQUE` constraint.
 
 **Available balance.** What a teen may request or lock is
-`available = approved balance − sum(open REQUESTED payouts) − funds locked in savings goals`.
+`available = balance − sum(open REQUESTED payouts) − funds locked in savings goals`.
 Requesting a payout does not debit anything; it only reduces *available* (computed under the wallet lock). A teen may have **at most one** open request, enforced by a partial unique index on `payouts (teen_id) WHERE state = 'REQUESTED'`. The debit entry is written when the parent confirms.
 
 **Debit checks.** Every debit (payout confirmation, penalty, goal lock) first compares the amount with available funds under the wallet lock and returns a domain error (HTTP 422) if it does not fit. The wallet `CHECK`s (`balance_amount >= 0`, `locked_amount <= balance_amount`) are a backstop, not the user-facing rule: a debit larger than available but smaller than the balance (funds locked in a goal) would only trip the second one. The store maps those constraint violations to the same domain error.
@@ -207,14 +207,47 @@ public interface BalanceReader {
     Balance balance(UUID teenId);
 }
 ```
-`Balance` is a value object with approved, locked and available amounts.
+`Balance` is a value object with `balanceAmount` (the wallet total: rewards minus payouts and penalties), `lockedAmount` and `availableAmount`.
 (Read-only. "Pending" is not here; it comes from `task.PendingReader`. All *writes* arrive via events or payout commands, never a generic "setBalance".)
 
-**Publishes:** `PayoutRequested(payoutId, teenId, parentId, amount, currency)` → notification. `PayoutFulfilled`, `PayoutCancelled`, `PenaltyApplied`.
+**Publishes:** `PayoutRequested(payoutId, teenId, parentId, amount, currency)`, `PayoutFulfilled(payoutId, teenId, parentId, amount, currency)`, `PayoutCancelled(payoutId, teenId, parentId, reason)` (reason: `TEEN_CANCELLED`, `DECLINED`, `EXPIRED`, `UNLINKED`), all → notification (not built yet). `PenaltyApplied` comes with penalties. The payout store publishes what the `Payout` aggregate recorded.
 
-**Subscribes:** `TaskApproved` → credit the teen's wallet (idempotent on the event's key). `FamilyLinked` → create the teen's wallet.
+**Subscribes:** `FamilyUnlinked` → cancel the pair's open payout (`UNLINKED`; state-based, a replay while the pair is linked again does nothing). `TaskApproved` → credit the teen's wallet. The credit is idempotent: the journal entry key is `REWARD-TASK-{taskId}`, checked under the wallet's row lock (which serialises every credit for that teen) and backed by the `UNIQUE` key and a one-reward-per-task index.
 
-**Time-driven work** (`Ticker`): cancel `REQUESTED` payouts older than the expiry window.
+**The wallet is created lazily.** The first credit runs `INSERT ... ON CONFLICT DO NOTHING` and then locks the row, so concurrent first credits are safe. There is deliberately no `FamilyLinked` listener: events are delivered unordered, so a credit can arrive before any link handler, and the credit must be able to create the wallet itself. A teen without a wallet reads as a zero balance.
+
+**Built so far (steps 6a, 6b, 6c-goals):** the `Wallet` aggregate, the append-only `LedgerEntry` (kinds `TASK_REWARD`, `PAYOUT`, `GOAL_LOCK`, `GOAL_UNLOCK`), `RewardListener`, `BalanceReader`/`Balance` and `GET /balance` (teen only; amounts in minor units; `available` already excludes the open payout request). Payouts live in the same `wallet` feature package because fulfilment changes `Payout`, `Wallet` and the journal in one transaction. Savings goals live in the same package for the same reason (a lock changes the wallet, the journal and the goal together). Penalties are still to do.
+
+**Payout API.** The teen names the parent (who must be linked); the payout is addressed to that parent only.
+
+| Route | Caller | Notes |
+|---|---|---|
+| `POST /payouts` | teen | `{parentId, amount}` + required `Idempotency-Key` (scoped per teen; replay returns the original) |
+| `GET /payouts?state=` | teen (own) / parent (addressed to them) | newest first, capped at 100 |
+| `GET /payouts/{id}` | teen owner / addressed parent | anyone else gets `not_found` |
+| `POST /payouts/{id}/fulfil` | parent, still linked | debits the wallet; repeating is a no-op |
+| `POST /payouts/{id}/decline` | parent, still linked | `DECLINED` |
+| `POST /payouts/{id}/cancel` | teen | `TEEN_CANCELLED` |
+
+Errors: `forbidden` 403, `not_found` 404, `invalid_amount` / `amount_too_small` / `insufficient_funds` / `parent_required` / `invalid_idempotency_key` / `invalid_filter` 422, `payout_already_open` / `invalid_transition` 409. Repeating the same cancellation is a no-op; resolving a payout another way is `invalid_transition`. The fulfil debit must fit `balance − locked` (funds locked in goals can never be paid out).
+
+**Savings goals API** (teen only; a parent gets `forbidden`; goals are private to the teen). A goal is a label on part of the wallet's money: locking moves nothing, it writes a `GOAL_LOCK` entry (`balance_delta = 0`, `locked_delta = +amount`) and raises `wallets.locked_amount`, which lowers *available*. The money stays in the total balance. A goal's `savedAmount` is derived: the sum of `locked_delta` over the entries whose `ref_id` is the goal, so the goals and the wallet's locked total cannot drift apart (a test asserts `locked_amount = sum of saved`).
+
+| Route | Notes |
+|---|---|
+| `POST /goals` | `{name, targetAmount}`; name 1 to 100 characters, target > 0; 201 |
+| `GET /goals`, `GET /goals/{id}` | with `savedAmount`; another teen's goal is `not_found`; list capped at 100 |
+| `POST /goals/{id}/lock` | `{amount}` + required `Idempotency-Key`; must fit *available* and the goal's remaining target |
+| `POST /goals/{id}/unlock` | `{amount}` + required `Idempotency-Key`; at most what the goal holds |
+| `POST /goals/{id}/close` | releases everything saved (`GOAL_UNLOCK`, key `GOAL-CLOSE-{goalId}`) and closes; repeating is a no-op |
+
+Errors: `invalid_name`, `exceeds_target`, `insufficient_funds`, `insufficient_goal_funds`, `invalid_amount`, `invalid_idempotency_key` 422; `goal_closed` 409. The ledger key is `GOAL-LOCK:{teenId}:{key}` / `GOAL-UNLOCK:{teenId}:{key}`; a replay with the same goal and amount changes nothing, the same key for a different request is `invalid_idempotency_key`. Every goal command takes the wallet row lock first, so the available check, the saved amounts and `locked_amount` are serialised per teen. Reaching the target does nothing automatically, and goals publish no events yet.
+
+**Config.** `tiyn.ledger.min-payout-amount` (env `LEDGER_MIN_PAYOUT_AMOUNT`, default 10000 minor units = 100 KZT) and `tiyn.ledger.payout-expiry` (env `LEDGER_PAYOUT_EXPIRY`, default `P7D`).
+
+**Lock order.** Every payout command locks the wallet row first and the payout row second, so concurrent commands cannot deadlock; the wallet lock also serialises requests per teen (the partial unique index is the backstop).
+
+**Time-driven work** (`Ticker`): `PayoutExpiryTicker` cancels `REQUESTED` payouts older than `payout-expiry` (reason `EXPIRED`, no `resolved_by`), each in its own transaction.
 
 **Owns:** `ledger_entries`, `wallets`, `payouts`, `savings_goals`. The ledger needs no separate idempotency table: `ledger_entries.idempotency_key` and `payouts.idempotency_key` are `UNIQUE` and are the guard.
 
@@ -240,7 +273,7 @@ Called by the task module on submission and review.
 
 **Uploads and orphans:** object key = `proofs/{scope}/{uuid}`. A deterministic key was rejected because a replay with a different image would overwrite the object a stored proof points to. The price is an orphan object after a failed or replayed submit; expire unreferenced objects with a storage lifecycle rule.
 
-**Current implementation:** only the in-memory `InMemoryStorage` exists (selected by `tiyn.media.storage=memory`, the default; the S3 adapter will take `s3`, so exactly one `Storage` bean exists). It holds blobs in the JVM heap, which is fine for development only. It enforces the content-type allowlist (jpeg, png, webp) and a 5 MB cap, below the 8 MB multipart limit so an oversized photo is `unsupported_proof` and only a grossly oversized request is `413 payload_too_large`. The task service uploads only when the task is `ASSIGNED` and before its deadline, so a replay or a decided task cannot fill storage and returns `memory://` view URLs. The S3 adapter and EXIF stripping are step 7.
+**Current implementation:** only the in-memory `InMemoryStorage` exists (a plain component). It holds blobs in the JVM heap, which is fine for development only and loses every proof on restart. When the S3 adapter is added in step 7, the same commit must add a property that selects exactly one `Storage` bean and has no default in production, so a deploy that forgets it fails at startup instead of silently storing proofs in memory. It enforces the content-type allowlist (jpeg, png, webp) and a 5 MB cap, below the 8 MB multipart limit so an oversized photo is `unsupported_proof` and only a grossly oversized request is `413 payload_too_large`. The task service uploads only when the task is `ASSIGNED` and before its deadline, so a replay or a decided task cannot fill storage and returns `memory://` view URLs. The S3 adapter and EXIF stripping are step 7.
 
 **Why bytes pass through.** The teen client never sees S3, never holds an object key, and cannot submit a key for an object that was never uploaded. The server can enforce type and size and strip location metadata from photos of minors. Cost: image bytes use API bandwidth and memory, and the platform's request-size limit applies (set the ingress body limit accordingly). Clients compress before sending, so a few MB per request is expected. If scale demands it, switching to pre-signed PUT is a change inside this module plus the task submit path.
 

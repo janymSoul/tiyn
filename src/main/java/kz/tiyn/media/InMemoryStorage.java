@@ -7,11 +7,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
-@ConditionalOnProperty(name = "tiyn.media.storage", havingValue = "memory", matchIfMissing = true)
 class InMemoryStorage implements Storage {
 
     static final int MAX_BYTES = 5 * 1024 * 1024;

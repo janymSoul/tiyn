@@ -3,6 +3,7 @@ package kz.tiyn.task;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -78,6 +79,72 @@ class TaskConcurrencyTests {
 
         assertThat(jdbc.queryForObject("SELECT count(*) FROM task.task_proofs WHERE task_id = ?", Integer.class, id))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void aMilestoneRedoAndAChildRedoNeverLeaveTheMilestoneBeforeItsChild() throws Exception {
+        Family f = fx.linkedFamily();
+        for (int round = 0; round < 15; round++) {
+            UUID milestone = fx.createItem(f, "MILESTONE", null, 7200);
+            UUID child = fx.createItem(f, "TASK", milestone, 3600);
+            fx.send(
+                    "/tasks/" + milestone + "/submit",
+                    "{\"text\":\"a\"}",
+                    f.teen().bearer(),
+                    "Idempotency-Key",
+                    "m" + round);
+            fx.send(
+                    "/tasks/" + child + "/submit",
+                    "{\"text\":\"a\"}",
+                    f.teen().bearer(),
+                    "Idempotency-Key",
+                    "c" + round);
+            String milestoneDeadline = "{\"deadlineAt\":\"" + Instant.now().plusSeconds(4000) + "\"}";
+            String childDeadline = "{\"deadlineAt\":\"" + Instant.now().plusSeconds(5000) + "\"}";
+
+            List<Integer> statuses =
+                    runTogether(() -> redo(milestone, milestoneDeadline, f), () -> redo(child, childDeadline, f));
+
+            assertThat(statuses).allMatch(status -> status == 200 || status == 422);
+            assertThat(statuses).contains(200);
+            assertThat(jdbc.queryForObject(
+                            "SELECT m.deadline_at >= c.deadline_at FROM task.tasks m, task.tasks c "
+                                    + "WHERE m.id = ? AND c.id = ?",
+                            Boolean.class,
+                            milestone,
+                            child))
+                    .isTrue();
+        }
+    }
+
+    private int redo(UUID taskId, String body, Family f) throws Exception {
+        return fx.send("/tasks/" + taskId + "/request-redo", body, f.parent().bearer())
+                .andReturn()
+                .getResponse()
+                .getStatus();
+    }
+
+    @SafeVarargs
+    private List<Integer> runTogether(Callable<Integer>... work) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(work.length);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<Integer>> futures = new ArrayList<>();
+            for (Callable<Integer> one : work) {
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    return one.call();
+                }));
+            }
+            start.countDown();
+            List<Integer> results = new ArrayList<>();
+            for (Future<Integer> future : futures) {
+                results.add(future.get());
+            }
+            return results;
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     private <T> List<T> runConcurrently(Callable<T> work) throws Exception {

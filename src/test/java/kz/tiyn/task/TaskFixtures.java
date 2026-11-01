@@ -2,10 +2,13 @@ package kz.tiyn.task;
 
 import static kz.tiyn.support.FakeGoogleConfig.tokenFor;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -70,6 +73,30 @@ public final class TaskFixtures {
                 .getResponse()
                 .getContentAsString();
         return UUID.fromString(json.readTree(response).get("id").asText());
+    }
+
+    public UUID createItem(Family family, String kind, UUID milestoneId, long deadlineInSeconds) throws Exception {
+        String response = send(
+                        "/tasks",
+                        bodyFor(family, kind, milestoneId, deadlineInSeconds),
+                        family.parent().bearer())
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return UUID.fromString(json.readTree(response).get("id").asText());
+    }
+
+    public String bodyFor(Family family, String kind, UUID milestoneId, long deadlineInSeconds) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("teenId", family.teen().id());
+        body.put("kind", kind);
+        body.put("title", "Item");
+        body.put("rewardAmount", 100);
+        body.put("currency", "KZT");
+        body.put("deadlineAt", Instant.now().plusSeconds(deadlineInSeconds).toString());
+        body.put("milestoneId", milestoneId);
+        return json.writeValueAsString(body);
     }
 
     private JsonNode signIn(String role, String name) throws Exception {

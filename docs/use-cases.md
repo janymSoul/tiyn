@@ -118,7 +118,7 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 ## UC-07 Teen views balance and tasks
 
-**Flow.** Dashboard shows *Approved* and *Available* balance, *Pending* funds (TEN-01), and tasks grouped into "Daily Chores" and "Major Milestones" (TEN-02). A milestone shows progress computed from its approved tasks ("3 of 5").
+**Flow.** Dashboard shows *Balance* and *Available* amounts, *Pending* funds (TEN-01), and tasks grouped into "Daily Chores" and "Major Milestones" (TEN-02). A milestone shows progress computed from its approved tasks ("3 of 5").
 
 **Support needed.**
 - ledger: `BalanceReader.balance` → approved, locked, available.
@@ -130,13 +130,13 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 ## UC-08 Teen requests a payout
 
 **Flow** (Scenario 2, steps 1–3).
-1. Teen enters an amount ≤ available balance.
+1. Teen enters an amount ≤ available balance and picks the parent to ask (a linked parent). Minimum payout is 100 KZT (configurable).
 2. Ledger, in one transaction: lock the wallet `FOR UPDATE`, compute available (approved − open requests − locked), check amount ≤ available, create the `payouts` row `REQUESTED`, write `PayoutRequested`.
 3. Parent receives a high-priority push.
 
 Nothing is debited yet; the open request only lowers *available*, so several requests cannot exceed the balance.
 
-**Alternates.** Amount > available, ≤ 0, or below a minimum → 422. Double-submit → idempotency key returns the original payout. Teen cancels their own request → `CANCELLED`. Parent declines → `CANCELLED` with a reason. Unanswered for N days → `CANCELLED` by the ticker. Each cancellation publishes `PayoutCancelled`.
+**Alternates.** Amount > available, ≤ 0, or below a minimum → 422. Double-submit → idempotency key returns the original payout. Teen cancels their own request → `CANCELLED`. Parent declines → `CANCELLED` with a reason. Unanswered for 7 days (configurable) → `CANCELLED` by the ticker. Parent unlinked → `CANCELLED` (`UNLINKED`). Each cancellation publishes `PayoutCancelled`.
 
 **One open request per teen.** A second request while one is `REQUESTED` → 409. Enforced by a partial unique index (`UNIQUE (teen_id) WHERE state = 'REQUESTED'`) so concurrent requests cannot both succeed, independent of the wallet lock.
 
@@ -190,7 +190,7 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 
 ## UC-12 Teen sets a savings goal
 
-**Flow.** Teen creates a goal (name, target), moves part of their available balance into it, sees a progress bar.
+**Flow.** Teen creates a goal (name, target), locks part of their available balance into it, sees a progress bar (`savedAmount` of `targetAmount`). The money stays in the total balance but is excluded from *available*. The teen can unlock part of it or close the goal, which releases everything saved. A lock cannot take the goal past its target (`exceeds_target`). Goals are visible to the teen only.
 
 **Support needed.** ledger: `savings_goals`; locking funds is a ledger entry (available → locked), not a separate balance. The amount saved in a goal is derived from the entries referencing it. Locked funds are excluded from *available*, so they cannot be requested as a payout until unlocked.
 

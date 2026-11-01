@@ -117,7 +117,10 @@ class TaskService {
     }
 
     Task requestRedo(Principal caller, UUID id, String note, Instant newDeadlineAt) {
-        return decide(caller, id, (t, now) -> t.requestRedo(caller.userId(), note, newDeadlineAt, boundsFor(t), now));
+        return decide(caller, id, (t, now) -> {
+            lockMilestoneRow(t);
+            t.requestRedo(caller.userId(), note, newDeadlineAt, boundsFor(t), now);
+        });
     }
 
     Task cancel(Principal caller, UUID id) {
@@ -198,6 +201,13 @@ class TaskService {
             tasks.save(task);
             return task;
         }));
+    }
+
+    private void lockMilestoneRow(Task task) {
+        UUID milestoneId = task.kind() == TaskKind.MILESTONE ? task.id() : task.milestoneId();
+        if (milestoneId != null) {
+            tasks.lock(milestoneId);
+        }
     }
 
     private DeadlineBounds boundsFor(Task task) {
