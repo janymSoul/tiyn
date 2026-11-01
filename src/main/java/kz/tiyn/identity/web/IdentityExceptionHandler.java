@@ -1,0 +1,28 @@
+package kz.tiyn.identity.web;
+
+import kz.tiyn.identity.domain.IdentityException;
+import kz.tiyn.platform.web.ErrorBody;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+@RestControllerAdvice(basePackageClasses = IdentityController.class)
+class IdentityExceptionHandler {
+
+    @ExceptionHandler(IdentityException.class)
+    ResponseEntity<ErrorBody> handle(IdentityException e) {
+        return ResponseEntity.status(statusOf(e)).body(new ErrorBody(e.error().code()));
+    }
+
+    private static HttpStatus statusOf(IdentityException e) {
+        return switch (e.error()) {
+            case INVALID_IDENTITY, UNAUTHENTICATED -> HttpStatus.UNAUTHORIZED;
+            case FORBIDDEN -> HttpStatus.FORBIDDEN;
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case INVALID_ROLE, INVALID_DISPLAY_NAME, INVALID_JOIN_CODE -> HttpStatus.UNPROCESSABLE_ENTITY;
+            case INVALID_TEEN_ID -> HttpStatus.BAD_REQUEST;
+            case CONFLICT -> HttpStatus.CONFLICT;
+        };
+    }
+}
