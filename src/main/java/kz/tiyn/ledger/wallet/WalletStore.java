@@ -12,9 +12,11 @@ import org.springframework.stereotype.Repository;
 class WalletStore {
 
     private final DSLContext dsl;
+    private final PayoutStore payouts;
 
-    WalletStore(DSLContext dsl) {
+    WalletStore(DSLContext dsl, PayoutStore payouts) {
         this.dsl = dsl;
+        this.payouts = payouts;
     }
 
     void ensure(UUID teenId, String currency) {
@@ -29,7 +31,7 @@ class WalletStore {
         return dsl.selectFrom(WALLETS)
                 .where(WALLETS.TEEN_ID.eq(teenId).and(WALLETS.CURRENCY.eq(currency)))
                 .fetchOptional()
-                .map(WalletStore::toWallet);
+                .map(this::toWallet);
     }
 
     Optional<Wallet> findForUpdate(UUID teenId, String currency) {
@@ -37,7 +39,7 @@ class WalletStore {
                 .where(WALLETS.TEEN_ID.eq(teenId).and(WALLETS.CURRENCY.eq(currency)))
                 .forUpdate()
                 .fetchOptional()
-                .map(WalletStore::toWallet);
+                .map(this::toWallet);
     }
 
     void save(Wallet wallet) {
@@ -48,7 +50,12 @@ class WalletStore {
                 .execute();
     }
 
-    private static Wallet toWallet(WalletsRecord r) {
-        return Wallet.restore(r.getTeenId(), r.getCurrency(), r.getBalanceAmount(), r.getLockedAmount());
+    private Wallet toWallet(WalletsRecord r) {
+        return Wallet.restore(
+                r.getTeenId(),
+                r.getCurrency(),
+                r.getBalanceAmount(),
+                r.getLockedAmount(),
+                payouts.openAmount(r.getTeenId(), r.getCurrency()));
     }
 }

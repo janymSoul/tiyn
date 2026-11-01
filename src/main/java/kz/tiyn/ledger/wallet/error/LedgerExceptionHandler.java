@@ -20,7 +20,15 @@ class LedgerExceptionHandler {
     private static HttpStatus statusOf(LedgerException e) {
         return switch (e.error()) {
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
-            case INVALID_AMOUNT, UNSUPPORTED_CURRENCY -> HttpStatus.UNPROCESSABLE_ENTITY;
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case INVALID_AMOUNT,
+                    UNSUPPORTED_CURRENCY,
+                    AMOUNT_TOO_SMALL,
+                    INSUFFICIENT_FUNDS,
+                    PARENT_REQUIRED,
+                    INVALID_IDEMPOTENCY_KEY,
+                    INVALID_FILTER -> HttpStatus.UNPROCESSABLE_ENTITY;
+            case PAYOUT_ALREADY_OPEN, INVALID_TRANSITION -> HttpStatus.CONFLICT;
         };
     }
 }

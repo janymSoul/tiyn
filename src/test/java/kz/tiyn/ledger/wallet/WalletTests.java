@@ -19,7 +19,7 @@ class WalletTests {
 
     @Test
     void creditingARewardRaisesTheBalanceAndRecordsTheEntry() {
-        Wallet wallet = Wallet.restore(TEEN, "KZT", 1000, 0);
+        Wallet wallet = Wallet.restore(TEEN, "KZT", 1000, 0, 0);
         UUID entryId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
 
@@ -33,12 +33,21 @@ class WalletTests {
 
     @Test
     void aRewardMustBePositive() {
-        Wallet wallet = Wallet.restore(TEEN, "KZT", 1000, 0);
+        Wallet wallet = Wallet.restore(TEEN, "KZT", 1000, 0, 0);
 
         assertError(() -> wallet.creditTaskReward(UUID.randomUUID(), UUID.randomUUID(), 0), LedgerError.INVALID_AMOUNT);
         assertError(
                 () -> wallet.creditTaskReward(UUID.randomUUID(), UUID.randomUUID(), -5), LedgerError.INVALID_AMOUNT);
         assertThat(wallet.balanceAmount()).isEqualTo(1000);
+    }
+
+    @Test
+    void anOpenPayoutRequestIsNotAvailable() {
+        Wallet wallet = Wallet.restore(TEEN, "KZT", 1000, 100, 300);
+
+        assertThat(wallet.availableAmount()).isEqualTo(600);
+        wallet.requireCanRequest(600);
+        assertError(() -> wallet.requireCanRequest(601), LedgerError.INSUFFICIENT_FUNDS);
     }
 
     @Test
@@ -50,12 +59,13 @@ class WalletTests {
 
     @Test
     void availableIsTheBalanceMinusWhatIsLocked() {
-        assertThat(Wallet.restore(TEEN, "KZT", 1000, 300).availableAmount()).isEqualTo(700);
+        assertThat(Wallet.restore(TEEN, "KZT", 1000, 300, 0).availableAmount()).isEqualTo(700);
     }
 
     @Test
     void walletsAreEqualByTeenAndCurrencyNotByBalance() {
-        assertThat(Wallet.restore(TEEN, "KZT", 1, 0)).isEqualTo(Wallet.restore(TEEN, "KZT", 99, 5));
-        assertThat(Wallet.restore(TEEN, "KZT", 1, 0)).isNotEqualTo(Wallet.restore(UUID.randomUUID(), "KZT", 1, 0));
+        assertThat(Wallet.restore(TEEN, "KZT", 1, 0, 0)).isEqualTo(Wallet.restore(TEEN, "KZT", 99, 5, 0));
+        assertThat(Wallet.restore(TEEN, "KZT", 1, 0, 0))
+                .isNotEqualTo(Wallet.restore(UUID.randomUUID(), "KZT", 1, 0, 0));
     }
 }

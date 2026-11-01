@@ -13,16 +13,19 @@ final class Wallet {
     private final String currency;
     private long balanceAmount;
     private final long lockedAmount;
+    private final long openRequestedAmount;
 
-    private Wallet(UUID teenId, String currency, long balanceAmount, long lockedAmount) {
+    private Wallet(UUID teenId, String currency, long balanceAmount, long lockedAmount, long openRequestedAmount) {
         this.teenId = teenId;
         this.currency = currency;
         this.balanceAmount = balanceAmount;
         this.lockedAmount = lockedAmount;
+        this.openRequestedAmount = openRequestedAmount;
     }
 
-    static Wallet restore(UUID teenId, String currency, long balanceAmount, long lockedAmount) {
-        return new Wallet(teenId, currency, balanceAmount, lockedAmount);
+    static Wallet restore(
+            UUID teenId, String currency, long balanceAmount, long lockedAmount, long openRequestedAmount) {
+        return new Wallet(teenId, currency, balanceAmount, lockedAmount, openRequestedAmount);
     }
 
     static String requireSupported(String currency) {
@@ -41,8 +44,14 @@ final class Wallet {
                 entryId, teenId, currency, EntryKind.TASK_REWARD, amount, 0, taskId, LedgerEntry.rewardKey(taskId));
     }
 
+    void requireCanRequest(long amount) {
+        if (amount > availableAmount()) {
+            throw new LedgerException(LedgerError.INSUFFICIENT_FUNDS);
+        }
+    }
+
     long availableAmount() {
-        return balanceAmount - lockedAmount;
+        return balanceAmount - lockedAmount - openRequestedAmount;
     }
 
     UUID teenId() {
