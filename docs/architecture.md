@@ -116,7 +116,7 @@ Postgres and SeaweedFS are **not part of the application release**. `postgres.en
 
 **Presigned URLs and the S3 endpoint.** A presigned URL is signed for one host, and the client must be able to reach it. A provider's public S3 endpoint works as `S3_ENDPOINT`. For the in-cluster SeaweedFS (`http://<release>-seaweedfs:8333`, unreachable from outside) set `config.s3.publicEndpoint` (`S3_PUBLIC_ENDPOINT`) to the public URL and enable `seaweedfs.ingress` with that host: the app uploads through the internal endpoint and signs view URLs for the public one. The ingress must forward the original `Host` header, or signature verification fails.
 
-**Real server, step by step** (not yet done; no server exists):
+**Real server, step by step** (the staging environment below follows these steps on GCP; no Kazakhstan host exists yet):
 1. Pick a host; for real user data a Kazakhstan provider. Two vCPU and 4 GB RAM is the floor for k3s plus the application.
 2. Install k3s on one node (it brings Traefik and local-path storage) or use the provider's managed Kubernetes.
 3. With a domain, point an A record at the server, open ports 80 and 443, install cert-manager and a Let's Encrypt `ClusterIssuer`, and set `ingress.enabled`, `ingress.host` and `ingress.tlsSecret`. Android blocks plain HTTP by default, so the Flutter app needs this.
@@ -125,6 +125,42 @@ Postgres and SeaweedFS are **not part of the application release**. `postgres.en
 6. `kubectl create secret generic tiyn-secrets` with `JWT_SECRET` (at least 32 bytes), `GOOGLE_CLIENT_IDS`, `DATABASE_URL`, `DATABASE_USER`, `DATABASE_PASSWORD`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`; for `fcm`, a second secret holding the service-account JSON under `credentials.json`.
 7. Set the GHCR package to public (GitHub, Packages, package settings) or add `image.pullSecrets`, then `helm upgrade --install tiyn deploy/helm/tiyn -n tiyn --create-namespace --set secret.existingSecret=tiyn-secrets --set image.tag=<sha> -f values-prod.yaml`, where `values-prod.yaml` sets `config.*` and the ingress.
 8. Before real data: backups with a tested restore, alerts on the age of the oldest incomplete `event_publication`, and a registry and object store hosted in Kazakhstan.
+
+### Staging on GCP
+
+Staging runs on two plain Compute Engine VMs in `europe-west3-a`, with fake data only. It is built from portable parts (VMs, k3s, Postgres, SeaweedFS, Let's Encrypt, generic DNS), so moving it to a Kazakhstan host means creating the same two machines there and changing two DNS records. Do not use Cloud SQL, GKE, Cloud Run or Secret Manager: they are exactly what the data-residency section rules out for real users.
+
+| Part | Where | Notes |
+|---|---|---|
+| App, k3s, SeaweedFS, cert-manager | VM `tiyn-staging` (`e2-medium`, Ubuntu 24.04, 30 GB, static IP) | ports 80 and 443 open to everyone, 22 only from the operator's IP |
+| Postgres 16 | VM `tiyn-db` (`e2-small`, 20 GB, no public IP) | listens on the private address only; `pg_hba.conf` accepts the app VM's address only |
+| Hostnames | `api-staging.tiyn.dev`, `s3-staging.tiyn.dev` | Cloudflare DNS, **DNS only** (no proxy), so Let's Encrypt validation reaches the VM |
+| Image | `ghcr.io/janymsoul/tiyn:<commit sha>` | public package; CI publishes it on merge to `main` |
+
+**Create the machines.**
+1. `gcloud compute addresses create tiyn-staging-ip --region=europe-west3`.
+2. Firewall rules on the default network: `tiyn-web` (tcp 80, 443, tag `tiyn-staging`), `tiyn-ssh` (tcp 22 from the operator's `/32`, both tags), `tiyn-pg` (tcp 5432 from tag `tiyn-staging` to tag `tiyn-db`). Delete `default-allow-ssh` and `default-allow-rdp`, which are open to the internet. If SSH stops working, the operator's IP changed: `gcloud compute firewall-rules update tiyn-ssh --source-ranges=<ip>/32`.
+3. Create both VMs with `--image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud`, the static address and tag `tiyn-staging` on the app VM, tag `tiyn-db` on the database VM. Give the database VM an external address only while installing packages, then remove it with `gcloud compute instances delete-access-config tiyn-db --access-config-name=external-nat`; Cloud NAT is the alternative if it must stay patchable.
+4. In Cloudflare, add two A records pointing at the static address, **DNS only**.
+
+**Postgres on `tiyn-db`.** `apt install postgresql`, then create a login role and a database owned by it, set `listen_addresses = 'localhost,<private ip>'` in a `conf.d` file, add `host tiyn tiyn <app VM private ip>/32 scram-sha-256` to `pg_hba.conf`, and restart. A cron job in `/etc/cron.d` runs `pg_dump -Fc` nightly and deletes dumps older than seven days. Those dumps sit on the same disk, so they do not survive losing the VM; add disk snapshots before the data matters.
+
+**k3s and cert-manager on `tiyn-staging`.** Install k3s (`curl -sfL https://get.k3s.io | sudo sh -`) and Helm, then cert-manager (`helm upgrade --install cert-manager jetstack/cert-manager --version v1.21.3 -n cert-manager --create-namespace --set crds.enabled=true`). Create a `ClusterIssuer` named `letsencrypt-prod` using the ACME production server, the operator's email, and an `http01` solver with `ingressClassName: traefik`. The chart's ingress annotation `cert-manager.io/cluster-issuer: letsencrypt-prod` then gets each hostname a certificate within about a minute.
+
+**Secrets (never in the repository).** Generate them on the operator's machine and create them with `kubectl`:
+- `tiyn-secrets` from an env file: `JWT_SECRET` (random, at least 32 bytes), `GOOGLE_CLIENT_IDS` (comma-separated Web, Android and iOS client IDs), `DATABASE_URL` (`jdbc:postgresql://<db private ip>:5432/tiyn`), `DATABASE_USER`, `DATABASE_PASSWORD`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`.
+- `tiyn-fcm` from the Firebase service-account file, under the key `credentials.json`.
+- The SeaweedFS secret in the chart reads the S3 keys from `secret.values`, so the same two keys also go into a mode-600 values file on the VM that is passed to `helm` with `-f`. Making that secret read from `existingSecret` is a known improvement.
+
+**Deploy.** Clone the repository on the VM, check out the commit whose image CI published, and run `helm upgrade --install tiyn deploy/helm/tiyn -n tiyn -f values-staging.yaml -f <s3 keys file> --set image.tag=<sha>`. `values-staging.yaml` selects `s3` storage, the in-cluster SeaweedFS with its own ingress, `config.s3.publicEndpoint=https://s3-staging.tiyn.dev`, the `fcm` sender with `fcm.dryRun: true`, the app ingress for `api-staging.tiyn.dev`, and no in-cluster Postgres.
+
+**Google sign-in.** Create OAuth clients in the Firebase project's Google Cloud project: a Web client (needed by the OAuth Playground and, in the usual Flutter setup, the `serverClientId` of the ID token), an Android client (package name, debug SHA-1) and an iOS client (bundle ID), with the consent screen set to External and Testing, and the test accounts listed. All their IDs go into `GOOGLE_CLIENT_IDS`. A family needs two Google accounts, because one account is one user with one role. Get ID tokens from the OAuth Playground with the Web client, then call `POST /auth/google`.
+
+**Smoke test** (done on 2026-11-01, all passing): health UP over a valid certificate; parent and teen sign in with real Google accounts; the teen joins with the parent's code; the parent creates a task; the teen submits a JPEG carrying GPS and an orientation tag; `GET /tasks/{id}/proofs` returns a URL on `s3-staging.tiyn.dev`; fetching it returns 200 with a rotated image and no EXIF; a tampered signature returns 403. With the `fcm` sender in dry-run mode, a fake device token is answered `UNREGISTERED` by Firebase and removed, which shows the key authenticates and the message is built correctly.
+
+**Not covered yet.** Real push delivery (needs a device token from the Flutter app; then set `fcm.dryRun: false`), disk snapshots, monitoring and alerts, VM cost estimates, and an automated deploy from CI.
+
+**Moving to a Kazakhstan host.** Create the same two machines there; install k3s, cert-manager and Postgres as above; `pg_dump -Fc` the database and `pg_restore` it; copy the bucket with any S3 client (`aws s3 sync` between the two endpoints); recreate the secrets; run the same `helm upgrade --install`; then change the two DNS records. The Docker image should come from a registry hosted in Kazakhstan by then.
 
 ## Non-functional requirements that shape the code
 
