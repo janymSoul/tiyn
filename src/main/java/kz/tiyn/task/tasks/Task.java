@@ -65,6 +65,24 @@ final class Task {
     }
 
     static Task assign(UUID id, NewTask draft, Instant now, long maxRewardAmount) {
+        return create(id, null, draft, now, maxRewardAmount);
+    }
+
+    static Task assignInMilestone(UUID id, Task milestone, NewTask draft, Instant now, long maxRewardAmount) {
+        boolean belongsToThisFamily =
+                milestone.parentId.equals(draft.parentId()) && milestone.teenId.equals(draft.teenId());
+        boolean acceptsTasks = milestone.kind == TaskKind.MILESTONE && milestone.state == TaskState.ASSIGNED;
+        if (!belongsToThisFamily || !acceptsTasks || draft.kind() == TaskKind.MILESTONE) {
+            throw new TaskException(TaskError.INVALID_MILESTONE);
+        }
+        Task task = create(id, milestone.id, draft, now, maxRewardAmount);
+        if (task.deadlineAt.isAfter(milestone.deadlineAt)) {
+            throw new TaskException(TaskError.INVALID_MILESTONE);
+        }
+        return task;
+    }
+
+    private static Task create(UUID id, UUID milestoneId, NewTask draft, Instant now, long maxRewardAmount) {
         String title = draft.title() == null ? "" : draft.title().trim();
         if (title.isEmpty() || title.length() > MAX_TITLE) {
             throw new TaskException(TaskError.INVALID_TITLE);
@@ -80,7 +98,7 @@ final class Task {
                 id,
                 null,
                 null,
-                null,
+                milestoneId,
                 draft.parentId(),
                 draft.teenId(),
                 kind,

@@ -173,6 +173,59 @@ class TaskFlowTests {
     }
 
     @Test
+    void milestoneTracksProgressAndCancellingItCancelsOpenTasks() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID milestone = createWith(f, "MILESTONE", null, 7200);
+        UUID done = createWith(f, "TASK", milestone, 3600);
+        UUID open = createWith(f, "TASK", milestone, 3600);
+        fx.send("/tasks/" + done + "/submit", "{\"text\":\"a\"}", f.teen().bearer(), "Idempotency-Key", "m1");
+        fx.send("/tasks/" + done + "/approve", "", f.parent().bearer());
+
+        mvc.perform(get("/tasks/" + milestone)
+                        .header("Authorization", f.parent().bearer()))
+                .andExpect(jsonPath("$.approvedTasks").value(1))
+                .andExpect(jsonPath("$.totalTasks").value(2));
+        mvc.perform(get("/tasks/" + done).header("Authorization", f.parent().bearer()))
+                .andExpect(jsonPath("$.milestoneId").value(milestone.toString()))
+                .andExpect(jsonPath("$.totalTasks").doesNotExist());
+
+        fx.send("/tasks/" + milestone + "/cancel", "", f.parent().bearer())
+                .andExpect(jsonPath("$.state").value("CANCELLED"));
+
+        mvc.perform(get("/tasks/" + open).header("Authorization", f.parent().bearer()))
+                .andExpect(jsonPath("$.state").value("CANCELLED"));
+        mvc.perform(get("/tasks/" + done).header("Authorization", f.parent().bearer()))
+                .andExpect(jsonPath("$.state").value("APPROVED"));
+        mvc.perform(get("/tasks/" + milestone)
+                        .header("Authorization", f.parent().bearer()))
+                .andExpect(jsonPath("$.totalTasks").value(1));
+    }
+
+    @Test
+    void invalidMilestoneLinksAreRejected() throws Exception {
+        Family f = fx.linkedFamily();
+        Family other = fx.linkedFamily();
+        UUID milestone = createWith(f, "MILESTONE", null, 7200);
+        UUID plain = createWith(f, "TASK", null, 3600);
+
+        fx.send(
+                        "/tasks",
+                        bodyWith(f, "TASK", UUID.randomUUID(), 3600),
+                        f.parent().bearer())
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_milestone"));
+        fx.send("/tasks", bodyWith(f, "TASK", plain, 3600), f.parent().bearer())
+                .andExpect(jsonPath("$.error").value("invalid_milestone"));
+        fx.send("/tasks", bodyWith(f, "TASK", milestone, 9000), f.parent().bearer())
+                .andExpect(jsonPath("$.error").value("invalid_milestone"));
+        fx.send(
+                        "/tasks",
+                        bodyWith(other, "TASK", milestone, 3600),
+                        other.parent().bearer())
+                .andExpect(jsonPath("$.error").value("invalid_milestone"));
+    }
+
+    @Test
     void anUnknownKindIsRejectedWithItsOwnCode() throws Exception {
         Family f = fx.linkedFamily();
 
@@ -251,6 +304,30 @@ class TaskFlowTests {
         mvc.perform(get("/tasks?state=NOPE").header("Authorization", f.parent().bearer()))
                 .andExpect(status().isUnprocessableEntity());
         assertThat(open).isNotEqualTo(done);
+    }
+
+    private UUID createWith(Family f, String kind, UUID milestoneId, long deadlineInSeconds) throws Exception {
+        String response = fx.send(
+                        "/tasks",
+                        bodyWith(f, kind, milestoneId, deadlineInSeconds),
+                        f.parent().bearer())
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return UUID.fromString(json.readTree(response).get("id").asText());
+    }
+
+    private String bodyWith(Family f, String kind, UUID milestoneId, long deadlineInSeconds) throws Exception {
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("teenId", f.teen().id());
+        body.put("kind", kind);
+        body.put("title", "Item");
+        body.put("rewardAmount", 100);
+        body.put("currency", "KZT");
+        body.put("deadlineAt", Instant.now().plusSeconds(deadlineInSeconds).toString());
+        body.put("milestoneId", milestoneId);
+        return json.writeValueAsString(body);
     }
 
     private String createBody(UUID teenId) throws Exception {

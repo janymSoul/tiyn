@@ -62,6 +62,24 @@ class TaskStore {
                 .toList();
     }
 
+    List<Task> findOpenInMilestone(UUID milestoneId) {
+        return dsl.selectFrom(TASKS)
+                .where(TASKS.MILESTONE_ID.eq(milestoneId))
+                .and(TASKS.STATE.in(TaskState.ASSIGNED.name(), TaskState.SUBMITTED.name()))
+                .fetch()
+                .map(this::toTask);
+    }
+
+    MilestoneProgress progress(UUID milestoneId) {
+        var total = DSL.count();
+        var approved = DSL.count().filterWhere(TASKS.STATE.eq(TaskState.APPROVED.name()));
+        return dsl.select(approved, total)
+                .from(TASKS)
+                .where(TASKS.MILESTONE_ID.eq(milestoneId))
+                .and(TASKS.STATE.ne(TaskState.CANCELLED.name()))
+                .fetchOne(r -> new MilestoneProgress(r.value1(), r.value2()));
+    }
+
     long pendingReward(UUID teenId) {
         Long sum = dsl.select(DSL.coalesce(DSL.sum(TASKS.REWARD_AMOUNT), 0L).cast(Long.class))
                 .from(TASKS)

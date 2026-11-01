@@ -205,4 +205,66 @@ class TaskTests {
         moved.requestRedo(PARENT, null, NOW.plusSeconds(9000), NOW);
         assertThat(moved.deadlineAt()).isEqualTo(NOW.plusSeconds(9000));
     }
+
+    private Task milestone(Instant deadline) {
+        var draft = new NewTask(PARENT, TEEN, TaskKind.MILESTONE, "Exam", null, 5000, "KZT", deadline);
+        Task milestone = Task.assign(UUID.randomUUID(), draft, NOW, MAX);
+        milestone.pullEvents();
+        return milestone;
+    }
+
+    private NewTask milestoneTask(UUID parent, UUID teen, TaskKind kind, Instant deadline) {
+        return new NewTask(parent, teen, kind, "Study", null, 100, "KZT", deadline);
+    }
+
+    @Test
+    void aTaskInAMilestoneRecordsItsMilestone() {
+        Task milestone = milestone(NOW.plusSeconds(7200));
+
+        Task task = Task.assignInMilestone(
+                UUID.randomUUID(),
+                milestone,
+                milestoneTask(PARENT, TEEN, TaskKind.TASK, NOW.plusSeconds(3600)),
+                NOW,
+                MAX);
+
+        assertThat(task.milestoneId()).isEqualTo(milestone.id());
+    }
+
+    @Test
+    void milestoneTasksMustFitTheMilestoneRules() {
+        Instant milestoneDeadline = NOW.plusSeconds(7200);
+        UUID id = UUID.randomUUID();
+        Task open = milestone(milestoneDeadline);
+        NewTask fine = milestoneTask(PARENT, TEEN, TaskKind.TASK, NOW.plusSeconds(3600));
+
+        assertError(
+                () -> Task.assignInMilestone(
+                        id,
+                        open,
+                        milestoneTask(PARENT, TEEN, TaskKind.TASK, milestoneDeadline.plusSeconds(1)),
+                        NOW,
+                        MAX),
+                TaskError.INVALID_MILESTONE);
+        assertError(
+                () -> Task.assignInMilestone(
+                        id, open, milestoneTask(PARENT, TEEN, TaskKind.MILESTONE, NOW.plusSeconds(60)), NOW, MAX),
+                TaskError.INVALID_MILESTONE);
+        assertError(
+                () -> Task.assignInMilestone(
+                        id,
+                        open,
+                        milestoneTask(PARENT, UUID.randomUUID(), TaskKind.TASK, NOW.plusSeconds(60)),
+                        NOW,
+                        MAX),
+                TaskError.INVALID_MILESTONE);
+        assertError(
+                () -> Task.assignInMilestone(
+                        id, open, milestoneTask(UUID.randomUUID(), TEEN, TaskKind.TASK, NOW.plusSeconds(60)), NOW, MAX),
+                TaskError.INVALID_MILESTONE);
+        assertError(() -> Task.assignInMilestone(id, assigned(), fine, NOW, MAX), TaskError.INVALID_MILESTONE);
+        Task cancelled = milestone(milestoneDeadline);
+        cancelled.cancel(PARENT, NOW);
+        assertError(() -> Task.assignInMilestone(id, cancelled, fine, NOW, MAX), TaskError.INVALID_MILESTONE);
+    }
 }

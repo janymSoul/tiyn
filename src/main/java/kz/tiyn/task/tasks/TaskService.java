@@ -70,7 +70,15 @@ class TaskService {
                 request.rewardAmount(),
                 request.currency(),
                 request.deadlineAt());
-        Task task = Task.assign(UUID.randomUUID(), draft, clock.instant(), properties.maxRewardAmount());
+        Task task = request.milestoneId() == null
+                ? Task.assign(UUID.randomUUID(), draft, clock.instant(), properties.maxRewardAmount())
+                : Task.assignInMilestone(
+                        UUID.randomUUID(),
+                        tasks.find(request.milestoneId())
+                                .orElseThrow(() -> new TaskException(TaskError.INVALID_MILESTONE)),
+                        draft,
+                        clock.instant(),
+                        properties.maxRewardAmount());
         tx.executeWithoutResult(status -> {
             tasks.insert(task);
             task.pullEvents().forEach(events::publishEvent);
@@ -123,7 +131,20 @@ class TaskService {
     }
 
     Task cancel(Principal caller, UUID id) {
-        return decide(caller, id, (t, now) -> t.cancel(caller.userId(), now));
+        requireRole(caller, Role.PARENT);
+        return retry(() -> tx.execute(status -> {
+            Task task = authorised(caller, id);
+            Instant now = clock.instant();
+            if (task.kind() == TaskKind.MILESTONE) {
+                tasks.findOpenInMilestone(id).forEach(child -> cancelAndSave(child, caller.userId(), now));
+            }
+            cancelAndSave(task, caller.userId(), now);
+            return task;
+        }));
+    }
+
+    MilestoneProgress progress(Task milestone) {
+        return tasks.progress(milestone.id());
     }
 
     List<ProofResponse> proofs(Principal caller, UUID id) {
@@ -150,6 +171,15 @@ class TaskService {
             task.pullEvents().forEach(events::publishEvent);
             return task;
         }));
+    }
+
+    private void cancelAndSave(Task task, UUID parentId, Instant now) {
+        task.cancel(parentId, now);
+        List<Object> raised = task.pullEvents();
+        if (!raised.isEmpty()) {
+            tasks.update(task);
+            raised.forEach(events::publishEvent);
+        }
     }
 
     private Task decide(Principal caller, UUID id, Decision decision) {
