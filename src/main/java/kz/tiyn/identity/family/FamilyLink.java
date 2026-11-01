@@ -3,6 +3,7 @@ package kz.tiyn.identity.family;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import kz.tiyn.identity.FamilyLinked;
 import kz.tiyn.identity.FamilyUnlinked;
@@ -78,5 +79,15 @@ final class FamilyLink {
 
     Instant removedAt() {
         return removedAt;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        return other instanceof FamilyLink link && parentId.equals(link.parentId) && teenId.equals(link.teenId);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(parentId, teenId);
     }
 }

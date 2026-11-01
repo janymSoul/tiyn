@@ -53,6 +53,6 @@ class UserStore {
     }
 
     private static User toUser(UsersRecord r) {
-        return new User(r.getId(), r.getIdpSub(), Role.valueOf(r.getRole()), r.getJoinCode(), r.getDisplayName());
+        return User.restore(r.getId(), r.getIdpSub(), Role.valueOf(r.getRole()), r.getJoinCode(), r.getDisplayName());
     }
 }
