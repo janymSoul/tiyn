@@ -27,6 +27,7 @@ class TaskExceptionHandler {
                     INVALID_TITLE,
                     INVALID_NOTE,
                     INVALID_MILESTONE,
+                    INVALID_KIND,
                     UNSUPPORTED_PROOF,
                     INVALID_IDEMPOTENCY_KEY,
                     TEEN_REQUIRED,

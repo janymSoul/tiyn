@@ -3,12 +3,9 @@ package kz.tiyn.media;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
@@ -21,12 +18,12 @@ class InMemoryStorage implements Storage {
     private final Map<String, byte[]> objects = new ConcurrentHashMap<>();
 
     @Override
-    public String put(String scope, String idempotencyKey, String contentType, InputStream body) {
+    public String put(String scope, String contentType, InputStream body) {
         if (contentType == null || !ALLOWED_TYPES.contains(contentType.toLowerCase())) {
             throw new InvalidMediaException("unsupported content type");
         }
         byte[] bytes = readLimited(body);
-        String objectKey = "proofs/" + scope + "/" + sha256(idempotencyKey);
+        String objectKey = "proofs/" + scope + "/" + UUID.randomUUID();
         objects.put(objectKey, bytes);
         return objectKey;
     }
@@ -48,15 +45,6 @@ class InMemoryStorage implements Storage {
             return bytes;
         } catch (IOException e) {
             throw new InvalidMediaException("unreadable file");
-        }
-    }
-
-    private static String sha256(String value) {
-        try {
-            return HexFormat.of()
-                    .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
         }
     }
 }

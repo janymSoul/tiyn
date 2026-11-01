@@ -139,6 +139,30 @@ class TaskFlowTests {
     }
 
     @Test
+    void reusingTheSameKeyAfterARedoStartsANewAttempt() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID id = fx.createTask(f, 100);
+        fx.send("/tasks/" + id + "/submit", "{\"text\":\"a\"}", f.teen().bearer(), "Idempotency-Key", "reused");
+        fx.send("/tasks/" + id + "/request-redo", "{}", f.parent().bearer());
+
+        fx.send("/tasks/" + id + "/submit", "{\"text\":\"b\"}", f.teen().bearer(), "Idempotency-Key", "reused")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("SUBMITTED"));
+    }
+
+    @Test
+    void anUnknownKindIsRejectedWithItsOwnCode() throws Exception {
+        Family f = fx.linkedFamily();
+
+        fx.send(
+                        "/tasks",
+                        createBody(f.teen().id()).replace("{", "{\"kind\":\"CHORE\","),
+                        f.parent().bearer())
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_kind"));
+    }
+
+    @Test
     void cancelIsIdempotentAndBlocksSubmission() throws Exception {
         Family f = fx.linkedFamily();
         UUID id = fx.createTask(f, 100);

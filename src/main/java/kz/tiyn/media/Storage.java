@@ -5,7 +5,7 @@ import java.net.URI;
 
 public interface Storage {
 
-    String put(String scope, String idempotencyKey, String contentType, InputStream body);
+    String put(String scope, String contentType, InputStream body);
 
     URI presignView(String objectKey);
 }

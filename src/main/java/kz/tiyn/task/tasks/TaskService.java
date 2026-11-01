@@ -3,7 +3,10 @@ package kz.tiyn.task.tasks;
 import java.io.InputStream;
 import java.net.URI;
 import java.time.Clock;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.Supplier;
 import kz.tiyn.identity.FamilyDirectory;
@@ -83,8 +86,9 @@ class TaskService {
         if (caller.role() == Role.TEEN) {
             return tasks.list(null, caller.userId(), state);
         }
+        Map<UUID, Boolean> linked = new HashMap<>();
         return tasks.list(caller.userId(), teenId, state).stream()
-                .filter(t -> family.areLinked(t.parentId(), t.teenId()))
+                .filter(t -> linked.computeIfAbsent(t.teenId(), id -> family.areLinked(caller.userId(), id)))
                 .toList();
     }
 
@@ -99,7 +103,7 @@ class TaskService {
         Task current = authorised(caller, id);
         String objectKey;
         try {
-            objectKey = storage.put(id.toString(), idempotencyKey, contentType, body);
+            objectKey = storage.put(id.toString(), contentType, body);
         } catch (InvalidMediaException e) {
             throw new TaskException(TaskError.UNSUPPORTED_PROOF);
         }
@@ -134,16 +138,11 @@ class TaskService {
                 .toList();
     }
 
-    long pendingReward(UUID teenId) {
-        return tasks.pendingReward(teenId);
-    }
-
     private Task submit(Principal caller, UUID id, String idempotencyKey, String objectKey, String text) {
         requireRole(caller, Role.TEEN);
-        String claimKey = id + ":" + idempotencyKey;
         return retry(() -> tx.execute(status -> {
             Task task = authorised(caller, id);
-            if (!keys.claim(claimKey)) {
+            if (!keys.claim(id + ":" + task.currentAttempt() + ":" + idempotencyKey)) {
                 return task;
             }
             task.submit(caller.userId(), UUID.randomUUID(), objectKey, text, clock.instant());
@@ -204,7 +203,7 @@ class TaskService {
         try {
             return TaskKind.valueOf(raw.toUpperCase());
         } catch (IllegalArgumentException e) {
-            throw new TaskException(TaskError.INVALID_MILESTONE);
+            throw new TaskException(TaskError.INVALID_KIND);
         }
     }
 
@@ -218,6 +217,6 @@ class TaskService {
 
     @FunctionalInterface
     private interface Decision {
-        void apply(Task task, java.time.Instant now);
+        void apply(Task task, Instant now);
     }
 }

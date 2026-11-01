@@ -115,7 +115,7 @@ final class Task {
         proofs.add(Proof.submitted(proofId, proofs.size() + 1, objectKey, textBody, now));
         state = TaskState.SUBMITTED;
         submittedAt = now;
-        events.record(new TaskSubmitted(id, parentId, teenId, objectKey != null ? objectKey : "text"));
+        events.record(new TaskSubmitted(id, parentId, teenId, objectKey != null));
     }
 
     void approve(UUID byParentId, Instant now) {
@@ -157,6 +157,10 @@ final class Task {
 
     List<Object> pullEvents() {
         return events.drain();
+    }
+
+    int currentAttempt() {
+        return state == TaskState.ASSIGNED ? proofs.size() + 1 : proofs.size();
     }
 
     List<Proof> unsavedProofs() {
