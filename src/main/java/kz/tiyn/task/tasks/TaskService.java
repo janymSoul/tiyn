@@ -104,12 +104,7 @@ class TaskService {
         requireKey(idempotencyKey);
         requireRole(caller, Role.TEEN);
         Task current = authorised(caller, id);
-        String objectKey;
-        try {
-            objectKey = storage.put(id.toString(), contentType, body);
-        } catch (InvalidMediaException e) {
-            throw new TaskException(TaskError.UNSUPPORTED_PROOF);
-        }
+        String objectKey = current.acceptsProofAt(clock.instant()) ? upload(id, contentType, body) : null;
         return submit(caller, current.id(), idempotencyKey, objectKey, null);
     }
 
@@ -122,8 +117,7 @@ class TaskService {
     }
 
     Task requestRedo(Principal caller, UUID id, String note, Instant newDeadlineAt) {
-        return decide(
-                caller, id, (t, now) -> t.requestRedo(caller.userId(), note, newDeadlineAt, milestoneDeadline(t), now));
+        return decide(caller, id, (t, now) -> t.requestRedo(caller.userId(), note, newDeadlineAt, boundsFor(t), now));
     }
 
     Task cancel(Principal caller, UUID id) {
@@ -185,17 +179,30 @@ class TaskService {
                 .toList();
     }
 
+    private String upload(UUID taskId, String contentType, InputStream body) {
+        try {
+            return storage.put(taskId.toString(), contentType, body);
+        } catch (InvalidMediaException e) {
+            throw new TaskException(TaskError.UNSUPPORTED_PROOF);
+        }
+    }
+
     private Task submit(Principal caller, UUID id, String idempotencyKey, String objectKey, String text) {
         requireRole(caller, Role.TEEN);
         return retry(() -> tx.execute(status -> {
             Task task = authorised(caller, id);
             if (!keys.claim(id + ":" + task.currentAttempt() + ":" + idempotencyKey)) {
-                return task;
+                return authorised(caller, id);
             }
             task.submit(caller.userId(), UUID.randomUUID(), objectKey, text, clock.instant());
             tasks.save(task);
             return task;
         }));
+    }
+
+    private DeadlineBounds boundsFor(Task task) {
+        Instant earliest = task.kind() == TaskKind.MILESTONE ? tasks.latestOpenChildDeadline(task.id()) : null;
+        return new DeadlineBounds(earliest, milestoneDeadline(task));
     }
 
     private Instant milestoneDeadline(Task task) {

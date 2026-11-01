@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 
 @IntegrationTest
@@ -65,11 +66,15 @@ class TaskConcurrencyTests {
         Family f = fx.linkedFamily();
         UUID id = fx.createTask(f, 100);
 
-        runConcurrently(() -> fx.send(
+        List<MockHttpServletResponse> responses = runConcurrently(() -> fx.send(
                         "/tasks/" + id + "/submit", "{\"text\":\"a\"}", f.teen().bearer(), "Idempotency-Key", "dup")
                 .andReturn()
-                .getResponse()
-                .getStatus());
+                .getResponse());
+
+        assertThat(responses).allSatisfy(r -> {
+            assertThat(r.getStatus()).isEqualTo(200);
+            assertThat(r.getContentAsString()).contains("\"state\":\"SUBMITTED\"");
+        });
 
         assertThat(jdbc.queryForObject("SELECT count(*) FROM task.task_proofs WHERE task_id = ?", Integer.class, id))
                 .isEqualTo(1);

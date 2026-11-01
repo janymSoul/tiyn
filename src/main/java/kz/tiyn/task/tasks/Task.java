@@ -145,7 +145,7 @@ final class Task {
         proofs.add(Proof.submitted(proofId, proofs.size() + 1, objectKey, textBody, now));
         state = TaskState.SUBMITTED;
         submittedAt = now;
-        events.record(new TaskSubmitted(id, parentId, teenId));
+        events.record(new TaskSubmitted(id, parentId, teenId, proofs.size()));
     }
 
     void approve(UUID byParentId, Instant now) {
@@ -167,12 +167,16 @@ final class Task {
         events.record(new TaskRejected(id, teenId, cleaned));
     }
 
-    void requestRedo(UUID byParentId, String note, Instant newDeadlineAt, Instant latestDeadlineAt, Instant now) {
+    void requestRedo(UUID byParentId, String note, Instant newDeadlineAt, DeadlineBounds bounds, Instant now) {
         requireState(TaskState.SUBMITTED);
         String cleaned = cleanNote(note);
-        extendDeadline(newDeadlineAt, latestDeadlineAt, now);
+        extendDeadline(newDeadlineAt, bounds, now);
         decide(TaskState.ASSIGNED, byParentId, cleaned, now);
-        events.record(new TaskRedoRequested(id, teenId, cleaned));
+        events.record(new TaskRedoRequested(id, teenId, cleaned, proofs.size()));
+    }
+
+    boolean acceptsProofAt(Instant now) {
+        return state == TaskState.ASSIGNED && now.isBefore(deadlineAt);
     }
 
     void expire(Instant now) {
@@ -206,15 +210,16 @@ final class Task {
         return proofs.subList(persistedProofs, proofs.size());
     }
 
-    private void extendDeadline(Instant newDeadlineAt, Instant latestDeadlineAt, Instant now) {
+    private void extendDeadline(Instant newDeadlineAt, DeadlineBounds bounds, Instant now) {
         if (newDeadlineAt == null) {
             if (!now.isBefore(deadlineAt)) {
                 throw new TaskException(TaskError.INVALID_DEADLINE);
             }
             return;
         }
-        boolean beyondMilestone = latestDeadlineAt != null && newDeadlineAt.isAfter(latestDeadlineAt);
-        if (!newDeadlineAt.isAfter(now) || beyondMilestone) {
+        boolean afterLatest = bounds.latest() != null && newDeadlineAt.isAfter(bounds.latest());
+        boolean beforeEarliest = bounds.earliest() != null && newDeadlineAt.isBefore(bounds.earliest());
+        if (!newDeadlineAt.isAfter(now) || afterLatest || beforeEarliest) {
             throw new TaskException(TaskError.INVALID_DEADLINE);
         }
         deadlineAt = newDeadlineAt;

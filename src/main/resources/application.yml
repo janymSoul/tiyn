@@ -9,8 +9,8 @@ spring:
       maximum-pool-size: ${DB_MAX_CONNS:20}
   servlet:
     multipart:
-      max-file-size: 5MB
-      max-request-size: 6MB
+      max-file-size: 8MB
+      max-request-size: 9MB
   jackson:
     deserialization:
       fail-on-unknown-properties: true
@@ -24,6 +24,8 @@ spring:
       republish-outstanding-events-on-restart: true
 
 tiyn:
+  media:
+    storage: ${MEDIA_STORAGE:memory}
   events:
     resubmit-after: ${EVENTS_RESUBMIT_AFTER:PT1M}
   task:
