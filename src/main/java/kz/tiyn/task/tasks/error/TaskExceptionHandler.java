@@ -31,7 +31,8 @@ class TaskExceptionHandler {
                     UNSUPPORTED_PROOF,
                     INVALID_IDEMPOTENCY_KEY,
                     TEEN_REQUIRED,
-                    INVALID_FILTER -> HttpStatus.UNPROCESSABLE_ENTITY;
+                    INVALID_FILTER,
+                    INVALID_SCHEDULE -> HttpStatus.UNPROCESSABLE_ENTITY;
         };
     }
 }

@@ -1,0 +1,193 @@
+package kz.tiyn.task.series;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+import kz.tiyn.support.IntegrationTest;
+import kz.tiyn.task.TaskFixtures;
+import kz.tiyn.task.TaskFixtures.Family;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MockMvc;
+
+@IntegrationTest
+@AutoConfigureMockMvc
+class SeriesFlowTests {
+
+    private static final ZoneId ALMATY = ZoneId.of("Asia/Almaty");
+
+    @Autowired
+    MockMvc mvc;
+
+    @Autowired
+    ObjectMapper json;
+
+    @Autowired
+    SeriesTicker ticker;
+
+    @Autowired
+    JdbcTemplate jdbc;
+
+    TaskFixtures fx;
+
+    @BeforeEach
+    void setUp() {
+        fx = new TaskFixtures(mvc, json);
+    }
+
+    private static LocalDate today() {
+        return LocalDate.now(ALMATY);
+    }
+
+    private static Instant at(LocalDate day, String time) {
+        return ZonedDateTime.of(day, LocalTime.parse(time), ALMATY).toInstant();
+    }
+
+    private String body(Family f, String recurrence, LocalDate startsOn) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("teenId", f.teen().id());
+        body.put("title", "Walk dog");
+        body.put("rewardAmount", 100);
+        body.put("currency", "KZT");
+        body.put("recurrence", recurrence);
+        body.put("dueTime", "23:59");
+        body.put("startsOn", startsOn == null ? null : startsOn.toString());
+        return json.writeValueAsString(body);
+    }
+
+    private UUID createSeries(Family f, String recurrence, LocalDate startsOn) throws Exception {
+        String response = fx.send(
+                        "/task-series",
+                        body(f, recurrence, startsOn),
+                        f.parent().bearer())
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return UUID.fromString(json.readTree(response).get("id").asText());
+    }
+
+    private int occurrences(UUID seriesId) {
+        return jdbc.queryForObject("SELECT count(*) FROM task.tasks WHERE series_id = ?", Integer.class, seriesId);
+    }
+
+    @Test
+    void creatingASeriesMaterialisesTodaysOccurrenceImmediately() throws Exception {
+        Family f = fx.linkedFamily();
+
+        UUID series = createSeries(f, "DAILY", null);
+
+        assertThat(occurrences(series)).isEqualTo(1);
+    }
+
+    @Test
+    void dailyTicksAreIdempotentAndNeverBackfillMissedDays() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID series = createSeries(f, "DAILY", null);
+
+        ticker.tick(at(today().plusDays(1), "10:00"));
+        ticker.tick(at(today().plusDays(1), "10:00"));
+        ticker.tick(at(today().plusDays(1), "11:00"));
+        assertThat(occurrences(series)).isEqualTo(2);
+
+        ticker.tick(at(today().plusDays(3), "10:00"));
+        assertThat(occurrences(series)).isEqualTo(3);
+        assertThat(jdbc.queryForObject(
+                        "SELECT count(*) FROM task.tasks WHERE series_id = ? AND occurrence_date = ?",
+                        Integer.class,
+                        series,
+                        today().plusDays(2)))
+                .isZero();
+    }
+
+    @Test
+    void weeklySeriesOnlyAddsAnOccurrenceOnItsWeekday() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID series = createSeries(f, "WEEKLY", null);
+
+        ticker.tick(at(today().plusDays(3), "10:00"));
+        assertThat(occurrences(series)).isEqualTo(1);
+
+        ticker.tick(at(today().plusDays(7), "10:00"));
+        assertThat(occurrences(series)).isEqualTo(2);
+    }
+
+    @Test
+    void aSeriesStartingInTheFutureHasNoOccurrenceUntilThen() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID series = createSeries(f, "DAILY", today().plusDays(2));
+
+        assertThat(occurrences(series)).isZero();
+        ticker.tick(at(today().plusDays(1), "10:00"));
+        assertThat(occurrences(series)).isZero();
+        ticker.tick(at(today().plusDays(2), "10:00"));
+        assertThat(occurrences(series)).isEqualTo(1);
+    }
+
+    @Test
+    void closingStopsFurtherOccurrencesAndIsIdempotent() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID series = createSeries(f, "DAILY", null);
+
+        mvc.perform(delete("/task-series/" + series)
+                        .header("Authorization", f.parent().bearer()))
+                .andExpect(status().isNoContent());
+        mvc.perform(delete("/task-series/" + series)
+                        .header("Authorization", f.parent().bearer()))
+                .andExpect(status().isNoContent());
+        ticker.tick(at(today().plusDays(1), "10:00"));
+
+        assertThat(occurrences(series)).isEqualTo(1);
+    }
+
+    @Test
+    void occurrencesAreOrdinaryTasksTheTeenCanSee() throws Exception {
+        Family f = fx.linkedFamily();
+        createSeries(f, "DAILY", null);
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/tasks")
+                        .header("Authorization", f.teen().bearer()))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].title").value("Walk dog"))
+                .andExpect(jsonPath("$[0].state").value("ASSIGNED"));
+    }
+
+    @Test
+    void authorisationAndValidation() throws Exception {
+        Family f = fx.linkedFamily();
+        Family other = fx.linkedFamily();
+        UUID series = createSeries(f, "DAILY", null);
+
+        fx.send("/task-series", body(f, "DAILY", null), f.teen().bearer()).andExpect(status().isForbidden());
+        fx.send("/task-series", body(f, "DAILY", null), other.parent().bearer()).andExpect(status().isForbidden());
+        mvc.perform(delete("/task-series/" + series)
+                        .header("Authorization", other.parent().bearer()))
+                .andExpect(status().isForbidden());
+        mvc.perform(delete("/task-series/" + UUID.randomUUID())
+                        .header("Authorization", f.parent().bearer()))
+                .andExpect(status().isNotFound());
+        fx.send("/task-series", body(f, "MONTHLY", null), f.parent().bearer())
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_schedule"));
+        fx.send(
+                        "/task-series",
+                        body(f, "DAILY", null).replace("\"rewardAmount\":100", "\"rewardAmount\":0"),
+                        f.parent().bearer())
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_reward"));
+    }
+}

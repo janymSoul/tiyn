@@ -25,22 +25,24 @@ class TaskStore {
         this.dsl = dsl;
     }
 
-    void insert(Task task) {
-        dsl.insertInto(TASKS)
-                .set(TASKS.ID, task.id())
-                .set(TASKS.SERIES_ID, task.seriesId())
-                .set(TASKS.OCCURRENCE_DATE, task.occurrenceDate())
-                .set(TASKS.MILESTONE_ID, task.milestoneId())
-                .set(TASKS.PARENT_ID, task.parentId())
-                .set(TASKS.TEEN_ID, task.teenId())
-                .set(TASKS.KIND, task.kind().name())
-                .set(TASKS.TITLE, task.title())
-                .set(TASKS.DESCRIPTION, task.description())
-                .set(TASKS.REWARD_AMOUNT, task.reward().amount())
-                .set(TASKS.CURRENCY, task.reward().currency())
-                .set(TASKS.STATE, task.state().name())
-                .set(TASKS.DEADLINE_AT, Instants.toUtc(task.deadlineAt()))
-                .execute();
+    boolean insert(Task task) {
+        return dsl.insertInto(TASKS)
+                        .set(TASKS.ID, task.id())
+                        .set(TASKS.SERIES_ID, task.seriesId())
+                        .set(TASKS.OCCURRENCE_DATE, task.occurrenceDate())
+                        .set(TASKS.MILESTONE_ID, task.milestoneId())
+                        .set(TASKS.PARENT_ID, task.parentId())
+                        .set(TASKS.TEEN_ID, task.teenId())
+                        .set(TASKS.KIND, task.kind().name())
+                        .set(TASKS.TITLE, task.title())
+                        .set(TASKS.DESCRIPTION, task.description())
+                        .set(TASKS.REWARD_AMOUNT, task.reward().amount())
+                        .set(TASKS.CURRENCY, task.reward().currency())
+                        .set(TASKS.STATE, task.state().name())
+                        .set(TASKS.DEADLINE_AT, Instants.toUtc(task.deadlineAt()))
+                        .onConflictDoNothing()
+                        .execute()
+                == 1;
     }
 
     Optional<Task> find(UUID id) {

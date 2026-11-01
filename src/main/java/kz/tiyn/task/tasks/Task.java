@@ -66,7 +66,12 @@ final class Task {
     }
 
     static Task assign(UUID id, NewTask draft, Instant now, long maxRewardAmount) {
-        return create(id, null, draft, now, maxRewardAmount);
+        return create(id, null, null, null, draft, now, maxRewardAmount);
+    }
+
+    static Task assignOccurrence(
+            UUID id, UUID seriesId, LocalDate occurrenceDate, NewTask draft, Instant now, long maxRewardAmount) {
+        return create(id, null, seriesId, occurrenceDate, draft, now, maxRewardAmount);
     }
 
     static Task assignInMilestone(UUID id, Task milestone, NewTask draft, Instant now, long maxRewardAmount) {
@@ -79,10 +84,17 @@ final class Task {
         if (!belongsToThisFamily || !acceptsTasks || draft.kind() == TaskKind.MILESTONE) {
             throw new TaskException(TaskError.INVALID_MILESTONE);
         }
-        return create(id, milestone.id, draft, now, maxRewardAmount);
+        return create(id, milestone.id, null, null, draft, now, maxRewardAmount);
     }
 
-    private static Task create(UUID id, UUID milestoneId, NewTask draft, Instant now, long maxRewardAmount) {
+    private static Task create(
+            UUID id,
+            UUID milestoneId,
+            UUID seriesId,
+            LocalDate occurrenceDate,
+            NewTask draft,
+            Instant now,
+            long maxRewardAmount) {
         String title = draft.title() == null ? "" : draft.title().trim();
         if (title.isEmpty() || title.length() > MAX_TITLE) {
             throw new TaskException(TaskError.INVALID_TITLE);
@@ -96,8 +108,8 @@ final class Task {
         TaskKind kind = draft.kind() == null ? TaskKind.TASK : draft.kind();
         var snapshot = new TaskSnapshot(
                 id,
-                null,
-                null,
+                seriesId,
+                occurrenceDate,
                 milestoneId,
                 draft.parentId(),
                 draft.teenId(),
