@@ -212,7 +212,11 @@ public interface BalanceReader {
 
 **Publishes:** `PayoutRequested(payoutId, teenId, parentId, amount, currency)` → notification. `PayoutFulfilled`, `PayoutCancelled`, `PenaltyApplied`.
 
-**Subscribes:** `TaskApproved` → credit the teen's wallet (idempotent on the event's key). `FamilyLinked` → create the teen's wallet.
+**Subscribes:** `TaskApproved` → credit the teen's wallet. The credit is idempotent: the journal entry key is `REWARD-TASK-{taskId}`, checked under the wallet's row lock (which serialises every credit for that teen) and backed by the `UNIQUE` key and a one-reward-per-task index.
+
+**The wallet is created lazily.** The first credit runs `INSERT ... ON CONFLICT DO NOTHING` and then locks the row, so concurrent first credits are safe. There is deliberately no `FamilyLinked` listener: events are delivered unordered, so a credit can arrive before any link handler, and the credit must be able to create the wallet itself. A teen without a wallet reads as a zero balance.
+
+**Built so far (step 6a):** the `Wallet` aggregate (final class, identity equality, pure), the append-only `LedgerEntry` (kind `TASK_REWARD` only), `RewardListener`, `BalanceReader`/`Balance`, and `GET /balance` (teen only; a parent gets `forbidden`; amounts in minor units). The ledger publishes no events yet; notification derives "reward credited" from `TaskApproved`. Payouts, penalties and goals are later steps.
 
 **Time-driven work** (`Ticker`): cancel `REQUESTED` payouts older than the expiry window.
 
