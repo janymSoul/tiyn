@@ -48,6 +48,11 @@ class PayoutController {
         return toResponse(service.get(caller, id));
     }
 
+    @PostMapping("/payouts/{id}/fulfil")
+    PayoutResponse fulfil(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
+        return toResponse(service.fulfil(caller, id));
+    }
+
     @PostMapping("/payouts/{id}/cancel")
     PayoutResponse cancel(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
         return toResponse(service.cancel(caller, id));

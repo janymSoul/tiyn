@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import kz.tiyn.ledger.PayoutCancelled;
+import kz.tiyn.ledger.PayoutFulfilled;
 import kz.tiyn.ledger.PayoutRequested;
 import kz.tiyn.ledger.wallet.error.LedgerError;
 import kz.tiyn.ledger.wallet.error.LedgerException;
@@ -95,6 +96,22 @@ final class Payout {
                 resolvedAt,
                 resolvedBy,
                 cancelReason);
+    }
+
+    void fulfil(UUID by, Instant now) {
+        if (!parentId.equals(by)) {
+            throw new LedgerException(LedgerError.FORBIDDEN);
+        }
+        if (state == PayoutState.FULFILLED) {
+            return;
+        }
+        if (state != PayoutState.REQUESTED) {
+            throw new LedgerException(LedgerError.INVALID_TRANSITION);
+        }
+        state = PayoutState.FULFILLED;
+        resolvedAt = now;
+        resolvedBy = by;
+        events.record(new PayoutFulfilled(id, teenId, parentId, amount, currency));
     }
 
     void cancelByTeen(UUID by, Instant now) {

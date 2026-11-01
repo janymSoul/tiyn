@@ -51,6 +51,30 @@ class WalletTests {
     }
 
     @Test
+    void aPayoutDebitLowersTheBalanceAndRecordsTheEntry() {
+        Wallet wallet = Wallet.restore(TEEN, "KZT", 1000, 0, 400);
+        UUID entryId = UUID.randomUUID();
+        UUID payoutId = UUID.randomUUID();
+
+        LedgerEntry entry = wallet.debitForPayout(entryId, payoutId, 400);
+
+        assertThat(wallet.balanceAmount()).isEqualTo(600);
+        assertThat(entry)
+                .isEqualTo(new LedgerEntry(
+                        entryId, TEEN, "KZT", EntryKind.PAYOUT, -400, 0, payoutId, "PAYOUT-" + payoutId));
+    }
+
+    @Test
+    void aPayoutCannotDebitLockedFundsOrMoreThanTheBalance() {
+        Wallet wallet = Wallet.restore(TEEN, "KZT", 1000, 700, 400);
+
+        assertError(
+                () -> wallet.debitForPayout(UUID.randomUUID(), UUID.randomUUID(), 301), LedgerError.INSUFFICIENT_FUNDS);
+        assertError(() -> wallet.debitForPayout(UUID.randomUUID(), UUID.randomUUID(), 0), LedgerError.INVALID_AMOUNT);
+        assertThat(wallet.balanceAmount()).isEqualTo(1000);
+    }
+
+    @Test
     void onlyTengeIsSupported() {
         assertThat(Wallet.requireSupported("KZT")).isEqualTo("KZT");
         assertError(() -> Wallet.requireSupported("USD"), LedgerError.UNSUPPORTED_CURRENCY);

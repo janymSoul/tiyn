@@ -20,6 +20,7 @@ class PayoutService {
 
     private final PayoutStore payouts;
     private final WalletStore wallets;
+    private final LedgerStore ledger;
     private final FamilyDirectory family;
     private final TransactionTemplate tx;
     private final LedgerProperties properties;
@@ -28,12 +29,14 @@ class PayoutService {
     PayoutService(
             PayoutStore payouts,
             WalletStore wallets,
+            LedgerStore ledger,
             FamilyDirectory family,
             TransactionTemplate tx,
             LedgerProperties properties,
             Clock clock) {
         this.payouts = payouts;
         this.wallets = wallets;
+        this.ledger = ledger;
         this.family = family;
         this.tx = tx;
         this.properties = properties;
@@ -85,6 +88,25 @@ class PayoutService {
         }
     }
 
+    Payout fulfil(Principal caller, UUID id) {
+        requireRole(caller, Role.PARENT);
+        Payout visible = get(caller, id);
+        requireStillLinked(caller, visible);
+        return tx.execute(status -> {
+            Wallet wallet =
+                    wallets.findForUpdate(visible.teenId(), visible.currency()).orElseThrow();
+            Payout payout = payouts.findForUpdate(id).orElseThrow(() -> new LedgerException(LedgerError.NOT_FOUND));
+            boolean wasOpen = payout.state() == PayoutState.REQUESTED;
+            payout.fulfil(caller.userId(), clock.instant());
+            if (wasOpen) {
+                ledger.append(wallet.debitForPayout(UUID.randomUUID(), payout.id(), payout.amount()));
+                wallets.save(wallet);
+                payouts.save(payout);
+            }
+            return payout;
+        });
+    }
+
     Payout cancel(Principal caller, UUID id) {
         requireRole(caller, Role.TEEN);
         return resolve(caller, id, (payout, now) -> payout.cancelByTeen(caller.userId(), now));
@@ -109,9 +131,7 @@ class PayoutService {
 
     private Payout resolve(Principal caller, UUID id, BiConsumer<Payout, java.time.Instant> action) {
         Payout visible = get(caller, id);
-        if (caller.role() == Role.PARENT && !family.areLinked(caller.userId(), visible.teenId())) {
-            throw new LedgerException(LedgerError.FORBIDDEN);
-        }
+        requireStillLinked(caller, visible);
         return tx.execute(status -> {
             wallets.findForUpdate(visible.teenId(), visible.currency()).orElseThrow();
             Payout payout = payouts.findForUpdate(id).orElseThrow(() -> new LedgerException(LedgerError.NOT_FOUND));
@@ -119,6 +139,12 @@ class PayoutService {
             payouts.save(payout);
             return payout;
         });
+    }
+
+    private void requireStillLinked(Principal caller, Payout payout) {
+        if (caller.role() == Role.PARENT && !family.areLinked(caller.userId(), payout.teenId())) {
+            throw new LedgerException(LedgerError.FORBIDDEN);
+        }
     }
 
     private static void requireParticipant(Principal caller, Payout payout) {

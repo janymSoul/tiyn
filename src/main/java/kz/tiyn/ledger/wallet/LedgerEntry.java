@@ -15,4 +15,8 @@ record LedgerEntry(
     static String rewardKey(UUID taskId) {
         return "REWARD-TASK-" + taskId;
     }
+
+    static String payoutKey(UUID payoutId) {
+        return "PAYOUT-" + payoutId;
+    }
 }

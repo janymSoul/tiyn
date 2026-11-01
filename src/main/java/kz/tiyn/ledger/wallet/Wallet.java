@@ -44,6 +44,18 @@ final class Wallet {
                 entryId, teenId, currency, EntryKind.TASK_REWARD, amount, 0, taskId, LedgerEntry.rewardKey(taskId));
     }
 
+    LedgerEntry debitForPayout(UUID entryId, UUID payoutId, long amount) {
+        if (amount <= 0) {
+            throw new LedgerException(LedgerError.INVALID_AMOUNT);
+        }
+        if (amount > balanceAmount - lockedAmount) {
+            throw new LedgerException(LedgerError.INSUFFICIENT_FUNDS);
+        }
+        balanceAmount -= amount;
+        return new LedgerEntry(
+                entryId, teenId, currency, EntryKind.PAYOUT, -amount, 0, payoutId, LedgerEntry.payoutKey(payoutId));
+    }
+
     void requireCanRequest(long amount) {
         if (amount > availableAmount()) {
             throw new LedgerException(LedgerError.INSUFFICIENT_FUNDS);

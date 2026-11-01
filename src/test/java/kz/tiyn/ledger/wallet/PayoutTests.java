@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.util.UUID;
 import kz.tiyn.ledger.PayoutCancelled;
+import kz.tiyn.ledger.PayoutFulfilled;
 import kz.tiyn.ledger.PayoutRequested;
 import kz.tiyn.ledger.wallet.error.LedgerError;
 import kz.tiyn.ledger.wallet.error.LedgerException;
@@ -42,6 +43,40 @@ class PayoutTests {
         assertError(() -> requested(-1), LedgerError.INVALID_AMOUNT);
         assertError(() -> requested(9_999), LedgerError.AMOUNT_TOO_SMALL);
         assertThat(requested(10_000).amount()).isEqualTo(10_000);
+    }
+
+    @Test
+    void theAddressedParentFulfilsAndRepeatingIsANoOp() {
+        Payout payout = requested(20_000);
+        payout.pullEvents();
+        Instant later = NOW.plusSeconds(60);
+
+        payout.fulfil(PARENT, later);
+        payout.fulfil(PARENT, later.plusSeconds(60));
+
+        assertThat(payout.state()).isEqualTo(PayoutState.FULFILLED);
+        assertThat(payout.resolvedAt()).isEqualTo(later);
+        assertThat(payout.resolvedBy()).isEqualTo(PARENT);
+        assertThat(payout.pullEvents()).containsExactly(new PayoutFulfilled(payout.id(), TEEN, PARENT, 20_000, "KZT"));
+    }
+
+    @Test
+    void onlyTheAddressedParentFulfilsAndNeverAfterACancellation() {
+        Payout payout = requested(20_000);
+
+        assertError(() -> payout.fulfil(UUID.randomUUID(), NOW), LedgerError.FORBIDDEN);
+        assertError(() -> payout.fulfil(TEEN, NOW), LedgerError.FORBIDDEN);
+        payout.cancelByTeen(TEEN, NOW);
+        assertError(() -> payout.fulfil(PARENT, NOW), LedgerError.INVALID_TRANSITION);
+    }
+
+    @Test
+    void aFulfilledPayoutCannotBeCancelled() {
+        Payout payout = requested(20_000);
+        payout.fulfil(PARENT, NOW);
+
+        assertError(() -> payout.cancelByTeen(TEEN, NOW), LedgerError.INVALID_TRANSITION);
+        assertError(() -> payout.decline(PARENT, NOW), LedgerError.INVALID_TRANSITION);
     }
 
     @Test

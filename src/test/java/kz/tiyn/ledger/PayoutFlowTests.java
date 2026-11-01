@@ -164,6 +164,50 @@ class PayoutFlowTests {
     }
 
     @Test
+    void fulfilingDebitsTheWalletOnceAndRecordsThePayoutEntry() throws Exception {
+        Family f = richFamily(500_00);
+        UUID id = idOf(requestPayout(f, f.parent().id(), 300_00, "f1"));
+
+        fx.send("/payouts/" + id + "/fulfil", "", f.parent().bearer())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("FULFILLED"));
+        fx.send("/payouts/" + id + "/fulfil", "", f.parent().bearer()).andExpect(status().isOk());
+
+        Balance balance = balances.balance(f.teen().id());
+        assertThat(balance.approvedAmount()).isEqualTo(200_00);
+        assertThat(balance.availableAmount()).isEqualTo(200_00);
+        assertThat(jdbc.queryForList(
+                        "SELECT balance_delta FROM ledger.ledger_entries WHERE kind = 'PAYOUT' AND ref_id = ?",
+                        Long.class,
+                        id))
+                .containsExactly(-300_00L);
+        requestPayout(f, f.parent().id(), 100_00, "f2").andExpect(status().isCreated());
+    }
+
+    @Test
+    void aCancelledRequestCannotBeFulfilled() throws Exception {
+        Family f = richFamily(500_00);
+        UUID id = idOf(requestPayout(f, f.parent().id(), 300_00, "g1"));
+        fx.send("/payouts/" + id + "/cancel", "", f.teen().bearer()).andExpect(status().isOk());
+
+        fx.send("/payouts/" + id + "/fulfil", "", f.parent().bearer())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("invalid_transition"));
+        assertThat(balances.balance(f.teen().id()).approvedAmount()).isEqualTo(500_00);
+    }
+
+    @Test
+    void onlyTheAddressedLinkedParentFulfils() throws Exception {
+        Family f = richFamily(500_00);
+        Family other = fx.linkedFamily();
+        UUID id = idOf(requestPayout(f, f.parent().id(), 300_00, "h1"));
+
+        fx.send("/payouts/" + id + "/fulfil", "", other.parent().bearer()).andExpect(status().isNotFound());
+        fx.send("/payouts/" + id + "/fulfil", "", f.teen().bearer()).andExpect(status().isForbidden());
+        assertThat(balances.balance(f.teen().id()).approvedAmount()).isEqualTo(500_00);
+    }
+
+    @Test
     void theTeenCancelsAndTheBalanceIsFreedAgain() throws Exception {
         Family f = richFamily(500_00);
         UUID id = idOf(requestPayout(f, f.parent().id(), 300_00, "c1"));
