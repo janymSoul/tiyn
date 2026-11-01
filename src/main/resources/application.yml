@@ -24,8 +24,6 @@ spring:
       republish-outstanding-events-on-restart: true
 
 tiyn:
-  media:
-    storage: ${MEDIA_STORAGE:memory}
   events:
     resubmit-after: ${EVENTS_RESUBMIT_AFTER:PT1M}
   task:
