@@ -102,7 +102,7 @@ Generated jOOQ code lives in `target/` and is not committed.
 
 ## Naming
 
-- Packages: short, lowercase, named for what they provide. Module packages are the bounded-context names (`ledger`, not `ledgerservice`). Sub-packages are features named for the business capability (`account`, `family`, `payout`), plus an ACL package named for the external system (`google`). Do not name sub-packages after layers.
+- Packages: short, lowercase, named for what they provide. Module packages are the bounded-context names (`ledger`, not `ledgerservice`). Sub-packages are features named for the business capability (`account`, `family`, `payout`), plus an ACL package named for the external system (`google`). Inside a feature, `dto/` (request and response records) and `error/` (error type, exception, HTTP mapping) are the only folders, because those classes are public anyway. Keep the service, store, aggregate and controller together in the feature package so they can stay package-private. Do not name feature packages after layers.
 - Classes: `<Feature>Service`, `<Feature>Controller`, `<Aggregate>Store` (`UserStore`, `LinkStore`), `<Feature>Directory` for a public cross-feature interface, `…Request`/`…Response` records beside the controller. Avoid stutter: `ledger.payout.PayoutService` is fine, `ledger.payout.PayoutPayoutService` is not.
 - Tests: `<Class>Tests` (plural), methods that read as sentences (`onlyTeensCanJoinAndOnlyParentsCanUnlink`).
 - Events: `<Noun><PastTenseVerb>` — `TaskApproved`, `PayoutRequested`. Past tense: events are facts that already happened.

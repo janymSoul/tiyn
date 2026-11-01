@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.security.SecureRandom;
 import java.util.UUID;
+import kz.tiyn.identity.account.error.IdentityError;
+import kz.tiyn.identity.account.error.IdentityException;
 import kz.tiyn.platform.security.Role;
 import org.junit.jupiter.api.Test;
 

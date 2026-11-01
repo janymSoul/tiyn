@@ -8,9 +8,9 @@ import java.util.List;
 import java.util.UUID;
 import kz.tiyn.identity.FamilyLinked;
 import kz.tiyn.identity.FamilyUnlinked;
-import kz.tiyn.identity.account.IdentityError;
-import kz.tiyn.identity.account.IdentityException;
 import kz.tiyn.identity.account.User;
+import kz.tiyn.identity.account.error.IdentityError;
+import kz.tiyn.identity.account.error.IdentityException;
 import kz.tiyn.platform.security.Role;
 import org.junit.jupiter.api.Test;
 

@@ -1,6 +1,8 @@
 package kz.tiyn.identity.account;
 
 import java.util.UUID;
+import kz.tiyn.identity.account.error.IdentityError;
+import kz.tiyn.identity.account.error.IdentityException;
 import kz.tiyn.platform.security.Role;
 
 public record User(UUID id, String idpSub, Role role, String joinCode, String displayName) {

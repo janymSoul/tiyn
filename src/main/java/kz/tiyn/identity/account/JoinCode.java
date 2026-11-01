@@ -2,6 +2,8 @@ package kz.tiyn.identity.account;
 
 import java.security.SecureRandom;
 import java.util.Locale;
+import kz.tiyn.identity.account.error.IdentityError;
+import kz.tiyn.identity.account.error.IdentityException;
 
 record JoinCode(String value) {
 

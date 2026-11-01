@@ -44,21 +44,22 @@ A module is a package under `kz.tiyn`. Its **root package is the public contract
 
 Inside a module, sub-packages are **features, not layers**. Each feature package holds its own aggregate, store, service, controller and request/response records, and **those classes are package-private**, so the compiler (not convention) stops one feature's web code from calling another feature's store. Only a small `public` interface crosses between features.
 
+**Folders inside a feature** group only classes that need no package-private access to the logic classes: `dto/` for request and response records, `error/` for the feature's error type and its HTTP mapping. Do not move the service, store, aggregate or controller into folders, because each of those calls the others and would have to become `public`.
+
 ```
 kz.tiyn.identity/
   FamilyDirectory.java       # public API for other modules
   FamilyLinked.java          # public event
   FamilyUnlinked.java        # public event
   account/                   # feature: users, sign-in, join codes
-    User, JoinCode           #   aggregate and value object (User is public: family needs it)
-    UserStore                #   jOOQ repository (package-private)
-    AccountService           #   transactions, orchestration (package-private)
-    AccountController, …Request/…Response records (package-private)
+    AccountService, UserStore, User, JoinCode, AccountController, AccountConfig
+                             #   logic classes stay together, package-private (User is public)
     AccountDirectory         #   public interface: what other features may ask of account
-    IdentityError, IdentityException, IdentityExceptionHandler
+    dto/                     #   public request/response records (SignInRequest, UserResponse, …)
+    error/                   #   IdentityError, IdentityException, IdentityExceptionHandler
   family/                    # feature: parent-teen links
-    FamilyLink               #   aggregate: lifecycle and events (package-private)
-    LinkStore, FamilyService, FamilyController, FamilyDirectoryImpl
+    FamilyLink, LinkStore, FamilyService, FamilyController, FamilyDirectoryImpl
+    dto/                     #   JoinRequest, JoinResponse
   google/                    # anti-corruption layer for an external system
     GoogleVerifier           #   public interface; JwksGoogleVerifier is package-private
 ```

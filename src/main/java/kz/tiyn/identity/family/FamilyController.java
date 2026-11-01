@@ -1,8 +1,10 @@
 package kz.tiyn.identity.family;
 
 import java.util.UUID;
-import kz.tiyn.identity.account.IdentityError;
-import kz.tiyn.identity.account.IdentityException;
+import kz.tiyn.identity.account.error.IdentityError;
+import kz.tiyn.identity.account.error.IdentityException;
+import kz.tiyn.identity.family.dto.JoinRequest;
+import kz.tiyn.identity.family.dto.JoinResponse;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;

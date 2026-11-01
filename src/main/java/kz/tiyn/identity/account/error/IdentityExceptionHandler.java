@@ -1,4 +1,4 @@
-package kz.tiyn.identity.account;
+package kz.tiyn.identity.account.error;
 
 import kz.tiyn.platform.web.ErrorBody;
 import org.springframework.http.HttpStatus;
