@@ -42,7 +42,7 @@ spec:
           command:
             - sh
             - -c
-            - until pg_isready -h {{ include "tiyn.name" . }}-postgres -p 5432; do sleep 2; done
+            - until pg_isready -h {{ include "tiyn.name" . }}-postgres -p 5432 -U {{ .Values.postgres.user }}; do sleep 2; done
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
