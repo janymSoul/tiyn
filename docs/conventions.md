@@ -8,14 +8,14 @@ The house style. Idiomatic Java for surface syntax; the design principles below 
 
 > The best modules are those whose interface is much simpler than their implementation.
 
-- A module's **service** (`app/`) is the narrow interface for its own controllers. Behind it sit the FSM, the transaction orchestration, the locking, the event emission — substantial depth hidden behind a few methods. That is a *deep* module.
+- A feature's **service** is the narrow interface for its own controller. Behind it sit the FSM, the transaction orchestration, the locking, the event emission — substantial depth hidden behind a few methods. That is a *deep* module.
 - The interface another module sees is narrower still and lives in the module's root package: `media.Storage` has two methods; `ledger.BalanceReader` has one. Callers see the minimum.
 - **Red flag:** a module whose interface has roughly as many methods as its implementation has classes is *shallow* — it adds a layer without hiding complexity. If you are writing a method that just forwards to one store call, question whether the method should exist.
 
 ### Information hiding
 
 - Default to package-private. A type, field, or method is `public` only if another package genuinely needs it. The module's root package is the only one other modules may use; Modulith enforces that, and package-private visibility is the fine-grained boundary inside a module.
-- A module's `domain`, `store`, `app` and `web` packages export nothing to *other modules*. Only the root package's interfaces and event records are the module's public contract.
+- Only a module's root package is visible to other modules: its interfaces and event records are the public contract, and every feature sub-package is internal. Inside a module, a class is `public` only when another feature package needs it; services, stores, controllers and request/response records are package-private.
 - Do not leak implementation types across the interface. `BalanceReader.balance` returns a `Balance` value object, not a jOOQ `WalletsRecord`. The persistence shape is hidden.
 
 ### Pull complexity downward
@@ -46,8 +46,8 @@ The house style. Idiomatic Java for surface syntax; the design principles below 
 
 DDD gives us a shared language and the consistency boundaries; it is not a reason to add layers. The vocabulary and the aggregate map are in `docs/modules.md`; these are the coding rules.
 
-- **Ubiquitous language.** Names in `domain`, SQL, API paths and events come from the glossary in `docs/modules.md`. If the code and the business use different words for one thing, rename the code. Prefer the business's verb (`approve`, `requestPayout`, `fulfilPayout`) over generic ones (`update`, `process`, `setState`).
-- **Aggregates are in `domain`, pure.** An aggregate root enforces its own invariants through methods that express a business operation (`task.approve(parentId, now)`), not setters. State changes only through those methods, so an invalid state cannot be constructed. No public mutable fields where an invariant exists. `FamilyLink` is the reference: private fields, `create`, `restore`, `relink`, `remove`.
+- **Ubiquitous language.** Names in aggregates, SQL, API paths and events come from the glossary in `docs/modules.md`. If the code and the business use different words for one thing, rename the code. Prefer the business's verb (`approve`, `requestPayout`, `fulfilPayout`) over generic ones (`update`, `process`, `setState`).
+- **Aggregates are pure.** They import no jOOQ, Spring or web types. An aggregate root enforces its own invariants through methods that express a business operation (`task.approve(parentId, now)`), not setters. State changes only through those methods, so an invalid state cannot be constructed. No public mutable fields where an invariant exists. `FamilyLink` is the reference: private fields, `between`, `restore`, `link`, `unlink`, `pullEvents`.
 - **Construct valid, stay valid.** Static factories (`User.register`, `FamilyLink.create`) validate and throw a domain exception; there is no half-built object. Rehydrating from the database goes through a separate `restore`/constructor that trusts stored data.
 - **Value objects** are records, immutable and validated at creation: `Money` (amount in minor units plus currency, with arithmetic that refuses to mix currencies), `JoinCode`, state enums. Compare by value.
 - **One aggregate per transaction.** A service loads one aggregate through its store, calls a domain method, saves it, and publishes the events in the same transaction. Other aggregates are referenced by ID only, and never navigated. Documented exceptions (`docs/modules.md`) stay inside one context.
@@ -56,7 +56,7 @@ DDD gives us a shared language and the consistency boundaries; it is not a reaso
 - **Invariants that span two aggregates go in a factory** that takes both (`FamilyLink.between(User parent, User teen)` enforces parent/teen roles) and then keeps only IDs. Authorization (who may call) stays in the service.
 - **Stores are repositories, one per aggregate root.** They load and save whole aggregates and hide SQL; no query returns a partial aggregate for the domain to modify. Reads for screens (dashboards, lists) may be separate query methods that return plain read models, since they change nothing.
 - **Domain services** only for logic that spans several aggregates of one context and belongs to none of them. If it fits an aggregate, put it there.
-- **Anti-corruption layer.** External systems (Google, FCM, S3, bank apps) are wrapped behind an interface owned by the module that needs them, translating to and from domain types. Their DTOs never reach `domain`. `identity.google.GoogleVerifier` is the reference.
+- **Anti-corruption layer.** External systems (Google, FCM, S3, bank apps) are wrapped behind an interface in their own package, with its own exceptions, and the calling feature translates them to domain errors. Their DTOs never reach an aggregate. `identity.google.GoogleVerifier` is the reference: `account` maps `InvalidGoogleTokenException` and `GoogleUnavailableException` to `IdentityError`s, so `google` never depends on `account`.
 - **Be pragmatic.** Use the tactical patterns where there are rules to protect: task, wallet, payout, join code. Plain data handling is fine where there are none, such as device tokens or the delivered log. Do not add a layer, interface or pattern whose only purpose is to look like DDD.
 
 ## Java idioms (non-negotiable)
@@ -84,9 +84,10 @@ tiyn/
     platform/                   # shared kernel, open module; owns no business data
       security/                 #   JWT verification and issuing, Principal, Role
       web/                      #   ApiException, ErrorBody, GlobalExceptionHandler
+      tx/                       #   ConflictException, ConflictRetry (whole-transaction retry)
       tick/                     #   Ticker, TickScheduler, ShedLock configuration
     identity/ task/ ledger/ media/ notification/
-                                # each: root-package API + events, domain/, app/, store/, web/
+                                # each: root-package API + events, plus one sub-package per feature
   src/main/resources/
     application.yml
     db/migration/               # V1__platform … Vn; one Postgres schema per module
@@ -101,8 +102,8 @@ Generated jOOQ code lives in `target/` and is not committed.
 
 ## Naming
 
-- Packages: short, lowercase, named for what they provide. Module packages are the bounded-context names (`ledger`, not `ledgerservice`). Sub-packages are `domain`, `app`, `store`, `web`, plus an ACL package named for the external system (`google`).
-- Classes: `IdentityService` (in `app`), `UserStore`/`LinkStore` (in `store`), `IdentityController`, `IdentityExceptionHandler` (in `web`), `…Request`/`…Response` records in `web`. Avoid stutter: `ledger.app.LedgerService` is fine, `ledger.LedgerLedgerService` is not.
+- Packages: short, lowercase, named for what they provide. Module packages are the bounded-context names (`ledger`, not `ledgerservice`). Sub-packages are features named for the business capability (`account`, `family`, `payout`), plus an ACL package named for the external system (`google`). Do not name sub-packages after layers.
+- Classes: `<Feature>Service`, `<Feature>Controller`, `<Aggregate>Store` (`UserStore`, `LinkStore`), `<Feature>Directory` for a public cross-feature interface, `…Request`/`…Response` records beside the controller. Avoid stutter: `ledger.payout.PayoutService` is fine, `ledger.payout.PayoutPayoutService` is not.
 - Tests: `<Class>Tests` (plural), methods that read as sentences (`onlyTeensCanJoinAndOnlyParentsCanUnlink`).
 - Events: `<Noun><PastTenseVerb>` — `TaskApproved`, `PayoutRequested`. Past tense: events are facts that already happened.
 - Commands (service method inputs): `<Verb><Noun>` records — `ApproveTask`.

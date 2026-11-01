@@ -1,38 +1,24 @@
-package kz.tiyn.identity.web;
+package kz.tiyn.identity.family;
 
 import java.util.UUID;
-import kz.tiyn.identity.app.IdentityService;
-import kz.tiyn.identity.app.SignInResult;
-import kz.tiyn.identity.domain.IdentityError;
-import kz.tiyn.identity.domain.IdentityException;
+import kz.tiyn.identity.account.IdentityError;
+import kz.tiyn.identity.account.IdentityException;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-class IdentityController {
+class FamilyController {
 
-    private final IdentityService service;
+    private final FamilyService service;
 
-    IdentityController(IdentityService service) {
+    FamilyController(FamilyService service) {
         this.service = service;
-    }
-
-    @PostMapping("/auth/google")
-    SignInResponse signIn(@RequestBody SignInRequest request) {
-        SignInResult result = service.signIn(request.idToken(), request.role(), request.displayName());
-        return new SignInResponse(result.token(), UserResponse.from(result.user()));
-    }
-
-    @GetMapping("/me")
-    UserResponse me(@AuthenticationPrincipal Principal principal) {
-        return UserResponse.from(service.me(principal.userId()));
     }
 
     @PostMapping("/links/join")

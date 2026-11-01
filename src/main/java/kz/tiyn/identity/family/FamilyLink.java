@@ -1,4 +1,4 @@
-package kz.tiyn.identity.domain;
+package kz.tiyn.identity.family;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -6,9 +6,12 @@ import java.util.List;
 import java.util.UUID;
 import kz.tiyn.identity.FamilyLinked;
 import kz.tiyn.identity.FamilyUnlinked;
+import kz.tiyn.identity.account.IdentityError;
+import kz.tiyn.identity.account.IdentityException;
+import kz.tiyn.identity.account.User;
 import kz.tiyn.platform.security.Role;
 
-public final class FamilyLink {
+final class FamilyLink {
 
     private final UUID parentId;
     private final UUID teenId;
@@ -23,18 +26,18 @@ public final class FamilyLink {
         this.removedAt = removedAt;
     }
 
-    public static FamilyLink between(User parent, User teen) {
+    static FamilyLink between(User parent, User teen) {
         if (parent.role() != Role.PARENT || teen.role() != Role.TEEN) {
             throw new IdentityException(IdentityError.FORBIDDEN);
         }
         return new FamilyLink(parent.id(), teen.id(), 0, null);
     }
 
-    public static FamilyLink restore(UUID parentId, UUID teenId, int generation, Instant removedAt) {
+    static FamilyLink restore(UUID parentId, UUID teenId, int generation, Instant removedAt) {
         return new FamilyLink(parentId, teenId, generation, removedAt);
     }
 
-    public void link() {
+    void link() {
         if (isActive()) {
             return;
         }
@@ -43,7 +46,7 @@ public final class FamilyLink {
         events.add(new FamilyLinked(parentId, teenId, generation));
     }
 
-    public void unlink(Instant now) {
+    void unlink(Instant now) {
         if (!isActive()) {
             return;
         }
@@ -51,29 +54,29 @@ public final class FamilyLink {
         events.add(new FamilyUnlinked(parentId, teenId, generation));
     }
 
-    public List<Object> pullEvents() {
+    List<Object> pullEvents() {
         List<Object> raised = List.copyOf(events);
         events.clear();
         return raised;
     }
 
-    public boolean isActive() {
+    boolean isActive() {
         return generation > 0 && removedAt == null;
     }
 
-    public UUID parentId() {
+    UUID parentId() {
         return parentId;
     }
 
-    public UUID teenId() {
+    UUID teenId() {
         return teenId;
     }
 
-    public int generation() {
+    int generation() {
         return generation;
     }
 
-    public Instant removedAt() {
+    Instant removedAt() {
         return removedAt;
     }
 }

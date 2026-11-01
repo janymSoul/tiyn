@@ -1,13 +1,12 @@
-package kz.tiyn.identity.web;
+package kz.tiyn.identity.account;
 
-import kz.tiyn.identity.domain.IdentityException;
 import kz.tiyn.platform.web.ErrorBody;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-@RestControllerAdvice(basePackageClasses = IdentityController.class)
+@RestControllerAdvice(basePackages = "kz.tiyn.identity")
 class IdentityExceptionHandler {
 
     @ExceptionHandler(IdentityException.class)

@@ -4,7 +4,7 @@ The system is five bounded contexts. Each is a deep module: a small interface ov
 
 ## The two — and only two — ways modules interact
 
-1. **Synchronous:** Module A depends on an **interface** that Module B exports (e.g. `media.Storage`). A receives the implementation by constructor injection. A uses *only* what B publishes in its root package (interfaces, DTOs, event records) — never B's `domain`, `store`, `app` or `web` sub-packages. Spring Modulith treats a module's root package as its API and every sub-package as internal; `ApplicationModules.verify()` fails the build on a violation.
+1. **Synchronous:** Module A depends on an **interface** that Module B exports (e.g. `media.Storage`). A receives the implementation by constructor injection. A uses *only* what B publishes in its root package (interfaces, DTOs, event records) — never B's feature sub-packages. Spring Modulith treats a module's root package as its API and every sub-package as internal; `ApplicationModules.verify()` fails the build on a violation.
 2. **Asynchronous:** Module A publishes a domain event; Module B subscribes. A and B do not know about each other at all. This is the default for anything that is a *reaction* ("when a task is approved, credit the ledger and notify").
 
 Prefer async for reactions and side effects; use sync only when the caller genuinely needs a result back *now* (e.g. "store this proof image and give me its object key").
@@ -25,7 +25,7 @@ We apply Domain-Driven Design pragmatically: strategic DDD everywhere (bounded c
 **Bounded contexts and the context map.** Each module below is a bounded context with its own model; the same word can mean different things in different contexts (a "user" in identity is an account, in notification it is just a recipient with device tokens). Contexts relate in two ways:
 - **Published language:** the events in `docs/events-outbox.md` are the shared language between contexts. Task is upstream of ledger and notification; ledger is upstream of notification; identity is upstream of ledger and notification. Downstream contexts translate events into their own model and never depend on the upstream's internals.
 - **Customer/supplier:** the few synchronous interfaces (`FamilyDirectory`, `BalanceReader`, `PendingReader`, `media.Storage`) are narrow contracts owned by the supplier.
-- **Anti-corruption layer:** external systems (Google ID tokens, FCM, S3, bank apps) sit behind an interface in the module that uses them. Their types and vocabulary never enter `domain/`.
+- **Anti-corruption layer:** external systems (Google ID tokens, FCM, S3, bank apps) sit behind an interface in the module that uses them. Their types and vocabulary never enter an aggregate.
 
 **Aggregates.** An aggregate is a cluster of objects that must be consistent together. Only its root is loaded and saved; other aggregates are referenced by ID.
 

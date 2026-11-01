@@ -1,3 +1,3 @@
-package kz.tiyn.identity.web;
+package kz.tiyn.identity.family;
 
 record JoinRequest(String code) {}

@@ -1,18 +1,18 @@
-package kz.tiyn.identity.store;
+package kz.tiyn.identity.account;
 
 import static kz.tiyn.platform.jooq.identity.Tables.USERS;
 
 import java.util.Optional;
 import java.util.UUID;
-import kz.tiyn.identity.domain.User;
 import kz.tiyn.platform.jooq.identity.tables.records.UsersRecord;
 import kz.tiyn.platform.security.Role;
+import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.DSLContext;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public class UserStore {
+class UserStore {
 
     private final DSLContext dsl;
 
@@ -20,25 +20,25 @@ public class UserStore {
         this.dsl = dsl;
     }
 
-    public Optional<User> findById(UUID id) {
+    Optional<User> findById(UUID id) {
         return dsl.selectFrom(USERS).where(USERS.ID.eq(id)).fetchOptional().map(UserStore::toUser);
     }
 
-    public Optional<User> findByIdpSub(String idpSub) {
+    Optional<User> findByIdpSub(String idpSub) {
         return dsl.selectFrom(USERS)
                 .where(USERS.IDP_SUB.eq(idpSub))
                 .fetchOptional()
                 .map(UserStore::toUser);
     }
 
-    public Optional<User> findByJoinCode(String joinCode) {
+    Optional<User> findByJoinCode(String joinCode) {
         return dsl.selectFrom(USERS)
                 .where(USERS.JOIN_CODE.eq(joinCode))
                 .fetchOptional()
                 .map(UserStore::toUser);
     }
 
-    public void insert(User user) {
+    void insert(User user) {
         try {
             dsl.insertInto(USERS)
                     .set(USERS.ID, user.id())

@@ -1,4 +1,4 @@
-package kz.tiyn.identity.web;
+package kz.tiyn.identity.family;
 
 record JoinResponse(Parent parent) {
 

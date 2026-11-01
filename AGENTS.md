@@ -6,7 +6,7 @@ The backend is Java 21, Spring Boot 3.5 and Spring Modulith, with jOOQ over Post
 
 ## Prime directives
 
-1. **Respect module boundaries.** Code lives under `kz.tiyn.<module>`. Only a module's **root package** is visible to other modules: its interfaces and event records. Never use another module's `domain`, `store`, `app` or `web` packages. Never read or write another module's tables. `ModularityTests` fails the build on both. See `docs/modules.md`.
+1. **Respect module boundaries.** Code lives under `kz.tiyn.<module>`. Only a module's **root package** is visible to other modules: its interfaces and event records. Never use another module's feature sub-packages (`account`, `family`, …). Inside a module, sub-packages are features and their classes are package-private; do not split by layer. Never read or write another module's tables. `ModularityTests` fails the build on both. See `docs/modules.md`.
 
 2. **Transactions are explicit and owned by the service layer.** A service method opens exactly one transaction (`@Transactional`, or a `TransactionTemplate` when it retries). Domain code and stores never open their own. A state transition and its published events commit or roll back as one unit. See `docs/transactions.md`.
 
@@ -18,7 +18,7 @@ The backend is Java 21, Spring Boot 3.5 and Spring Modulith, with jOOQ over Post
 
 6. **No comments.** Code and SQL must be self-explanatory; rename or extract instead of commenting. The only exception is a short note for a non-intuitive business rule. See `docs/conventions.md`.
 
-7. **Model the domain with DDD, pragmatically.** A module is a bounded context with its own language. Business rules live in aggregates in `domain`; an aggregate is the consistency boundary and normally one transaction changes one aggregate. Name things in the ubiquitous language (see the glossary in `docs/modules.md`). Use the tactical patterns where there are real invariants (task, wallet, payout) and plain code where there are none.
+7. **Model the domain with DDD, pragmatically.** A module is a bounded context with its own language. Business rules live in the aggregates (pure classes inside their feature package); an aggregate is the consistency boundary and normally one transaction changes one aggregate. Name things in the ubiquitous language (see the glossary in `docs/modules.md`). Use the tactical patterns where there are real invariants (task, wallet, payout) and plain code where there are none.
 
 8. **Design deep modules with narrow interfaces.** A module should expose a small interface that hides a lot of implementation. Push complexity down, not onto callers. Avoid shallow pass-through layers. See `docs/conventions.md`.
 

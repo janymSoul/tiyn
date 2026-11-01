@@ -1,4 +1,4 @@
-package kz.tiyn.identity.store;
+package kz.tiyn.identity.family;
 
 import static kz.tiyn.platform.jooq.identity.Tables.FAMILY_LINKS;
 
@@ -7,14 +7,14 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
-import kz.tiyn.identity.domain.FamilyLink;
 import kz.tiyn.platform.jooq.identity.tables.records.FamilyLinksRecord;
+import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.DSLContext;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public class LinkStore {
+class LinkStore {
 
     private final DSLContext dsl;
 
@@ -22,7 +22,7 @@ public class LinkStore {
         this.dsl = dsl;
     }
 
-    public Optional<FamilyLink> findForUpdate(UUID parentId, UUID teenId) {
+    Optional<FamilyLink> findForUpdate(UUID parentId, UUID teenId) {
         return dsl.selectFrom(FAMILY_LINKS)
                 .where(FAMILY_LINKS.PARENT_ID.eq(parentId).and(FAMILY_LINKS.TEEN_ID.eq(teenId)))
                 .forUpdate()
@@ -30,7 +30,7 @@ public class LinkStore {
                 .map(LinkStore::toLink);
     }
 
-    public boolean existsActive(UUID parentId, UUID teenId) {
+    boolean existsActive(UUID parentId, UUID teenId) {
         return dsl.fetchExists(dsl.selectOne()
                 .from(FAMILY_LINKS)
                 .where(FAMILY_LINKS.PARENT_ID.eq(parentId))
@@ -38,7 +38,7 @@ public class LinkStore {
                 .and(FAMILY_LINKS.REMOVED_AT.isNull()));
     }
 
-    public void save(FamilyLink link) {
+    void save(FamilyLink link) {
         if (update(link) == 0) {
             insert(link);
         }

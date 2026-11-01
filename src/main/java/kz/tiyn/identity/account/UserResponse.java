@@ -1,8 +1,7 @@
-package kz.tiyn.identity.web;
+package kz.tiyn.identity.account;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.UUID;
-import kz.tiyn.identity.domain.User;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 record UserResponse(UUID id, String role, String displayName, String joinCode) {

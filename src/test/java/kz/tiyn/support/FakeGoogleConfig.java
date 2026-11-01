@@ -1,9 +1,8 @@
 package kz.tiyn.support;
 
-import kz.tiyn.identity.domain.IdentityError;
-import kz.tiyn.identity.domain.IdentityException;
 import kz.tiyn.identity.google.GoogleIdentity;
 import kz.tiyn.identity.google.GoogleVerifier;
+import kz.tiyn.identity.google.InvalidGoogleTokenException;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
@@ -21,7 +20,7 @@ public class FakeGoogleConfig {
         return idToken -> {
             String[] parts = idToken.split("\\|", -1);
             if (parts.length != 3 || !parts[0].equals("fake")) {
-                throw new IdentityException(IdentityError.INVALID_IDENTITY);
+                throw new InvalidGoogleTokenException(null);
             }
             return new GoogleIdentity(parts[1], parts[2].isEmpty() ? null : parts[2]);
         };

@@ -1,6 +1,5 @@
 package kz.tiyn.identity.google;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.nimbusds.jose.JWSAlgorithm;
@@ -12,8 +11,6 @@ import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import java.util.Date;
 import java.util.List;
-import kz.tiyn.identity.domain.IdentityError;
-import kz.tiyn.identity.domain.IdentityException;
 import org.junit.jupiter.api.Test;
 
 class JwksGoogleVerifierTests {
@@ -25,9 +22,7 @@ class JwksGoogleVerifierTests {
 
     @Test
     void aMalformedTokenIsAnInvalidIdentity() {
-        assertThatThrownBy(() -> verifier.verify("not-a-jwt"))
-                .isInstanceOfSatisfying(
-                        IdentityException.class, e -> assertThat(e.error()).isEqualTo(IdentityError.INVALID_IDENTITY));
+        assertThatThrownBy(() -> verifier.verify("not-a-jwt")).isInstanceOf(InvalidGoogleTokenException.class);
     }
 
     @Test
@@ -43,8 +38,6 @@ class JwksGoogleVerifierTests {
                         .build());
         jwt.sign(new RSASSASigner(key));
 
-        assertThatThrownBy(() -> verifier.verify(jwt.serialize()))
-                .isInstanceOfSatisfying(IdentityException.class, e -> assertThat(e.error())
-                        .isEqualTo(IdentityError.IDENTITY_PROVIDER_UNAVAILABLE));
+        assertThatThrownBy(() -> verifier.verify(jwt.serialize())).isInstanceOf(GoogleUnavailableException.class);
     }
 }

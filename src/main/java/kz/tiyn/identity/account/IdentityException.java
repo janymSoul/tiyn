@@ -1,4 +1,4 @@
-package kz.tiyn.identity.domain;
+package kz.tiyn.identity.account;
 
 public class IdentityException extends RuntimeException {
 

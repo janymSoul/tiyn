@@ -1,8 +1,7 @@
-package kz.tiyn.identity.app;
+package kz.tiyn.identity.family;
 
 import java.util.UUID;
 import kz.tiyn.identity.FamilyDirectory;
-import kz.tiyn.identity.store.LinkStore;
 import org.springframework.stereotype.Component;
 
 @Component

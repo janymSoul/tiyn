@@ -1,8 +1,6 @@
 package kz.tiyn.identity.google;
 
 import java.util.List;
-import kz.tiyn.identity.domain.IdentityError;
-import kz.tiyn.identity.domain.IdentityException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,10 +41,10 @@ class JwksGoogleVerifier implements GoogleVerifier {
             Jwt jwt = decoder.decode(idToken);
             return new GoogleIdentity(jwt.getSubject(), jwt.getClaimAsString("name"));
         } catch (BadJwtException e) {
-            throw new IdentityException(IdentityError.INVALID_IDENTITY);
+            throw new InvalidGoogleTokenException(e);
         } catch (JwtException e) {
             log.warn("could not verify a Google ID token", e);
-            throw new IdentityException(IdentityError.IDENTITY_PROVIDER_UNAVAILABLE);
+            throw new GoogleUnavailableException(e);
         }
     }
 

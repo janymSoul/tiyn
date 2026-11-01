@@ -1,4 +1,4 @@
-package kz.tiyn.identity.store;
+package kz.tiyn.platform.tx;
 
 public class ConflictException extends RuntimeException {
 

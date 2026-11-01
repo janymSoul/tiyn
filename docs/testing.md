@@ -6,9 +6,9 @@ Testability is an architectural property here, not an afterthought. The module s
 
 | Layer | Test type | Speed | Dependencies | What it proves |
 |---|---|---|---|---|
-| `domain` (FSM, value objects) | **Unit** (plain JUnit) | microseconds | none | Transition guards, invariants, calculations are correct |
-| `app` service (orchestration) | **Unit** with fakes, or **integration** | milliseconds–seconds | fake stores, or real Postgres | The command sequences the right steps, handles errors, emits the right event |
-| `store` + `app` + `web` | **Integration** (`@IntegrationTest`) | seconds | real Postgres (Testcontainers) | Locking, constraints, idempotency, transactions actually hold end-to-end |
+| Aggregates and value objects (FSM, invariants) | **Unit** (plain JUnit) | microseconds | none | Transition guards, invariants, calculations are correct |
+| Service (orchestration) | **Unit** with fakes, or **integration** | milliseconds–seconds | fake stores, or real Postgres | The command sequences the right steps, handles errors, emits the right event |
+| Store + service + controller | **Integration** (`@IntegrationTest`) | seconds | real Postgres (Testcontainers) | Locking, constraints, idempotency, transactions actually hold end-to-end |
 | listeners + event registry | **Integration** | seconds | real Postgres | At-least-once delivery and idempotent consumption actually work |
 | module boundaries | **Architecture** (`ModularityTests`) | ~2 s | none | No illegal module dependency, no module touching another's tables |
 
@@ -16,7 +16,7 @@ The guiding ratio: **many unit tests, enough integration tests to cover every tr
 
 ## 1. Unit tests — pure domain
 
-The domain is pure, so these need no Spring context and no setup. Every FSM transition — legal and illegal — gets a test. `kz.tiyn.identity.domain.DomainTests` is the reference.
+The domain is pure, so these need no Spring context and no setup. Every FSM transition — legal and illegal — gets a test. `kz.tiyn.identity.family.FamilyLinkTests` and `kz.tiyn.identity.account.AccountDomainTests` are the references; they sit in the feature's own package so they can reach package-private classes.
 
 ```java
 @Test
@@ -74,7 +74,7 @@ No test waits more than about 2 seconds. Never `Thread.sleep` to let something h
 - **Optimistic task conflict.** Two concurrent approvals of the same task; assert one wins and one gets a conflict.
 - **Idempotency.** Submit the same reward/payout command twice; assert exactly one ledger entry.
 - **Transaction atomicity.** Force a failure after the state change but before the event is published (inject an error); assert nothing was committed.
-- **Races on unique keys.** `IdentityConcurrencyTests` starts several threads on one latch against the same Google subject and the same join, then asserts one user, one link and one event. Use it as the template.
+- **Races on unique keys.** `IdentityConcurrencyTests` starts several threads on one latch, through `MockMvc` because services are package-private, against the same Google subject and the same join, then asserts one user and one link in the database. Use it as the template.
 - **Event durability.** Publish, make a real listener fail once, resubmit, and assert the effect happened exactly once (`docs/events-outbox.md`, "Testing").
 
 ### HTTP-level flow tests
@@ -104,8 +104,8 @@ One such black-box test per PRD user scenario (Scenario 1: milestone; Scenario 2
 
 ## Coverage expectations
 
-- `domain` — near-total line and branch coverage. It is pure logic; there is no excuse.
-- `app` — every command path and its error branches.
+- Aggregates and value objects — near-total line and branch coverage. It is pure logic; there is no excuse.
+- Services — every command path and its error branches.
 - Integration — every guarantee in `docs/transactions.md`'s checklist and every PRD user scenario.
 
 Coverage percentage is a guide, not a target; a 100%-covered FSM with no concurrency test is worse than an 80%-covered one that proves the wallet can't go negative. Test the guarantees, and coverage follows.
@@ -114,7 +114,7 @@ Coverage percentage is a guide, not a target; a 100%-covered FSM with no concurr
 
 ```bash
 ./mvnw verify                       # build, jOOQ codegen, all tests, spotless:check (needs Docker)
-./mvnw -Dtest=DomainTests test      # a single class
+./mvnw -Dtest=FamilyLinkTests test  # a single class
 ./mvnw -Dtest=ModularityTests test  # boundaries only
 ./mvnw spotless:apply               # format before committing
 ```

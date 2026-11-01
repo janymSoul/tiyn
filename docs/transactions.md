@@ -4,7 +4,7 @@ This is the most important document for correctness. The ledger is money (virtua
 
 ## The one rule
 
-**The transaction boundary lives in the `app` service, and nowhere else.** A service method opens exactly one transaction, does all its work inside it, and commits or rolls back. Domain code is pure and opens nothing. Stores (`store/`) run inside whatever transaction the service opened and never start one. Controllers open nothing.
+**The transaction boundary lives in the feature's service, and nowhere else.** A service method opens exactly one transaction, does all its work inside it, and commits or rolls back. Domain code is pure and opens nothing. Stores run inside whatever transaction the service opened and never start one. Controllers open nothing.
 
 Spring's default propagation (`REQUIRED`) would silently join a nested call to the outer transaction, which hides where a transaction begins. Keep it simple: only service methods are `@Transactional` (or use a `TransactionTemplate`), a service never calls another service's transactional method, and a store method is never annotated.
 
@@ -17,25 +17,18 @@ Spring's default propagation (`REQUIRED`) would silently join a nested call to t
 public void approveTask(ApproveTask cmd) { ... }
 ```
 
-**`TransactionTemplate`** when the command retries on a conflict. A unique violation aborts the Postgres transaction, so a retry must start a fresh one; an annotation on the method cannot do that. `IdentityService` is the reference:
+**`TransactionTemplate`** when the command retries on a conflict. A unique violation aborts the Postgres transaction, so a retry must start a fresh one; an annotation on the method cannot do that. `AccountService` and `FamilyService` are the references, sharing `platform.tx.ConflictRetry`:
 
 ```java
-private <T> T withRetry(Supplier<T> work) {
-    for (int attempt = 1; ; attempt++) {
-        try {
-            return work.get();
-        } catch (ConflictException e) {
-            if (attempt == MAX_ATTEMPTS) {
-                throw new IdentityException(IdentityError.CONFLICT);
-            }
-        }
-    }
-}
+User user = ConflictRetry.run(
+        () -> signInOnce(identity, role, displayName),
+        () -> new IdentityException(IdentityError.CONFLICT));
 
 private User signInOnce(...) {
     return tx.execute(status -> { ... });
 }
 ```
+`ConflictRetry` retries up to five times when a store throws `ConflictException` (a unique violation), and gives up with the error you supply.
 
 jOOQ's `DSLContext` is bound to the Spring-managed datasource, so every statement inside the template or annotated method joins the same transaction automatically. Never create a second `DSLContext` or open a connection by hand inside a transaction.
 
@@ -63,7 +56,7 @@ public void approveTask(ApproveTask cmd) {
 
 All five steps commit together or not at all. If the save fails, the task stays `SUBMITTED` and no event is published. If the process crashes after commit, the publication row survives and Modulith redelivers it on restart (`docs/events-outbox.md`).
 
-`idempotencyKeys.claim` is `INSERT ... ON CONFLICT DO NOTHING` and returns whether a row was inserted. **Do not catch a unique violation inside a transaction to detect a duplicate:** Postgres marks the transaction aborted and every later statement fails. Use `ON CONFLICT` for "already exists is fine", and let a violation propagate where it means a race (then retry the whole transaction as `IdentityService` does).
+`idempotencyKeys.claim` is `INSERT ... ON CONFLICT DO NOTHING` and returns whether a row was inserted. **Do not catch a unique violation inside a transaction to detect a duplicate:** Postgres marks the transaction aborted and every later statement fails. Use `ON CONFLICT` for "already exists is fine", and let a violation propagate where it means a race (then retry the whole transaction as `AccountService` does).
 
 > **Boundary vs. transaction tension.** The ledger credit is an effect in another module. The task transaction writes only task tables and the published event; the **ledger module** listens for `TaskApproved` and credits the wallet in *its own* transaction, idempotent on the reward key. **Follow the event path, not a cross-module write.** Keep an in-transaction effect for things that live in the *same* module as the command.
 

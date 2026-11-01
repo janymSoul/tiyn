@@ -38,22 +38,34 @@ One deployable Spring Boot application, internally partitioned into **bounded-co
       └────────────────────┘
 ```
 
-## Layers inside a module
+## Structure inside a module
 
-Each module is a vertical slice with the same internal shape. Dependencies point **inward**: web → app → domain; store is called by app; nothing calls web.
+A module is a package under `kz.tiyn`. Its **root package is the public contract**: the interfaces other modules may call and the event records it publishes. Everything else is internal.
+
+Inside a module, sub-packages are **features, not layers**. Each feature package holds its own aggregate, store, service, controller and request/response records, and **those classes are package-private**, so the compiler (not convention) stops one feature's web code from calling another feature's store. Only a small `public` interface crosses between features.
 
 ```
-kz.tiyn.<module>/
-  <Api>.java           # root package = the module's public contract:
-  <Event>.java         #   interfaces other modules may call, event records it publishes
-  domain/              # entities + FSM + value objects. PURE. No jOOQ/Spring web imports.
-  app/                 # the service: transactions, orchestration, event publishing
-  store/               # jOOQ repositories; persistence only
-  web/                 # controllers + request/response records + the module's exception mapping
-  <acl>/               # anti-corruption adapters for external systems (e.g. identity.google)
+kz.tiyn.identity/
+  FamilyDirectory.java       # public API for other modules
+  FamilyLinked.java          # public event
+  FamilyUnlinked.java        # public event
+  account/                   # feature: users, sign-in, join codes
+    User, JoinCode           #   aggregate and value object (User is public: family needs it)
+    UserStore                #   jOOQ repository (package-private)
+    AccountService           #   transactions, orchestration (package-private)
+    AccountController, …Request/…Response records (package-private)
+    AccountDirectory         #   public interface: what other features may ask of account
+    IdentityError, IdentityException, IdentityExceptionHandler
+  family/                    # feature: parent-teen links
+    FamilyLink               #   aggregate: lifecycle and events (package-private)
+    LinkStore, FamilyService, FamilyController, FamilyDirectoryImpl
+  google/                    # anti-corruption layer for an external system
+    GoogleVerifier           #   public interface; JwksGoogleVerifier is package-private
 ```
 
-**Why this shape.** Modulith exposes only a module's root package; every sub-package is internal. The `domain` package is pure so FSMs are trivially unit-testable. The `app` service is the deep module: a small interface over substantial logic (transaction orchestration, FSM invocation, event emission). `store`, `domain`, `app` and `web` are implementation details hidden from the rest of the system.
+**Why this shape.** Java has package-private visibility but no per-directory privacy like Go's `internal/`. A layered split (`domain/`, `app/`, `store/`, `web/`) forces every class that crosses a layer to be `public`, so nothing is hidden and the layering is convention only. Splitting by feature keeps the collaborating classes in one package where `package-private` works. Inside a feature, keep the same direction of dependency by habit: controller → service → store and aggregate, the aggregate depending on nothing else. Features depend on each other only through a `public` interface, and the dependency points one way (`family` uses `account`, never the reverse).
+
+A module with a single feature may keep everything in its root package, with only the API types `public`. Introduce feature packages when a module grows two or more aggregates with their own endpoints. Dependencies between features of one module are not checked by Modulith, so keep them acyclic by review.
 
 `kz.tiyn.platform` is the shared kernel, declared an **open** module: JSON error mapping, JWT verification and issuing, `Principal`/`Role`, the ticker scheduler, the `Clock`. It owns no business data and must never depend on a business module.
 

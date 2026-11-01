@@ -1,4 +1,4 @@
-package kz.tiyn.identity.domain;
+package kz.tiyn.identity.account;
 
 public enum IdentityError {
     INVALID_IDENTITY,
