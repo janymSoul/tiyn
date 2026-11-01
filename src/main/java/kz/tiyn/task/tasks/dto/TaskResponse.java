@@ -18,4 +18,7 @@ public record TaskResponse(
         Instant deadlineAt,
         Instant submittedAt,
         Instant decidedAt,
-        String decisionNote) {}
+        String decisionNote,
+        UUID milestoneId,
+        Integer approvedTasks,
+        Integer totalTasks) {}

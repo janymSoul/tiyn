@@ -172,7 +172,8 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 **Support needed.**
 - The `Ticker` interface and scheduler described in `docs/modules.md`: `@Scheduled` with a ShedLock inside the API pods, every minute. Events are not part of the ticker; the Modulith registry delivers them.
 - Period boundaries in the series' own timezone (`task_series.timezone`, stored UTC); Kazakhstan has a single zone now, but it is stored per series.
-- A missed occurrence expires; no automatic penalty.
+- A missed occurrence expires; no automatic penalty. No backfill: a tick creates only the current day's occurrence (in the series' timezone, and only while its due time is still ahead), so days the system missed are never created later.
+- Closing a series, or removing the family link, stops further occurrences.
 - Tick cadence of about one minute is enough; expiry precision beyond that is not needed.
 
 ---

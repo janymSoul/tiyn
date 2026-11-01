@@ -48,13 +48,12 @@ public void approveTask(ApproveTask cmd) {
     }
     Task task = tasks.findForUpdate(cmd.taskId());           // 2. load the aggregate
     authorize(cmd.parentId(), task);                         //    FamilyDirectory.areLinked
-    List<DomainEvent> events = task.approve(cmd.parentId(), clock.instant());   // 3. pure FSM transition
-    tasks.save(task);                                        // 4. persist with the version check
-    events.forEach(publisher::publishEvent);                 // 5. same transaction: TaskApproved
+    task.approve(cmd.parentId(), clock.instant());           // 3. pure FSM transition, records TaskApproved
+    tasks.save(task);                                        // 4. persist with the version check, then publish
 }
 ```
 
-All five steps commit together or not at all. If the save fails, the task stays `SUBMITTED` and no event is published. If the process crashes after commit, the publication row survives and Modulith redelivers it on restart (`docs/events-outbox.md`).
+All of it commits together or not at all (the store publishes inside the transaction, after the write). If the save fails, the task stays `SUBMITTED` and no event is published. If the process crashes after commit, the publication row survives and Modulith redelivers it on restart (`docs/events-outbox.md`).
 
 `idempotencyKeys.claim` is `INSERT ... ON CONFLICT DO NOTHING` and returns whether a row was inserted. **Do not catch a unique violation inside a transaction to detect a duplicate:** Postgres marks the transaction aborted and every later statement fails. Use `ON CONFLICT` for "already exists is fine", and let a violation propagate where it means a race (then retry the whole transaction as `AccountService` does).
 

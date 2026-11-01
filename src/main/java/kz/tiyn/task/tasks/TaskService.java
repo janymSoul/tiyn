@@ -19,7 +19,6 @@ import kz.tiyn.task.tasks.dto.CreateTaskRequest;
 import kz.tiyn.task.tasks.dto.ProofResponse;
 import kz.tiyn.task.tasks.error.TaskError;
 import kz.tiyn.task.tasks.error.TaskException;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -31,7 +30,6 @@ class TaskService {
     private final FamilyDirectory family;
     private final Storage storage;
     private final TransactionTemplate tx;
-    private final ApplicationEventPublisher events;
     private final TaskProperties properties;
     private final Clock clock;
 
@@ -41,7 +39,6 @@ class TaskService {
             FamilyDirectory family,
             Storage storage,
             TransactionTemplate tx,
-            ApplicationEventPublisher events,
             TaskProperties properties,
             Clock clock) {
         this.tasks = tasks;
@@ -49,7 +46,6 @@ class TaskService {
         this.family = family;
         this.storage = storage;
         this.tx = tx;
-        this.events = events;
         this.properties = properties;
         this.clock = clock;
     }
@@ -70,12 +66,19 @@ class TaskService {
                 request.rewardAmount(),
                 request.currency(),
                 request.deadlineAt());
-        Task task = Task.assign(UUID.randomUUID(), draft, clock.instant(), properties.maxRewardAmount());
-        tx.executeWithoutResult(status -> {
+        return tx.execute(status -> {
+            Task task = request.milestoneId() == null
+                    ? Task.assign(UUID.randomUUID(), draft, clock.instant(), properties.maxRewardAmount())
+                    : Task.assignInMilestone(
+                            UUID.randomUUID(),
+                            tasks.findLocked(request.milestoneId())
+                                    .orElseThrow(() -> new TaskException(TaskError.INVALID_MILESTONE)),
+                            draft,
+                            clock.instant(),
+                            properties.maxRewardAmount());
             tasks.insert(task);
-            task.pullEvents().forEach(events::publishEvent);
+            return task;
         });
-        return task;
     }
 
     Task get(Principal caller, UUID id) {
@@ -119,11 +122,55 @@ class TaskService {
     }
 
     Task requestRedo(Principal caller, UUID id, String note, Instant newDeadlineAt) {
-        return decide(caller, id, (t, now) -> t.requestRedo(caller.userId(), note, newDeadlineAt, now));
+        return decide(
+                caller, id, (t, now) -> t.requestRedo(caller.userId(), note, newDeadlineAt, milestoneDeadline(t), now));
     }
 
     Task cancel(Principal caller, UUID id) {
-        return decide(caller, id, (t, now) -> t.cancel(caller.userId(), now));
+        requireRole(caller, Role.PARENT);
+        return retry(() -> tx.execute(status -> {
+            Task task = authorised(caller, id);
+            Instant now = clock.instant();
+            if (task.kind() == TaskKind.MILESTONE) {
+                task = tasks.findLocked(id).orElseThrow(() -> new TaskException(TaskError.NOT_FOUND));
+                task.cancel(caller.userId(), now);
+                tasks.save(task);
+                for (Task child : tasks.findOpenInMilestone(id)) {
+                    child.cancel(caller.userId(), now);
+                    tasks.save(child);
+                }
+                return task;
+            }
+            task.cancel(caller.userId(), now);
+            tasks.save(task);
+            return task;
+        }));
+    }
+
+    void cancelOpenTasksAfterUnlink(UUID parentId, UUID teenId) {
+        tx.executeWithoutResult(status -> {
+            if (family.areLinked(parentId, teenId)) {
+                return;
+            }
+            Instant now = clock.instant();
+            for (Task task : tasks.findOpenFor(parentId, teenId)) {
+                task.cancel(parentId, now);
+                tasks.save(task);
+            }
+        });
+    }
+
+    boolean expire(UUID id, Instant now) {
+        return Boolean.TRUE.equals(tx.execute(status -> tasks.find(id)
+                .map(task -> {
+                    task.expire(now);
+                    return tasks.save(task);
+                })
+                .orElse(false)));
+    }
+
+    MilestoneProgress progress(Task milestone) {
+        return tasks.progress(milestone.id());
     }
 
     List<ProofResponse> proofs(Principal caller, UUID id) {
@@ -146,10 +193,16 @@ class TaskService {
                 return task;
             }
             task.submit(caller.userId(), UUID.randomUUID(), objectKey, text, clock.instant());
-            tasks.update(task);
-            task.pullEvents().forEach(events::publishEvent);
+            tasks.save(task);
             return task;
         }));
+    }
+
+    private Instant milestoneDeadline(Task task) {
+        if (task.milestoneId() == null) {
+            return null;
+        }
+        return tasks.find(task.milestoneId()).map(Task::deadlineAt).orElse(null);
     }
 
     private Task decide(Principal caller, UUID id, Decision decision) {
@@ -157,11 +210,7 @@ class TaskService {
         return retry(() -> tx.execute(status -> {
             Task task = authorised(caller, id);
             decision.apply(task, clock.instant());
-            List<Object> raised = task.pullEvents();
-            if (!raised.isEmpty()) {
-                tasks.update(task);
-                raised.forEach(events::publishEvent);
-            }
+            tasks.save(task);
             return task;
         }));
     }

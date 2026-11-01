@@ -10,4 +10,5 @@ public record CreateTaskRequest(
         String description,
         long rewardAmount,
         String currency,
-        Instant deadlineAt) {}
+        Instant deadlineAt,
+        UUID milestoneId) {}

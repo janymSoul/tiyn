@@ -10,6 +10,7 @@ import kz.tiyn.platform.event.EventLog;
 import kz.tiyn.task.TaskApproved;
 import kz.tiyn.task.TaskAssigned;
 import kz.tiyn.task.TaskCancelled;
+import kz.tiyn.task.TaskExpired;
 import kz.tiyn.task.TaskRedoRequested;
 import kz.tiyn.task.TaskRejected;
 import kz.tiyn.task.TaskSubmitted;
@@ -65,6 +66,35 @@ final class Task {
     }
 
     static Task assign(UUID id, NewTask draft, Instant now, long maxRewardAmount) {
+        return create(id, null, null, null, draft, now, maxRewardAmount);
+    }
+
+    static Task assignOccurrence(
+            UUID id, UUID seriesId, LocalDate occurrenceDate, NewTask draft, Instant now, long maxRewardAmount) {
+        return create(id, null, seriesId, occurrenceDate, draft, now, maxRewardAmount);
+    }
+
+    static Task assignInMilestone(UUID id, Task milestone, NewTask draft, Instant now, long maxRewardAmount) {
+        if (draft.deadlineAt() != null && draft.deadlineAt().isAfter(milestone.deadlineAt)) {
+            throw new TaskException(TaskError.INVALID_MILESTONE);
+        }
+        boolean belongsToThisFamily =
+                milestone.parentId.equals(draft.parentId()) && milestone.teenId.equals(draft.teenId());
+        boolean acceptsTasks = milestone.kind == TaskKind.MILESTONE && milestone.state == TaskState.ASSIGNED;
+        if (!belongsToThisFamily || !acceptsTasks || draft.kind() == TaskKind.MILESTONE) {
+            throw new TaskException(TaskError.INVALID_MILESTONE);
+        }
+        return create(id, milestone.id, null, null, draft, now, maxRewardAmount);
+    }
+
+    private static Task create(
+            UUID id,
+            UUID milestoneId,
+            UUID seriesId,
+            LocalDate occurrenceDate,
+            NewTask draft,
+            Instant now,
+            long maxRewardAmount) {
         String title = draft.title() == null ? "" : draft.title().trim();
         if (title.isEmpty() || title.length() > MAX_TITLE) {
             throw new TaskException(TaskError.INVALID_TITLE);
@@ -78,9 +108,9 @@ final class Task {
         TaskKind kind = draft.kind() == null ? TaskKind.TASK : draft.kind();
         var snapshot = new TaskSnapshot(
                 id,
-                null,
-                null,
-                null,
+                seriesId,
+                occurrenceDate,
+                milestoneId,
                 draft.parentId(),
                 draft.teenId(),
                 kind,
@@ -137,12 +167,20 @@ final class Task {
         events.record(new TaskRejected(id, teenId, cleaned));
     }
 
-    void requestRedo(UUID byParentId, String note, Instant newDeadlineAt, Instant now) {
+    void requestRedo(UUID byParentId, String note, Instant newDeadlineAt, Instant latestDeadlineAt, Instant now) {
         requireState(TaskState.SUBMITTED);
         String cleaned = cleanNote(note);
-        extendDeadline(newDeadlineAt, now);
+        extendDeadline(newDeadlineAt, latestDeadlineAt, now);
         decide(TaskState.ASSIGNED, byParentId, cleaned, now);
         events.record(new TaskRedoRequested(id, teenId, cleaned));
+    }
+
+    void expire(Instant now) {
+        if (state != TaskState.ASSIGNED || now.isBefore(deadlineAt)) {
+            return;
+        }
+        state = TaskState.EXPIRED;
+        events.record(new TaskExpired(id, teenId));
     }
 
     void cancel(UUID byParentId, Instant now) {
@@ -168,14 +206,15 @@ final class Task {
         return proofs.subList(persistedProofs, proofs.size());
     }
 
-    private void extendDeadline(Instant newDeadlineAt, Instant now) {
+    private void extendDeadline(Instant newDeadlineAt, Instant latestDeadlineAt, Instant now) {
         if (newDeadlineAt == null) {
             if (!now.isBefore(deadlineAt)) {
                 throw new TaskException(TaskError.INVALID_DEADLINE);
             }
             return;
         }
-        if (!newDeadlineAt.isAfter(now)) {
+        boolean beyondMilestone = latestDeadlineAt != null && newDeadlineAt.isAfter(latestDeadlineAt);
+        if (!newDeadlineAt.isAfter(now) || beyondMilestone) {
             throw new TaskException(TaskError.INVALID_DEADLINE);
         }
         deadlineAt = newDeadlineAt;

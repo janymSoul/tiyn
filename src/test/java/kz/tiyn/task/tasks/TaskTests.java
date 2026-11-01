@@ -9,6 +9,7 @@ import java.util.UUID;
 import kz.tiyn.task.TaskApproved;
 import kz.tiyn.task.TaskAssigned;
 import kz.tiyn.task.TaskCancelled;
+import kz.tiyn.task.TaskExpired;
 import kz.tiyn.task.TaskRedoRequested;
 import kz.tiyn.task.TaskRejected;
 import kz.tiyn.task.TaskSubmitted;
@@ -113,7 +114,7 @@ class TaskTests {
         assertThat(rejected.pullEvents()).singleElement().isInstanceOf(TaskRejected.class);
 
         Task redo = submitted();
-        redo.requestRedo(PARENT, "again", null, NOW);
+        redo.requestRedo(PARENT, "again", null, null, NOW);
         assertThat(redo.state()).isEqualTo(TaskState.ASSIGNED);
         assertThat(redo.pullEvents()).singleElement().isInstanceOf(TaskRedoRequested.class);
         redo.submit(TEEN, UUID.randomUUID(), null, "second try", NOW);
@@ -124,7 +125,7 @@ class TaskTests {
     void decisionsAreOnlyPossibleFromSubmittedAndConflictingDecisionsFail() {
         assertError(() -> assigned().approve(PARENT, NOW), TaskError.INVALID_TRANSITION);
         assertError(() -> assigned().reject(PARENT, null, NOW), TaskError.INVALID_TRANSITION);
-        assertError(() -> assigned().requestRedo(PARENT, null, null, NOW), TaskError.INVALID_TRANSITION);
+        assertError(() -> assigned().requestRedo(PARENT, null, null, null, NOW), TaskError.INVALID_TRANSITION);
         Task approved = submitted();
         approved.approve(PARENT, NOW);
         assertError(() -> approved.reject(PARENT, null, NOW), TaskError.INVALID_TRANSITION);
@@ -182,14 +183,14 @@ class TaskTests {
     @Test
     void redoAfterTheDeadlineRequiresANewFutureDeadline() {
         Instant afterDeadline = NOW.plusSeconds(7200);
-        assertError(() -> submitted().requestRedo(PARENT, null, null, afterDeadline), TaskError.INVALID_DEADLINE);
+        assertError(() -> submitted().requestRedo(PARENT, null, null, null, afterDeadline), TaskError.INVALID_DEADLINE);
         assertError(
-                () -> submitted().requestRedo(PARENT, null, afterDeadline.minusSeconds(1), afterDeadline),
+                () -> submitted().requestRedo(PARENT, null, afterDeadline.minusSeconds(1), null, afterDeadline),
                 TaskError.INVALID_DEADLINE);
 
         Task task = submitted();
         Instant extended = afterDeadline.plusSeconds(3600);
-        task.requestRedo(PARENT, null, extended, afterDeadline);
+        task.requestRedo(PARENT, null, extended, null, afterDeadline);
 
         assertThat(task.deadlineAt()).isEqualTo(extended);
         assertThat(task.state()).isEqualTo(TaskState.ASSIGNED);
@@ -198,11 +199,110 @@ class TaskTests {
     @Test
     void redoBeforeTheDeadlineKeepsItUnlessANewOneIsGiven() {
         Task kept = submitted();
-        kept.requestRedo(PARENT, null, null, NOW);
+        kept.requestRedo(PARENT, null, null, null, NOW);
         assertThat(kept.deadlineAt()).isEqualTo(NOW.plusSeconds(3600));
 
         Task moved = submitted();
-        moved.requestRedo(PARENT, null, NOW.plusSeconds(9000), NOW);
+        moved.requestRedo(PARENT, null, NOW.plusSeconds(9000), null, NOW);
         assertThat(moved.deadlineAt()).isEqualTo(NOW.plusSeconds(9000));
+    }
+
+    private Task milestone(Instant deadline) {
+        var draft = new NewTask(PARENT, TEEN, TaskKind.MILESTONE, "Exam", null, 5000, "KZT", deadline);
+        Task milestone = Task.assign(UUID.randomUUID(), draft, NOW, MAX);
+        milestone.pullEvents();
+        return milestone;
+    }
+
+    private NewTask milestoneTask(UUID parent, UUID teen, TaskKind kind, Instant deadline) {
+        return new NewTask(parent, teen, kind, "Study", null, 100, "KZT", deadline);
+    }
+
+    @Test
+    void aTaskInAMilestoneRecordsItsMilestone() {
+        Task milestone = milestone(NOW.plusSeconds(7200));
+
+        Task task = Task.assignInMilestone(
+                UUID.randomUUID(),
+                milestone,
+                milestoneTask(PARENT, TEEN, TaskKind.TASK, NOW.plusSeconds(3600)),
+                NOW,
+                MAX);
+
+        assertThat(task.milestoneId()).isEqualTo(milestone.id());
+    }
+
+    @Test
+    void milestoneTasksMustFitTheMilestoneRules() {
+        Instant milestoneDeadline = NOW.plusSeconds(7200);
+        UUID id = UUID.randomUUID();
+        Task open = milestone(milestoneDeadline);
+        NewTask fine = milestoneTask(PARENT, TEEN, TaskKind.TASK, NOW.plusSeconds(3600));
+
+        assertError(
+                () -> Task.assignInMilestone(
+                        id,
+                        open,
+                        milestoneTask(PARENT, TEEN, TaskKind.TASK, milestoneDeadline.plusSeconds(1)),
+                        NOW,
+                        MAX),
+                TaskError.INVALID_MILESTONE);
+        assertError(
+                () -> Task.assignInMilestone(
+                        id, open, milestoneTask(PARENT, TEEN, TaskKind.MILESTONE, NOW.plusSeconds(60)), NOW, MAX),
+                TaskError.INVALID_MILESTONE);
+        assertError(
+                () -> Task.assignInMilestone(
+                        id,
+                        open,
+                        milestoneTask(PARENT, UUID.randomUUID(), TaskKind.TASK, NOW.plusSeconds(60)),
+                        NOW,
+                        MAX),
+                TaskError.INVALID_MILESTONE);
+        assertError(
+                () -> Task.assignInMilestone(
+                        id, open, milestoneTask(UUID.randomUUID(), TEEN, TaskKind.TASK, NOW.plusSeconds(60)), NOW, MAX),
+                TaskError.INVALID_MILESTONE);
+        assertError(() -> Task.assignInMilestone(id, assigned(), fine, NOW, MAX), TaskError.INVALID_MILESTONE);
+        Task cancelled = milestone(milestoneDeadline);
+        cancelled.cancel(PARENT, NOW);
+        assertError(() -> Task.assignInMilestone(id, cancelled, fine, NOW, MAX), TaskError.INVALID_MILESTONE);
+    }
+
+    @Test
+    void expireMovesAnOverdueAssignedTaskOnceAndIgnoresEverythingElse() {
+        Task overdue = assigned();
+        overdue.expire(NOW.plusSeconds(3600));
+        overdue.expire(NOW.plusSeconds(7200));
+        assertThat(overdue.state()).isEqualTo(TaskState.EXPIRED);
+        assertThat(overdue.pullEvents()).singleElement().isInstanceOf(TaskExpired.class);
+
+        Task early = assigned();
+        early.expire(NOW.plusSeconds(3599));
+        assertThat(early.state()).isEqualTo(TaskState.ASSIGNED);
+
+        Task submitted = submitted();
+        submitted.expire(NOW.plusSeconds(9000));
+        assertThat(submitted.state()).isEqualTo(TaskState.SUBMITTED);
+
+        Task cancelled = assigned();
+        cancelled.cancel(PARENT, NOW);
+        cancelled.pullEvents();
+        cancelled.expire(NOW.plusSeconds(9000));
+        assertThat(cancelled.state()).isEqualTo(TaskState.CANCELLED);
+        assertThat(cancelled.pullEvents()).isEmpty();
+    }
+
+    @Test
+    void redoCannotMoveTheDeadlineBeyondTheMilestones() {
+        Instant ceiling = NOW.plusSeconds(7200);
+
+        assertError(
+                () -> submitted().requestRedo(PARENT, null, ceiling.plusSeconds(1), ceiling, NOW),
+                TaskError.INVALID_DEADLINE);
+
+        Task task = submitted();
+        task.requestRedo(PARENT, null, ceiling, ceiling, NOW);
+        assertThat(task.deadlineAt()).isEqualTo(ceiling);
     }
 }

@@ -52,7 +52,8 @@ class TaskController {
 
     @GetMapping("/tasks/{id}")
     TaskResponse get(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
-        return toResponse(service.get(caller, id));
+        Task task = service.get(caller, id);
+        return task.kind() == TaskKind.MILESTONE ? toResponse(task, service.progress(task)) : toResponse(task);
     }
 
     @PostMapping(value = "/tasks/{id}/submit", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -124,6 +125,10 @@ class TaskController {
     }
 
     private static TaskResponse toResponse(Task t) {
+        return toResponse(t, null);
+    }
+
+    private static TaskResponse toResponse(Task t, MilestoneProgress progress) {
         return new TaskResponse(
                 t.id(),
                 t.teenId(),
@@ -137,6 +142,9 @@ class TaskController {
                 t.deadlineAt(),
                 t.submittedAt(),
                 t.decidedAt(),
-                t.decisionNote());
+                t.decisionNote(),
+                t.milestoneId(),
+                progress == null ? null : progress.approvedTasks(),
+                progress == null ? null : progress.totalTasks());
     }
 }

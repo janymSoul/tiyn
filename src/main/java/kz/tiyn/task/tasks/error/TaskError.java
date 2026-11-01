@@ -15,7 +15,8 @@ public enum TaskError {
     UNSUPPORTED_PROOF,
     INVALID_IDEMPOTENCY_KEY,
     TEEN_REQUIRED,
-    INVALID_FILTER;
+    INVALID_FILTER,
+    INVALID_SCHEDULE;
 
     public String code() {
         return name().toLowerCase();

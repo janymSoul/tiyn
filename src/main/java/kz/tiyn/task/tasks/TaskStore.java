@@ -3,6 +3,7 @@ package kz.tiyn.task.tasks;
 import static kz.tiyn.platform.jooq.task.Tables.TASKS;
 import static kz.tiyn.platform.jooq.task.Tables.TASK_PROOFS;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -12,6 +13,7 @@ import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
@@ -19,31 +21,47 @@ import org.springframework.stereotype.Repository;
 class TaskStore {
 
     private final DSLContext dsl;
+    private final ApplicationEventPublisher events;
 
-    TaskStore(DSLContext dsl) {
+    TaskStore(DSLContext dsl, ApplicationEventPublisher events) {
         this.dsl = dsl;
+        this.events = events;
     }
 
-    void insert(Task task) {
-        dsl.insertInto(TASKS)
-                .set(TASKS.ID, task.id())
-                .set(TASKS.SERIES_ID, task.seriesId())
-                .set(TASKS.OCCURRENCE_DATE, task.occurrenceDate())
-                .set(TASKS.MILESTONE_ID, task.milestoneId())
-                .set(TASKS.PARENT_ID, task.parentId())
-                .set(TASKS.TEEN_ID, task.teenId())
-                .set(TASKS.KIND, task.kind().name())
-                .set(TASKS.TITLE, task.title())
-                .set(TASKS.DESCRIPTION, task.description())
-                .set(TASKS.REWARD_AMOUNT, task.reward().amount())
-                .set(TASKS.CURRENCY, task.reward().currency())
-                .set(TASKS.STATE, task.state().name())
-                .set(TASKS.DEADLINE_AT, Instants.toUtc(task.deadlineAt()))
-                .execute();
+    boolean insert(Task task) {
+        boolean inserted = dsl.insertInto(TASKS)
+                        .set(TASKS.ID, task.id())
+                        .set(TASKS.SERIES_ID, task.seriesId())
+                        .set(TASKS.OCCURRENCE_DATE, task.occurrenceDate())
+                        .set(TASKS.MILESTONE_ID, task.milestoneId())
+                        .set(TASKS.PARENT_ID, task.parentId())
+                        .set(TASKS.TEEN_ID, task.teenId())
+                        .set(TASKS.KIND, task.kind().name())
+                        .set(TASKS.TITLE, task.title())
+                        .set(TASKS.DESCRIPTION, task.description())
+                        .set(TASKS.REWARD_AMOUNT, task.reward().amount())
+                        .set(TASKS.CURRENCY, task.reward().currency())
+                        .set(TASKS.STATE, task.state().name())
+                        .set(TASKS.DEADLINE_AT, Instants.toUtc(task.deadlineAt()))
+                        .onConflictDoNothing()
+                        .execute()
+                == 1;
+        if (inserted) {
+            task.pullEvents().forEach(events::publishEvent);
+        }
+        return inserted;
     }
 
     Optional<Task> find(UUID id) {
         return dsl.selectFrom(TASKS).where(TASKS.ID.eq(id)).fetchOptional().map(this::toTask);
+    }
+
+    Optional<Task> findLocked(UUID id) {
+        return dsl.selectFrom(TASKS)
+                .where(TASKS.ID.eq(id))
+                .forUpdate()
+                .fetchOptional()
+                .map(this::toTask);
     }
 
     List<Task> list(UUID parentId, UUID teenId, TaskState state) {
@@ -62,6 +80,43 @@ class TaskStore {
                 .toList();
     }
 
+    List<Task> findOpenFor(UUID parentId, UUID teenId) {
+        return dsl.selectFrom(TASKS)
+                .where(TASKS.PARENT_ID.eq(parentId))
+                .and(TASKS.TEEN_ID.eq(teenId))
+                .and(TASKS.STATE.in(TaskState.ASSIGNED.name(), TaskState.SUBMITTED.name()))
+                .fetch()
+                .map(this::toTask);
+    }
+
+    List<Task> findOpenInMilestone(UUID milestoneId) {
+        return dsl.selectFrom(TASKS)
+                .where(TASKS.MILESTONE_ID.eq(milestoneId))
+                .and(TASKS.STATE.in(TaskState.ASSIGNED.name(), TaskState.SUBMITTED.name()))
+                .fetch()
+                .map(this::toTask);
+    }
+
+    MilestoneProgress progress(UUID milestoneId) {
+        var total = DSL.count();
+        var approved = DSL.count().filterWhere(TASKS.STATE.eq(TaskState.APPROVED.name()));
+        return dsl.select(approved, total)
+                .from(TASKS)
+                .where(TASKS.MILESTONE_ID.eq(milestoneId))
+                .and(TASKS.STATE.ne(TaskState.CANCELLED.name()))
+                .fetchOne(r -> new MilestoneProgress(r.value1(), r.value2()));
+    }
+
+    List<UUID> findExpiredIds(Instant now, int limit) {
+        return dsl.select(TASKS.ID)
+                .from(TASKS)
+                .where(TASKS.STATE.eq(TaskState.ASSIGNED.name()))
+                .and(TASKS.DEADLINE_AT.le(Instants.toUtc(now)))
+                .orderBy(TASKS.DEADLINE_AT)
+                .limit(limit)
+                .fetch(TASKS.ID);
+    }
+
     long pendingReward(UUID teenId) {
         Long sum = dsl.select(DSL.coalesce(DSL.sum(TASKS.REWARD_AMOUNT), 0L).cast(Long.class))
                 .from(TASKS)
@@ -70,7 +125,11 @@ class TaskStore {
         return sum == null ? 0 : sum;
     }
 
-    void update(Task task) {
+    boolean save(Task task) {
+        List<Object> raised = task.pullEvents();
+        if (raised.isEmpty()) {
+            return false;
+        }
         int updated = dsl.update(TASKS)
                 .set(TASKS.STATE, task.state().name())
                 .set(TASKS.DEADLINE_AT, Instants.toUtc(task.deadlineAt()))
@@ -97,6 +156,8 @@ class TaskStore {
         } catch (DuplicateKeyException e) {
             throw new ConflictException(e);
         }
+        raised.forEach(events::publishEvent);
+        return true;
     }
 
     private Task toTask(TasksRecord r) {

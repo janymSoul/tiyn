@@ -33,17 +33,18 @@ CREATE TABLE event_publication (
 
 ## Publishing an event (producer side)
 
-Producers publish inside their service transaction and never call listeners directly:
+Aggregates only *record* events as facts (an `EventLog` they own); they never publish. The producing store's `save` writes the aggregate and then publishes the events it recorded, so the write and the publication happen in the service's transaction and a service cannot forget the second half. Nothing calls listeners directly:
 
 ```java
 @Transactional
 public void approveTask(ApproveTask cmd) {
     Task task = tasks.findForUpdate(cmd.taskId());
     task.approve(cmd.parentId(), clock.instant());
-    tasks.save(task);
-    publisher.publishEvent(new TaskApproved(task.id(), task.teenId(), task.rewardAmount(), task.currency()));
+    tasks.save(task);   // UPDATE with the version check, then publishes the TaskApproved the task recorded
 }
 ```
+
+`save` does nothing when the aggregate recorded no events (a repeated, no-op command), and it publishes only after the write succeeded: a version conflict throws before any event leaves. A store publishes only the events of its own aggregate; anything spanning aggregates stays in the service.
 
 Events are records in the producing module's **root package**, so other modules may depend on them and nothing else of the producer.
 
@@ -76,7 +77,7 @@ If a flow ever needs strict ordering (it does not today), that is a reason to ad
 ## Failure handling and operations
 
 - **Transient listener failure:** the exception is logged, the publication stays incomplete. Modulith does **not** retry on its own while the process runs; it retries on restart or when asked.
-- **Resubmission ticker (not built yet):** a `Ticker` that calls `IncompleteEventPublications.resubmitIncompletePublicationsOlderThan(Duration.ofMinutes(1))` gives timed retries on the existing scheduler. It must exist before real listeners with side effects (the ledger credit, push sending) go to production, because without it a failed credit waits for the next deployment.
+- **Resubmission ticker:** `EventResubmitTicker` (in `kz.tiyn.platform.tick`) calls `IncompleteEventPublications.resubmitIncompletePublicationsOlderThan(...)` on every tick, with the age taken from `tiyn.events.resubmit-after` (env `EVENTS_RESUBMIT_AFTER`, default `PT1M`). A failed listener is therefore retried within about two minutes instead of at the next deployment. Resubmission can redeliver while a slow first attempt is still running, which is one more reason listeners must be idempotent.
 - **Poison event:** a listener that always fails keeps retrying on every resubmission. There is no dead-letter table; the incomplete publication is the record. Alert on it (below) and fix the listener. Because retries re-run the whole listener, it must stay idempotent.
 - **Completed publications** accumulate. Purge them on a schedule with `CompletedEventPublications.deletePublicationsOlderThan(...)`, or set `spring.modulith.events.completion-mode` to `delete`/`archive`. Decide against the audit need before production; the ledger is the audit trail, not this table.
 - **Monitoring to add before production:** the age of the oldest incomplete publication, the count of incomplete rows per `listener_id`, and listener error rates.
@@ -88,7 +89,7 @@ If a flow ever needs strict ordering (it does not today), that is a reason to ad
 
 - Unit-test the domain method that produces the event; it is pure.
 - In an `@IntegrationTest`, `@RecordApplicationEvents` captures events in memory (`IdentityFlowTests` does this). That proves what is published, not that it is durable.
-- To prove durability and redelivery, use a real listener against Testcontainers Postgres: publish, make the listener fail once, restart or resubmit, and assert the effect happened exactly once. The ledger's first test should do exactly this.
+- To prove durability and redelivery, use a real listener against Testcontainers Postgres: publish, make the listener fail once, resubmit, and assert the effect happened exactly once. `EventDurabilityTests` does this with a test listener on `TaskAssigned` and `resubmit-after=PT0S`; read the listener's state through methods, not fields, because `@ApplicationModuleListener` makes the bean a CGLIB proxy. The ledger's first test should follow the same shape.
 - `@ApplicationModuleTest` with `Scenario` runs one module in isolation and waits for asynchronous effects without sleeping.
 
 ## Event catalogue (MVP)
@@ -109,11 +110,11 @@ If a flow ever needs strict ordering (it does not today), that is a reason to ad
 | `PayoutCancelled` | ledger | notification | "request cancelled / declined / expired" → teen |
 | `PenaltyApplied` | ledger | notification | "deduction" → teen |
 
-Only `FamilyLinked` and `FamilyUnlinked` exist in code today. Event payloads are records in the producing module's root package and are part of its **public contract**.
+`FamilyLinked`, `FamilyUnlinked` and all the `Task*` events exist in code. The only real listeners today are the two `FamilyUnlinked` handlers in the task module (cancel open tasks, close series); the ledger and notification consumers arrive in later steps. Event payloads are records in the producing module's root package and are part of its **public contract**.
 
 ## Before production
 
-- The resubmission ticker above, plus a purge or archive policy for completed publications.
+- A purge or archive policy for completed publications.
 - Alerts on the age of the oldest incomplete publication and on repeated listener failures.
 - A way to inspect and re-run a stuck publication by hand (an admin endpoint or a SQL runbook), built with the first real consumer.
 
