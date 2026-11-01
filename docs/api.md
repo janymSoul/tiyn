@@ -230,7 +230,7 @@ These are facts about the current API, listed so they are decided on purpose and
 
 1. **A parent cannot discover their linked teens.** `POST /links/join` returns only the parent's name to the teen, `/me` has no family section, and the "family linked" push carries no ids. A parent's first `POST /tasks` needs a `teenId` that no endpoint gives them (it appears only in tasks that already exist). Needed: something like `GET /family` returning linked users, and `teenId`/`parentId` in the join response.
 2. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
-3. **A teen cannot read their own proofs or see a teen's wallet history.** There is no ledger-entry listing for anyone.
+3. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
 4. **No pagination, ordering guarantees or `If-Modified-Since`.** Fine at MVP size, painful after months of tasks.
 5. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
 6. **Creation endpoints are not idempotent** (`POST /tasks`, `/goals`, `/task-series`), so a retry after a network failure duplicates.
