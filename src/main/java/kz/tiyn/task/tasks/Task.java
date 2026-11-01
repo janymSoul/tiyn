@@ -10,6 +10,7 @@ import kz.tiyn.platform.event.EventLog;
 import kz.tiyn.task.TaskApproved;
 import kz.tiyn.task.TaskAssigned;
 import kz.tiyn.task.TaskCancelled;
+import kz.tiyn.task.TaskExpired;
 import kz.tiyn.task.TaskRedoRequested;
 import kz.tiyn.task.TaskRejected;
 import kz.tiyn.task.TaskSubmitted;
@@ -161,6 +162,14 @@ final class Task {
         extendDeadline(newDeadlineAt, now);
         decide(TaskState.ASSIGNED, byParentId, cleaned, now);
         events.record(new TaskRedoRequested(id, teenId, cleaned));
+    }
+
+    void expire(Instant now) {
+        if (state != TaskState.ASSIGNED || now.isBefore(deadlineAt)) {
+            return;
+        }
+        state = TaskState.EXPIRED;
+        events.record(new TaskExpired(id, teenId));
     }
 
     void cancel(UUID byParentId, Instant now) {

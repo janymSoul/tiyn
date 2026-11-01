@@ -143,6 +143,17 @@ class TaskService {
         }));
     }
 
+    void expire(UUID id, Instant now) {
+        tx.executeWithoutResult(status -> tasks.find(id).ifPresent(task -> {
+            task.expire(now);
+            List<Object> raised = task.pullEvents();
+            if (!raised.isEmpty()) {
+                tasks.update(task);
+                raised.forEach(events::publishEvent);
+            }
+        }));
+    }
+
     MilestoneProgress progress(Task milestone) {
         return tasks.progress(milestone.id());
     }

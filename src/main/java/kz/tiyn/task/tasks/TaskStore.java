@@ -3,6 +3,7 @@ package kz.tiyn.task.tasks;
 import static kz.tiyn.platform.jooq.task.Tables.TASKS;
 import static kz.tiyn.platform.jooq.task.Tables.TASK_PROOFS;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -78,6 +79,16 @@ class TaskStore {
                 .where(TASKS.MILESTONE_ID.eq(milestoneId))
                 .and(TASKS.STATE.ne(TaskState.CANCELLED.name()))
                 .fetchOne(r -> new MilestoneProgress(r.value1(), r.value2()));
+    }
+
+    List<UUID> findExpiredIds(Instant now, int limit) {
+        return dsl.select(TASKS.ID)
+                .from(TASKS)
+                .where(TASKS.STATE.eq(TaskState.ASSIGNED.name()))
+                .and(TASKS.DEADLINE_AT.le(Instants.toUtc(now)))
+                .orderBy(TASKS.DEADLINE_AT)
+                .limit(limit)
+                .fetch(TASKS.ID);
     }
 
     long pendingReward(UUID teenId) {

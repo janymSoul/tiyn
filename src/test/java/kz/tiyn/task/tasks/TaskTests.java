@@ -9,6 +9,7 @@ import java.util.UUID;
 import kz.tiyn.task.TaskApproved;
 import kz.tiyn.task.TaskAssigned;
 import kz.tiyn.task.TaskCancelled;
+import kz.tiyn.task.TaskExpired;
 import kz.tiyn.task.TaskRedoRequested;
 import kz.tiyn.task.TaskRejected;
 import kz.tiyn.task.TaskSubmitted;
@@ -266,5 +267,29 @@ class TaskTests {
         Task cancelled = milestone(milestoneDeadline);
         cancelled.cancel(PARENT, NOW);
         assertError(() -> Task.assignInMilestone(id, cancelled, fine, NOW, MAX), TaskError.INVALID_MILESTONE);
+    }
+
+    @Test
+    void expireMovesAnOverdueAssignedTaskOnceAndIgnoresEverythingElse() {
+        Task overdue = assigned();
+        overdue.expire(NOW.plusSeconds(3600));
+        overdue.expire(NOW.plusSeconds(7200));
+        assertThat(overdue.state()).isEqualTo(TaskState.EXPIRED);
+        assertThat(overdue.pullEvents()).singleElement().isInstanceOf(TaskExpired.class);
+
+        Task early = assigned();
+        early.expire(NOW.plusSeconds(3599));
+        assertThat(early.state()).isEqualTo(TaskState.ASSIGNED);
+
+        Task submitted = submitted();
+        submitted.expire(NOW.plusSeconds(9000));
+        assertThat(submitted.state()).isEqualTo(TaskState.SUBMITTED);
+
+        Task cancelled = assigned();
+        cancelled.cancel(PARENT, NOW);
+        cancelled.pullEvents();
+        cancelled.expire(NOW.plusSeconds(9000));
+        assertThat(cancelled.state()).isEqualTo(TaskState.CANCELLED);
+        assertThat(cancelled.pullEvents()).isEmpty();
     }
 }
