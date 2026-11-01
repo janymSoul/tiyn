@@ -110,7 +110,7 @@ If a flow ever needs strict ordering (it does not today), that is a reason to ad
 | `PayoutCancelled` | ledger | notification | "request cancelled / declined / expired" → teen |
 | `PenaltyApplied` | ledger | notification | "deduction" → teen |
 
-`FamilyLinked`, `FamilyUnlinked` and all the `Task*` events exist in code. The real listeners today are the two `FamilyUnlinked` handlers in the task module (cancel open tasks, close series) and the ledger's `TaskApproved` handler (credit the wallet); notification consumers arrive in a later step. Event payloads are records in the producing module's root package and are part of its **public contract**.
+`FamilyLinked`, `FamilyUnlinked` and all the `Task*` events exist in code. The real listeners today are the two `FamilyUnlinked` handlers in the task module (cancel open tasks, close series), the ledger's `FamilyUnlinked` handler (cancel the open payout) and its `TaskApproved` handler (credit the wallet); `PayoutRequested`, `PayoutFulfilled` and `PayoutCancelled` exist but have no consumer yet; notification consumers arrive in a later step. Event payloads are records in the producing module's root package and are part of its **public contract**.
 
 ## Before production
 

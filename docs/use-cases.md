@@ -130,13 +130,13 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 ## UC-08 Teen requests a payout
 
 **Flow** (Scenario 2, steps 1–3).
-1. Teen enters an amount ≤ available balance.
+1. Teen enters an amount ≤ available balance and picks the parent to ask (a linked parent). Minimum payout is 100 KZT (configurable).
 2. Ledger, in one transaction: lock the wallet `FOR UPDATE`, compute available (approved − open requests − locked), check amount ≤ available, create the `payouts` row `REQUESTED`, write `PayoutRequested`.
 3. Parent receives a high-priority push.
 
 Nothing is debited yet; the open request only lowers *available*, so several requests cannot exceed the balance.
 
-**Alternates.** Amount > available, ≤ 0, or below a minimum → 422. Double-submit → idempotency key returns the original payout. Teen cancels their own request → `CANCELLED`. Parent declines → `CANCELLED` with a reason. Unanswered for N days → `CANCELLED` by the ticker. Each cancellation publishes `PayoutCancelled`.
+**Alternates.** Amount > available, ≤ 0, or below a minimum → 422. Double-submit → idempotency key returns the original payout. Teen cancels their own request → `CANCELLED`. Parent declines → `CANCELLED` with a reason. Unanswered for 7 days (configurable) → `CANCELLED` by the ticker. Parent unlinked → `CANCELLED` (`UNLINKED`). Each cancellation publishes `PayoutCancelled`.
 
 **One open request per teen.** A second request while one is `REQUESTED` → 409. Enforced by a partial unique index (`UNIQUE (teen_id) WHERE state = 'REQUESTED'`) so concurrent requests cannot both succeed, independent of the wallet lock.
 

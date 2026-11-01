@@ -210,15 +210,32 @@ public interface BalanceReader {
 `Balance` is a value object with approved, locked and available amounts.
 (Read-only. "Pending" is not here; it comes from `task.PendingReader`. All *writes* arrive via events or payout commands, never a generic "setBalance".)
 
-**Publishes:** `PayoutRequested(payoutId, teenId, parentId, amount, currency)` → notification. `PayoutFulfilled`, `PayoutCancelled`, `PenaltyApplied`.
+**Publishes:** `PayoutRequested(payoutId, teenId, parentId, amount, currency)`, `PayoutFulfilled(payoutId, teenId, parentId, amount, currency)`, `PayoutCancelled(payoutId, teenId, parentId, reason)` (reason: `TEEN_CANCELLED`, `DECLINED`, `EXPIRED`, `UNLINKED`), all → notification (not built yet). `PenaltyApplied` comes with penalties. The payout store publishes what the `Payout` aggregate recorded.
 
-**Subscribes:** `TaskApproved` → credit the teen's wallet. The credit is idempotent: the journal entry key is `REWARD-TASK-{taskId}`, checked under the wallet's row lock (which serialises every credit for that teen) and backed by the `UNIQUE` key and a one-reward-per-task index.
+**Subscribes:** `FamilyUnlinked` → cancel the pair's open payout (`UNLINKED`; state-based, a replay while the pair is linked again does nothing). `TaskApproved` → credit the teen's wallet. The credit is idempotent: the journal entry key is `REWARD-TASK-{taskId}`, checked under the wallet's row lock (which serialises every credit for that teen) and backed by the `UNIQUE` key and a one-reward-per-task index.
 
 **The wallet is created lazily.** The first credit runs `INSERT ... ON CONFLICT DO NOTHING` and then locks the row, so concurrent first credits are safe. There is deliberately no `FamilyLinked` listener: events are delivered unordered, so a credit can arrive before any link handler, and the credit must be able to create the wallet itself. A teen without a wallet reads as a zero balance.
 
-**Built so far (step 6a):** the `Wallet` aggregate (final class, identity equality, pure), the append-only `LedgerEntry` (kind `TASK_REWARD` only), `RewardListener`, `BalanceReader`/`Balance`, and `GET /balance` (teen only; a parent gets `forbidden`; amounts in minor units). The ledger publishes no events yet; notification derives "reward credited" from `TaskApproved`. Payouts, penalties and goals are later steps.
+**Built so far (steps 6a, 6b):** the `Wallet` aggregate, the append-only `LedgerEntry` (kinds `TASK_REWARD`, `PAYOUT`), `RewardListener`, `BalanceReader`/`Balance` and `GET /balance` (teen only; amounts in minor units; `available` already excludes the open payout request). Payouts live in the same `wallet` feature package because fulfilment changes `Payout`, `Wallet` and the journal in one transaction. Penalties and goals are step 6c.
 
-**Time-driven work** (`Ticker`): cancel `REQUESTED` payouts older than the expiry window.
+**Payout API.** The teen names the parent (who must be linked); the payout is addressed to that parent only.
+
+| Route | Caller | Notes |
+|---|---|---|
+| `POST /payouts` | teen | `{parentId, amount}` + required `Idempotency-Key` (scoped per teen; replay returns the original) |
+| `GET /payouts?state=` | teen (own) / parent (addressed to them) | newest first, capped at 100 |
+| `GET /payouts/{id}` | teen owner / addressed parent | anyone else gets `not_found` |
+| `POST /payouts/{id}/fulfil` | parent, still linked | debits the wallet; repeating is a no-op |
+| `POST /payouts/{id}/decline` | parent, still linked | `DECLINED` |
+| `POST /payouts/{id}/cancel` | teen | `TEEN_CANCELLED` |
+
+Errors: `forbidden` 403, `not_found` 404, `invalid_amount` / `amount_too_small` / `insufficient_funds` / `parent_required` / `invalid_idempotency_key` / `invalid_filter` 422, `payout_already_open` / `invalid_transition` 409. Repeating the same cancellation is a no-op; resolving a payout another way is `invalid_transition`. The fulfil debit must fit `balance − locked` (funds locked in goals can never be paid out).
+
+**Config.** `tiyn.ledger.min-payout-amount` (env `LEDGER_MIN_PAYOUT_AMOUNT`, default 10000 minor units = 100 KZT) and `tiyn.ledger.payout-expiry` (env `LEDGER_PAYOUT_EXPIRY`, default `P7D`).
+
+**Lock order.** Every payout command locks the wallet row first and the payout row second, so concurrent commands cannot deadlock; the wallet lock also serialises requests per teen (the partial unique index is the backstop).
+
+**Time-driven work** (`Ticker`): `PayoutExpiryTicker` cancels `REQUESTED` payouts older than `payout-expiry` (reason `EXPIRED`, no `resolved_by`), each in its own transaction.
 
 **Owns:** `ledger_entries`, `wallets`, `payouts`, `savings_goals`. The ledger needs no separate idempotency table: `ledger_entries.idempotency_key` and `payouts.idempotency_key` are `UNIQUE` and are the guard.
 
