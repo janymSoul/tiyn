@@ -99,8 +99,8 @@ One such black-box test per PRD user scenario (Scenario 1: milestone; Scenario 2
 
 - **Google:** `FakeGoogleConfig` supplies a `@Primary` `GoogleVerifier`; build tokens with `FakeGoogleConfig.tokenFor(sub, name)`. The real `JwksGoogleVerifier` has its own unit tests that point it at an unreachable key set and at malformed tokens.
 - **Our JWTs:** `TestTokens.sign(...)` builds tokens with any secret, algorithm, issuer, subject, role and expiry, for the negative cases in `PlatformSecurityTests`. Issue valid ones with `AccessTokenIssuer`.
-- **S3 / media:** the `media.Storage` interface is faked in service tests. Use a SeaweedFS container (same S3 API) only when upload behaviour itself is under test.
-- **FCM / push:** the notification module's FCM client sits behind an interface; assert "a push with this payload to this device" against a fake. Never call real FCM in tests.
+- **S3 / media:** the `media.Storage` interface is faked in service tests. `S3StorageTests` runs the adapter against a SeaweedFS container configured from `docker/seaweedfs-s3.json` (SeaweedFS rejects signed requests without an identity). `ImageSanitizerTests` covers EXIF removal and rotation.
+- **FCM / push:** the notification module's FCM client sits behind an interface; assert "a push with this payload to this device" against a fake. `FcmPushSenderTests` checks the message fields and error mapping with a mocked `FirebaseMessaging`. Never call real FCM in tests.
 
 ## Coverage expectations
 

@@ -20,10 +20,19 @@
     <spring-modulith.version>1.4.3</spring-modulith.version>
     <testcontainers-jooq-codegen.version>0.0.4</testcontainers-jooq-codegen.version>
     <shedlock.version>6.3.1</shedlock.version>
+    <awssdk.version>2.29.52</awssdk.version>
+    <firebase-admin.version>9.4.3</firebase-admin.version>
   </properties>
 
   <dependencyManagement>
     <dependencies>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${awssdk.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
       <dependency>
         <groupId>org.springframework.modulith</groupId>
         <artifactId>spring-modulith-bom</artifactId>
@@ -95,6 +104,19 @@
       <artifactId>spring-modulith-starter-jdbc</artifactId>
     </dependency>
 
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>url-connection-client</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.google.firebase</groupId>
+      <artifactId>firebase-admin</artifactId>
+      <version>${firebase-admin.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>

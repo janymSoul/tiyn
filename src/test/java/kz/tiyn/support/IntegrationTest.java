@@ -16,6 +16,8 @@ import org.springframework.test.context.TestPropertySource;
         properties = {
             "tiyn.jwt.secret=" + TestTokens.SECRET,
             "tiyn.google.client-ids=test-client-id",
+            "tiyn.media.storage=memory",
+            "tiyn.notification.sender=logging",
             "tiyn.tick.interval=PT1H"
         })
 public @interface IntegrationTest {}

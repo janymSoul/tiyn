@@ -1,0 +1,5 @@
+tiyn:
+  media:
+    storage: memory
+  notification:
+    sender: logging

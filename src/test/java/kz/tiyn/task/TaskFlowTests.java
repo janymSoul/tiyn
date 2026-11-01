@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import kz.tiyn.support.IntegrationTest;
+import kz.tiyn.support.TestImages;
 import kz.tiyn.task.TaskFixtures.Family;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -76,7 +77,7 @@ class TaskFlowTests {
         UUID id = fx.createTask(f, 100);
 
         mvc.perform(multipart("/tasks/" + id + "/submit")
-                        .file(new MockMultipartFile("file", "p.png", "image/png", new byte[] {1, 2, 3}))
+                        .file(new MockMultipartFile("file", "p.png", "image/png", TestImages.png(8, 8)))
                         .header("Authorization", f.teen().bearer())
                         .header("Idempotency-Key", "img-1"))
                 .andExpect(status().isOk())
