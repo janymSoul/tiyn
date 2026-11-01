@@ -120,10 +120,12 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 **Flow.** Dashboard shows *Balance* and *Available* amounts, *Pending* funds (TEN-01), and tasks grouped into "Daily Chores" and "Major Milestones" (TEN-02). A milestone shows progress computed from its approved tasks ("3 of 5").
 
+**As built.** One call, `GET /dashboard` (teen only), returns the balance (balance, locked, available), pending funds, tasks split into `chores` and `milestones` with progress, active savings goals with their saved amount, and the open payout request if any. Tasks are open work plus those decided in the last 7 days (configurable), capped at 50; older history is `GET /tasks`. See `docs/modules.md` (Dashboard).
+
 **Support needed.**
-- ledger: `BalanceReader.balance` → approved, locked, available.
-- task: `PendingReader.pendingReward` → sum of rewards of `SUBMITTED` tasks; plus a list endpoint filtered by teen and state.
-- The dashboard HTTP handler composes both. Ledger never reads task tables.
+- ledger: `WalletOverviewReader.overview` → balance, active goals, open payout (one read-only transaction).
+- task: `TaskBoardReader.board` → tasks and milestone progress; `PendingReader.pendingReward` → sum of rewards of `SUBMITTED` tasks.
+- The `dashboard` module composes them. Ledger never reads task tables.
 
 ---
 
