@@ -1,0 +1,143 @@
+package kz.tiyn.task.tasks;
+
+import static kz.tiyn.platform.jooq.task.Tables.TASKS;
+import static kz.tiyn.platform.jooq.task.Tables.TASK_PROOFS;
+
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import kz.tiyn.platform.jooq.task.tables.records.TasksRecord;
+import kz.tiyn.platform.tx.ConflictException;
+import org.jooq.Condition;
+import org.jooq.DSLContext;
+import org.jooq.impl.DSL;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Repository;
+
+@Repository
+class TaskStore {
+
+    private final DSLContext dsl;
+
+    TaskStore(DSLContext dsl) {
+        this.dsl = dsl;
+    }
+
+    void insert(Task task) {
+        dsl.insertInto(TASKS)
+                .set(TASKS.ID, task.id())
+                .set(TASKS.SERIES_ID, task.seriesId())
+                .set(TASKS.OCCURRENCE_DATE, task.occurrenceDate())
+                .set(TASKS.MILESTONE_ID, task.milestoneId())
+                .set(TASKS.PARENT_ID, task.parentId())
+                .set(TASKS.TEEN_ID, task.teenId())
+                .set(TASKS.KIND, task.kind().name())
+                .set(TASKS.TITLE, task.title())
+                .set(TASKS.DESCRIPTION, task.description())
+                .set(TASKS.REWARD_AMOUNT, task.reward().amount())
+                .set(TASKS.CURRENCY, task.reward().currency())
+                .set(TASKS.STATE, task.state().name())
+                .set(TASKS.DEADLINE_AT, utc(task.deadlineAt()))
+                .execute();
+    }
+
+    Optional<Task> find(UUID id) {
+        return dsl.selectFrom(TASKS).where(TASKS.ID.eq(id)).fetchOptional().map(this::toTask);
+    }
+
+    List<Task> list(UUID parentId, UUID teenId, TaskState state) {
+        Condition where = DSL.noCondition();
+        if (parentId != null) {
+            where = where.and(TASKS.PARENT_ID.eq(parentId));
+        }
+        if (teenId != null) {
+            where = where.and(TASKS.TEEN_ID.eq(teenId));
+        }
+        if (state != null) {
+            where = where.and(TASKS.STATE.eq(state.name()));
+        }
+        return dsl.selectFrom(TASKS).where(where).orderBy(TASKS.CREATED_AT.desc()).limit(200).fetch().stream()
+                .map(this::toTask)
+                .toList();
+    }
+
+    long pendingReward(UUID teenId) {
+        Long sum = dsl.select(DSL.coalesce(DSL.sum(TASKS.REWARD_AMOUNT), 0L).cast(Long.class))
+                .from(TASKS)
+                .where(TASKS.TEEN_ID.eq(teenId).and(TASKS.STATE.eq(TaskState.SUBMITTED.name())))
+                .fetchOne(0, Long.class);
+        return sum == null ? 0 : sum;
+    }
+
+    void update(Task task) {
+        int updated = dsl.update(TASKS)
+                .set(TASKS.STATE, task.state().name())
+                .set(TASKS.SUBMITTED_AT, task.submittedAt() == null ? null : utc(task.submittedAt()))
+                .set(TASKS.DECIDED_AT, task.decidedAt() == null ? null : utc(task.decidedAt()))
+                .set(TASKS.DECIDED_BY, task.decidedBy())
+                .set(TASKS.DECISION_NOTE, task.decisionNote())
+                .set(TASKS.VERSION, task.version() + 1)
+                .where(TASKS.ID.eq(task.id()).and(TASKS.VERSION.eq(task.version())))
+                .execute();
+        if (updated == 0) {
+            throw new ConflictException(new IllegalStateException("stale task " + task.id()));
+        }
+        try {
+            for (Proof proof : task.unsavedProofs()) {
+                dsl.insertInto(TASK_PROOFS)
+                        .set(TASK_PROOFS.ID, proof.id())
+                        .set(TASK_PROOFS.TASK_ID, task.id())
+                        .set(TASK_PROOFS.ATTEMPT_NO, proof.attemptNo())
+                        .set(TASK_PROOFS.OBJECT_KEY, proof.objectKey())
+                        .set(TASK_PROOFS.TEXT_BODY, proof.textBody())
+                        .execute();
+            }
+        } catch (DuplicateKeyException e) {
+            throw new ConflictException(e);
+        }
+    }
+
+    private Task toTask(TasksRecord r) {
+        var snapshot = new TaskSnapshot(
+                r.getId(),
+                r.getSeriesId(),
+                r.getOccurrenceDate(),
+                r.getMilestoneId(),
+                r.getParentId(),
+                r.getTeenId(),
+                TaskKind.valueOf(r.getKind()),
+                r.getTitle(),
+                r.getDescription(),
+                r.getRewardAmount(),
+                r.getCurrency(),
+                TaskState.valueOf(r.getState()),
+                r.getDeadlineAt().toInstant(),
+                r.getVersion(),
+                instant(r.getSubmittedAt()),
+                instant(r.getDecidedAt()),
+                r.getDecidedBy(),
+                r.getDecisionNote());
+        List<Proof> proofs = dsl.selectFrom(TASK_PROOFS)
+                .where(TASK_PROOFS.TASK_ID.eq(r.getId()))
+                .orderBy(TASK_PROOFS.ATTEMPT_NO)
+                .fetch()
+                .map(p -> new Proof(
+                        p.getId(),
+                        p.getAttemptNo(),
+                        p.getObjectKey(),
+                        p.getTextBody(),
+                        p.getCreatedAt().toInstant()));
+        return Task.restore(snapshot, proofs);
+    }
+
+    private static Instant instant(OffsetDateTime value) {
+        return value == null ? null : value.toInstant();
+    }
+
+    private static OffsetDateTime utc(Instant value) {
+        return OffsetDateTime.ofInstant(value, ZoneOffset.UTC);
+    }
+}
