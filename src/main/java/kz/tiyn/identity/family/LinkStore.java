@@ -1,11 +1,13 @@
 package kz.tiyn.identity.family;
 
 import static kz.tiyn.platform.jooq.identity.Tables.FAMILY_LINKS;
+import static kz.tiyn.platform.jooq.identity.Tables.USERS;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.identity.tables.records.FamilyLinksRecord;
+import kz.tiyn.platform.security.Role;
 import kz.tiyn.platform.time.Instants;
 import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.DSLContext;
@@ -38,6 +40,20 @@ class LinkStore {
                 .where(FAMILY_LINKS.PARENT_ID.eq(parentId))
                 .and(FAMILY_LINKS.TEEN_ID.eq(teenId))
                 .and(FAMILY_LINKS.REMOVED_AT.isNull()));
+    }
+
+    List<FamilyMember> activeMembers(UUID userId, Role role) {
+        boolean parent = role == Role.PARENT;
+        var self = parent ? FAMILY_LINKS.PARENT_ID : FAMILY_LINKS.TEEN_ID;
+        var other = parent ? FAMILY_LINKS.TEEN_ID : FAMILY_LINKS.PARENT_ID;
+        return dsl.select(USERS.ID, USERS.ROLE, USERS.DISPLAY_NAME)
+                .from(FAMILY_LINKS)
+                .join(USERS)
+                .on(USERS.ID.eq(other))
+                .where(self.eq(userId).and(FAMILY_LINKS.REMOVED_AT.isNull()))
+                .orderBy(USERS.DISPLAY_NAME, USERS.ID)
+                .fetch(r ->
+                        new FamilyMember(r.get(USERS.ID), Role.valueOf(r.get(USERS.ROLE)), r.get(USERS.DISPLAY_NAME)));
     }
 
     void save(FamilyLink link) {

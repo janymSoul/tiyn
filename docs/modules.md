@@ -102,7 +102,8 @@ Both are published in the transaction that locks the link row, so changes to one
 |---|---|---|---|
 | `POST /auth/google` `{idToken, role?, displayName?}` | none | Sign in or register; returns `{token, user}` | 401 `invalid_identity`, 422 `invalid_role` / `invalid_display_name` |
 | `GET /me` | bearer | The caller's account | 401 `unauthenticated` |
-| `POST /links/join` `{code}` | teen | Link to the parent who owns the code; returns `{parent: {displayName}}` | 403 `forbidden`, 422 `invalid_join_code` (unknown and malformed codes look the same) |
+| `POST /links/join` `{code}` | teen | Link to the parent who owns the code; returns `{parent: {id, displayName}}` | 403 `forbidden`, 422 `invalid_join_code` (unknown and malformed codes look the same) |
+| `GET /family` | bearer | The caller's active links: a parent's teens or a teen's parents, as `{members: [{id, role, displayName}]}` | 401 `unauthenticated` |
 | `DELETE /links/{teenId}` | parent | Remove the link to a teen; repeating it is harmless (204) | 403 `forbidden`, 404 `not_found`, 400 `invalid_teen_id` |
 
 **Configuration:** `JWT_SECRET`, `JWT_TTL`, `GOOGLE_CLIENT_IDS` (see `.env.example`).

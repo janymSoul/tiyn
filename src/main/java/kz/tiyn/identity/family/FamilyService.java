@@ -1,6 +1,7 @@
 package kz.tiyn.identity.family;
 
 import java.time.Clock;
+import java.util.List;
 import java.util.UUID;
 import kz.tiyn.identity.account.AccountDirectory;
 import kz.tiyn.identity.account.User;
@@ -26,11 +27,15 @@ class FamilyService {
         this.clock = clock;
     }
 
-    String join(UUID teenId, String rawCode) {
+    User join(UUID teenId, String rawCode) {
         User teen = accounts.requireUser(teenId);
         User parent = accounts.requireParentByJoinCode(rawCode);
         ConflictRetry.run(() -> linkOnce(parent, teen), conflict());
-        return parent.displayName();
+        return parent;
+    }
+
+    List<FamilyMember> members(UUID userId, Role role) {
+        return links.activeMembers(userId, role);
     }
 
     void unlink(UUID parentId, UUID teenId) {

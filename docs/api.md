@@ -55,8 +55,18 @@ Returns the same `user` object. 401 `unauthenticated` if the user no longer exis
 
 Link the teen to a parent by the parent's code. Case and surrounding spaces are ignored. Re-joining after an unlink works.
 
-Request `{ "code": "SXVPUR" }`. Response `200`: `{ "parent": { "displayName": "Aigerim" } }`.
+Request `{ "code": "SXVPUR" }`. Response `200`: `{ "parent": { "id": "…", "displayName": "Aigerim" } }`. Keep the parent `id`: payouts are addressed to it.
 Errors: 422 `invalid_join_code`, 403 `forbidden` (caller is not a teen), 409 `conflict`.
+
+### `GET /family`
+
+The people the caller is linked to right now, ordered by display name. A parent gets their teens, a teen gets their parents. This is how a parent learns the `teenId` needed to create the first task, and how a teen learns the `parentId` for payouts. Unlinked people are not listed.
+
+Response `200`:
+```json
+{ "members": [ { "id": "…", "role": "TEEN", "displayName": "Dana" } ] }
+```
+`members` is empty when nobody is linked. A client should call it after sign-in and after joining or unlinking.
 
 ### `DELETE /links/{teenId}` (parent)
 
@@ -228,11 +238,10 @@ Each event is sent at most once per recipient, even if the server redelivers it.
 
 These are facts about the current API, listed so they are decided on purpose and not found in the app:
 
-1. **A parent cannot discover their linked teens.** `POST /links/join` returns only the parent's name to the teen, `/me` has no family section, and the "family linked" push carries no ids. A parent's first `POST /tasks` needs a `teenId` that no endpoint gives them (it appears only in tasks that already exist). Needed: something like `GET /family` returning linked users, and `teenId`/`parentId` in the join response.
-2. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
-3. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
-4. **No pagination, ordering guarantees or `If-Modified-Since`.** Fine at MVP size, painful after months of tasks.
-5. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
-6. **Creation endpoints are not idempotent** (`POST /tasks`, `/goals`, `/task-series`), so a retry after a network failure duplicates.
-7. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
-8. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
+1. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
+2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
+3. **No pagination, ordering guarantees or `If-Modified-Since`.** Fine at MVP size, painful after months of tasks.
+4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
+5. **Creation endpoints are not idempotent** (`POST /tasks`, `/goals`, `/task-series`), so a retry after a network failure duplicates.
+6. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
+7. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
