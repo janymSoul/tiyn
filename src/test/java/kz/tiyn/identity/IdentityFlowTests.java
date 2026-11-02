@@ -196,6 +196,71 @@ class IdentityFlowTests {
         assertThat(directory.areLinked(id(father), id(second))).isFalse();
     }
 
+    @Test
+    void joinResponseCarriesTheParentIdSoTheTeenCanAddressPayouts() throws Exception {
+        JsonNode parent = signIn(uniqueSub(), "PARENT", "Aigul");
+        JsonNode teen = signIn(uniqueSub(), "TEEN", "Dana");
+
+        send("/links/join", codeBody(parent), bearer(teen))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parent.id").value(id(parent).toString()));
+    }
+
+    @Test
+    void familyListsTheLinkedTeensForAParentAndTheLinkedParentsForATeen() throws Exception {
+        JsonNode mother = signIn(uniqueSub(), "PARENT", "Mother");
+        JsonNode father = signIn(uniqueSub(), "PARENT", "Father");
+        JsonNode dana = signIn(uniqueSub(), "TEEN", "Dana");
+        JsonNode timur = signIn(uniqueSub(), "TEEN", "Timur");
+        JsonNode stranger = signIn(uniqueSub(), "TEEN", "Stranger");
+        send("/links/join", codeBody(mother), bearer(dana)).andExpect(status().isOk());
+        send("/links/join", codeBody(mother), bearer(timur)).andExpect(status().isOk());
+        send("/links/join", codeBody(father), bearer(dana)).andExpect(status().isOk());
+
+        family(bearer(mother))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.members.length()").value(2))
+                .andExpect(jsonPath("$.members[0].id").value(id(dana).toString()))
+                .andExpect(jsonPath("$.members[0].role").value("TEEN"))
+                .andExpect(jsonPath("$.members[0].displayName").value("Dana"))
+                .andExpect(jsonPath("$.members[1].id").value(id(timur).toString()));
+        family(bearer(dana))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.members.length()").value(2))
+                .andExpect(jsonPath("$.members[0].role").value("PARENT"))
+                .andExpect(jsonPath("$.members[0].displayName").value("Father"))
+                .andExpect(jsonPath("$.members[1].displayName").value("Mother"));
+        family(bearer(stranger))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.members.length()").value(0));
+    }
+
+    @Test
+    void anUnlinkedMemberDisappearsFromFamilyAndReappearsAfterRejoining() throws Exception {
+        JsonNode parent = signIn(uniqueSub(), "PARENT", "Aigul");
+        JsonNode teen = signIn(uniqueSub(), "TEEN", "Dana");
+        send("/links/join", codeBody(parent), bearer(teen)).andExpect(status().isOk());
+
+        mvc.perform(MockMvcRequestBuilders.delete("/links/" + id(teen)).header("Authorization", bearer(parent)))
+                .andExpect(status().isNoContent());
+        family(bearer(parent)).andExpect(jsonPath("$.members.length()").value(0));
+        family(bearer(teen)).andExpect(jsonPath("$.members.length()").value(0));
+
+        send("/links/join", codeBody(parent), bearer(teen)).andExpect(status().isOk());
+        family(bearer(parent)).andExpect(jsonPath("$.members.length()").value(1));
+    }
+
+    @Test
+    void familyNeedsAToken() throws Exception {
+        mvc.perform(MockMvcRequestBuilders.get("/family"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("unauthenticated"));
+    }
+
+    private ResultActions family(String authorization) throws Exception {
+        return mvc.perform(get("/family").header("Authorization", authorization));
+    }
+
     private long linkedEvents() {
         return events.stream(FamilyLinked.class).count();
     }

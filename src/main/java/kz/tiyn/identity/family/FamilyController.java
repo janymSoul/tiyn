@@ -1,14 +1,17 @@
 package kz.tiyn.identity.family;
 
 import java.util.UUID;
+import kz.tiyn.identity.account.User;
 import kz.tiyn.identity.account.error.IdentityError;
 import kz.tiyn.identity.account.error.IdentityException;
+import kz.tiyn.identity.family.dto.FamilyResponse;
 import kz.tiyn.identity.family.dto.JoinRequest;
 import kz.tiyn.identity.family.dto.JoinResponse;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,7 +28,15 @@ class FamilyController {
 
     @PostMapping("/links/join")
     JoinResponse join(@AuthenticationPrincipal Principal principal, @RequestBody JoinRequest request) {
-        return new JoinResponse(new JoinResponse.Parent(service.join(principal.userId(), request.code())));
+        User parent = service.join(principal.userId(), request.code());
+        return new JoinResponse(new JoinResponse.Parent(parent.id(), parent.displayName()));
+    }
+
+    @GetMapping("/family")
+    FamilyResponse family(@AuthenticationPrincipal Principal principal) {
+        return new FamilyResponse(service.members(principal.userId(), principal.role()).stream()
+                .map(m -> new FamilyResponse.Member(m.id(), m.role().name(), m.displayName()))
+                .toList());
     }
 
     @DeleteMapping("/links/{teenId}")
