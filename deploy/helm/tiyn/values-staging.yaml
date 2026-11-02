@@ -1,0 +1,35 @@
+config:
+  mediaStorage: s3
+  notificationSender: fcm
+  s3:
+    endpoint: http://tiyn-seaweedfs:8333
+    publicEndpoint: https://s3-staging.tiyn.dev
+    bucket: tiyn-proofs
+
+secret:
+  existingSecret: tiyn-secrets
+
+ingress:
+  enabled: true
+  className: traefik
+  host: api-staging.tiyn.dev
+  tlsSecret: tiyn-api-tls
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+fcm:
+  existingSecret: tiyn-fcm
+  dryRun: true
+
+postgres:
+  enabled: false
+
+seaweedfs:
+  enabled: true
+  ingress:
+    enabled: true
+    className: traefik
+    host: s3-staging.tiyn.dev
+    tlsSecret: tiyn-s3-tls
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
