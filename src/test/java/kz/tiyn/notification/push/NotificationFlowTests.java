@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Import;
+import org.springframework.modulith.events.IncompleteEventPublications;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -57,6 +58,9 @@ class NotificationFlowTests {
 
     @Autowired
     List<Ticker> tickers;
+
+    @Autowired
+    IncompleteEventPublications incompletePublications;
 
     TaskFixtures fx;
 
@@ -242,6 +246,30 @@ class NotificationFlowTests {
 
         awaitPush(teen, "FAMILY_UNLINKED");
         assertNoPush(parent, "FAMILY_UNLINKED");
+    }
+
+    @Test
+    void aFailingTeenDeviceDoesNotResendTheParentWelcomeOnRedelivery() throws Exception {
+        Unjoined unjoined = fx.unjoinedFamily();
+        Family f = unjoined.family();
+        String teen = device(f.teen(), "ru");
+        String parent = device(f.parent(), "ru");
+        sender.failWith(teen, new IllegalStateException("fcm unavailable"));
+
+        fx.join(unjoined);
+        awaitPush(parent, "FAMILY_LINKED_PARENT");
+
+        for (int attempt = 0; attempt < 3; attempt++) {
+            incompletePublications.resubmitIncompletePublicationsOlderThan(Duration.ZERO);
+        }
+        assertThat(sender.sentTo(teen)).isEmpty();
+        assertNoPush(parent, "FAMILY_LINKED_TEEN");
+        assertThat(sender.sentTo(parent, "FAMILY_LINKED_PARENT")).hasSize(1);
+
+        sender.stopFailing(teen);
+        incompletePublications.resubmitIncompletePublicationsOlderThan(Duration.ZERO);
+        awaitPush(teen, "FAMILY_LINKED_TEEN");
+        assertThat(sender.sentTo(parent, "FAMILY_LINKED_PARENT")).hasSize(1);
     }
 
     @Test

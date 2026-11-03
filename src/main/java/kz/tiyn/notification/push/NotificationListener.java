@@ -144,10 +144,13 @@ class NotificationListener {
     }
 
     @ApplicationModuleListener
-    void on(FamilyLinked e) {
-        String key = "FamilyLinked:" + e.parentId() + ":" + e.teenId() + ":" + e.generation();
-        notify(key, e.parentId(), NotificationType.FAMILY_LINKED_PARENT, Map.of());
-        notify(key, e.teenId(), NotificationType.FAMILY_LINKED_TEEN, Map.of());
+    void welcomeParent(FamilyLinked e) {
+        notify(familyLinkedKey(e), e.parentId(), NotificationType.FAMILY_LINKED_PARENT, Map.of());
+    }
+
+    @ApplicationModuleListener
+    void welcomeTeen(FamilyLinked e) {
+        notify(familyLinkedKey(e), e.teenId(), NotificationType.FAMILY_LINKED_TEEN, Map.of());
     }
 
     @ApplicationModuleListener
@@ -163,6 +166,10 @@ class NotificationListener {
         Map<String, String> payload = new HashMap<>(data);
         payload.put("type", type.name());
         notifications.notify(key, recipient, type, List.of(args), Map.copyOf(payload));
+    }
+
+    private static String familyLinkedKey(FamilyLinked e) {
+        return "FamilyLinked:" + e.parentId() + ":" + e.teenId() + ":" + e.generation();
     }
 
     private static Map<String, String> taskData(UUID taskId) {
