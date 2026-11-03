@@ -72,13 +72,45 @@ class IdentityFlowTests {
                 .andExpect(jsonPath("$.error").value("invalid_role"));
         send("/auth/google", body(tokenFor(uniqueSub(), "x"), null, "x"), null)
                 .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.error").value("invalid_role"));
+                .andExpect(jsonPath("$.error").value("role_required"));
         send("/auth/google", body(tokenFor(uniqueSub(), null), "TEEN", "   "), null)
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").value("invalid_display_name"));
         send("/auth/google", "{\"idToken\":\"x\",\"unknown\":1}", null)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("invalid_body"));
+    }
+
+    @Test
+    void newAccountWithoutRoleIsRejectedAndCreatesNothingSoTheSameTokenCanRetryWithARole() throws Exception {
+        String idToken = tokenFor(uniqueSub(), "Aigul");
+
+        send("/auth/google", body(idToken, null, null), null)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("role_required"));
+        JsonNode retried = signInRaw(idToken, "PARENT", null);
+
+        assertThat(retried.at("/user/role").asText()).isEqualTo("PARENT");
+        assertThat(retried.at("/user/joinCode").asText()).matches("[A-Z2-9]{6}");
+    }
+
+    @Test
+    void existingAccountSignsInWithoutARoleAndKeepsItsStoredRole() throws Exception {
+        String sub = uniqueSub();
+        JsonNode first = signIn(sub, "PARENT", "Aigul");
+
+        JsonNode second = signInRaw(tokenFor(sub, "Aigul"), null, null);
+
+        assertThat(second.at("/user/id").asText())
+                .isEqualTo(first.at("/user/id").asText());
+        assertThat(second.at("/user/role").asText()).isEqualTo("PARENT");
+    }
+
+    @Test
+    void blankRoleForANewAccountIsRoleRequired() throws Exception {
+        send("/auth/google", body(tokenFor(uniqueSub(), "x"), "  ", null), null)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("role_required"));
     }
 
     @Test

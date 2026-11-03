@@ -36,7 +36,9 @@ Request:
 ```json
 { "idToken": "<google id token>", "role": "PARENT", "displayName": "Aigerim" }
 ```
-- `role`: `PARENT` or `TEEN`, upper-case, **only used the first time** an account signs in. An existing account keeps its role and name, and the fields are ignored.
+- `role`: **optional**; required only when the account doesn't exist yet. `PARENT` or `TEEN`, upper-case, **only used the first time** an account signs in. An existing account keeps its role and name, and the fields are ignored.
+
+Client flow: call without `role`. On `422 role_required` (the account is new and nothing was created), ask the user for their role and call again with the same `idToken` and the `role`.
 - `displayName`: optional, at most 100 characters; falls back to the Google profile name.
 
 Response `200`:
@@ -45,7 +47,7 @@ Response `200`:
 ```
 `joinCode` appears only for parents (six characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). One Google account is one user with one role.
 
-Errors: 401 `invalid_identity` (bad or wrong-audience token), 422 `invalid_role`, 422 `invalid_display_name`, 409 `conflict`, 503 `identity_provider_unavailable`.
+Errors: 401 `invalid_identity` (bad or wrong-audience token), 422 `role_required` (new account, no `role`), 422 `invalid_role`, 422 `invalid_display_name`, 409 `conflict`, 503 `identity_provider_unavailable`.
 
 ### `GET /me`
 
