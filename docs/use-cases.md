@@ -26,7 +26,7 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 ## UC-01 Sign in and link a teen to a family
 
 **Flow.**
-1. Parent signs in with Google, choosing the role `PARENT` at first sign-in; identity verifies the Google ID token and issues the app JWT (first sign-in creates the account and its permanent join code). An account has exactly one role.
+1. Parent signs in with Google without a role; if the account is new, identity answers `role_required` and creates nothing, and the app asks for the role and signs in again with the same token and `PARENT`; identity verifies the Google ID token and issues the app JWT (first sign-in creates the account and its permanent join code). An account has exactly one role.
 2. Parent shares their join code with the teen (shown in the app; sent in a messenger, SMS, or told in person).
 3. Teen signs in with Google (first sign-in creates the teen account) and enters the code.
 4. Identity finds the parent by code and creates the `family_links` row.

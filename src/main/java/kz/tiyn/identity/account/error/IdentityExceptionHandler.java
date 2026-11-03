@@ -22,7 +22,8 @@ class IdentityExceptionHandler {
             case INVALID_IDENTITY, UNAUTHENTICATED -> HttpStatus.UNAUTHORIZED;
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
             case NOT_FOUND -> HttpStatus.NOT_FOUND;
-            case INVALID_ROLE, INVALID_DISPLAY_NAME, INVALID_JOIN_CODE -> HttpStatus.UNPROCESSABLE_ENTITY;
+            case ROLE_REQUIRED, INVALID_ROLE, INVALID_DISPLAY_NAME, INVALID_JOIN_CODE -> HttpStatus
+                    .UNPROCESSABLE_ENTITY;
             case INVALID_TEEN_ID -> HttpStatus.BAD_REQUEST;
             case CONFLICT -> HttpStatus.CONFLICT;
             case IDENTITY_PROVIDER_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;

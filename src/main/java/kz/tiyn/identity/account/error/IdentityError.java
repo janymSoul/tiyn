@@ -5,6 +5,7 @@ public enum IdentityError {
     UNAUTHENTICATED,
     FORBIDDEN,
     NOT_FOUND,
+    ROLE_REQUIRED,
     INVALID_ROLE,
     INVALID_DISPLAY_NAME,
     INVALID_JOIN_CODE,
