@@ -96,7 +96,7 @@ If a flow ever needs strict ordering (it does not today), that is a reason to ad
 
 | Event | Producer | Consumers | Effect |
 |---|---|---|---|
-| `FamilyLinked` | identity | notification | welcome push to both sides (the ledger creates wallets lazily on the first credit) |
+| `FamilyLinked` | identity | notification (one listener per side) | welcome push to both sides, each in its own publication so one side's failure never re-sends the other's push (the ledger creates wallets lazily on the first credit) |
 | `FamilyUnlinked` | identity | task, notification | cancel the teen's open tasks for that parent; tell the teen |
 | `TaskAssigned` | task | notification | "new task / milestone" → teen |
 | `TaskSubmitted` | task | notification | "proof pending" → parent |
