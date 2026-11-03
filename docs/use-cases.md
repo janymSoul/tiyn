@@ -32,10 +32,10 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 4. Identity finds the parent by code and creates the `family_links` row.
 5. `FamilyLinked(parentId, teenId, generation)` is published. The API for these steps is in `docs/modules.md` ("HTTP API").
 
-**Alternates.** Unknown code → generic "invalid code". Repeated failures → rate limit per device/IP. Teen already linked to this parent → no-op. A teen entering a second parent's code → links to that parent too. Parent removes a link later → teen's tasks are cancelled, wallet history is kept.
+**Alternates.** Unknown code → generic "invalid code". Repeated failures → 429 `join_rate_limited` after 5 attempts per account within 15 minutes (counter in `identity.join_attempts`, reset by a successful join). Teen already linked to this parent → no-op. A teen entering a second parent's code → links to that parent too. Parent removes a link later → teen's tasks are cancelled, wallet history is kept.
 
 **Support needed.**
-- identity: Google ID token verification, `users.join_code` (permanent, unique, no look-alike characters; attempts are rate-limited at the ingress), `FamilyDirectory.areLinked`.
+- identity: Google ID token verification, `users.join_code` (permanent, unique, no look-alike characters; join attempts are limited per account by `identity.join_attempts`), `FamilyDirectory.areLinked`.
 - ledger consumes the event → creates the teen's wallet (idempotent: the wallet key is `(teen_id, currency)`). notification consumes it → welcome push.
 
 **Open.**

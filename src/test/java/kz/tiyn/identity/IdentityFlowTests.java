@@ -283,6 +283,39 @@ class IdentityFlowTests {
     }
 
     @Test
+    void repeatedWrongCodesLockTheTeenOutEvenForACorrectCodeAndOtherTeensAreUnaffected() throws Exception {
+        JsonNode parent = signIn(uniqueSub(), "PARENT", "Aigul");
+        JsonNode guesser = signIn(uniqueSub(), "TEEN", "Mallory");
+        JsonNode bystander = signIn(uniqueSub(), "TEEN", "Dana");
+
+        for (int i = 0; i < 5; i++) {
+            send("/links/join", "{\"code\":\"ZZZZZZ\"}", bearer(guesser)).andExpect(status().isUnprocessableEntity());
+        }
+
+        send("/links/join", "{\"code\":\"ZZZZZZ\"}", bearer(guesser))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.error").value("join_rate_limited"));
+        send("/links/join", codeBody(parent), bearer(guesser))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.error").value("join_rate_limited"));
+        assertThat(directory.areLinked(id(parent), id(guesser))).isFalse();
+        send("/links/join", codeBody(parent), bearer(bystander)).andExpect(status().isOk());
+    }
+
+    @Test
+    void aSuccessfulJoinResetsTheFailedAttemptCounter() throws Exception {
+        JsonNode parent = signIn(uniqueSub(), "PARENT", "Aigul");
+        JsonNode teen = signIn(uniqueSub(), "TEEN", "Dana");
+
+        for (int round = 0; round < 3; round++) {
+            for (int i = 0; i < 4; i++) {
+                send("/links/join", "{\"code\":\"ZZZZZZ\"}", bearer(teen)).andExpect(status().isUnprocessableEntity());
+            }
+            send("/links/join", codeBody(parent), bearer(teen)).andExpect(status().isOk());
+        }
+    }
+
+    @Test
     void familyNeedsAToken() throws Exception {
         mvc.perform(MockMvcRequestBuilders.get("/family"))
                 .andExpect(status().isUnauthorized())
