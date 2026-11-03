@@ -17,21 +17,42 @@ class FamilyService {
 
     private final AccountDirectory accounts;
     private final LinkStore links;
+    private final JoinAttemptStore joinAttempts;
     private final TransactionTemplate tx;
     private final Clock clock;
 
-    FamilyService(AccountDirectory accounts, LinkStore links, TransactionTemplate tx, Clock clock) {
+    FamilyService(
+            AccountDirectory accounts,
+            LinkStore links,
+            JoinAttemptStore joinAttempts,
+            TransactionTemplate tx,
+            Clock clock) {
         this.accounts = accounts;
         this.links = links;
+        this.joinAttempts = joinAttempts;
         this.tx = tx;
         this.clock = clock;
     }
 
     User join(UUID teenId, String rawCode) {
         User teen = accounts.requireUser(teenId);
+        registerJoinAttempt(teenId);
         User parent = accounts.requireParentByJoinCode(rawCode);
         ConflictRetry.run(() -> linkOnce(parent, teen), conflict());
+        clearJoinAttempts(teenId);
         return parent;
+    }
+
+    private void registerJoinAttempt(UUID teenId) {
+        tx.executeWithoutResult(status -> {
+            JoinAttempts attempts = joinAttempts.lockOrCreate(teenId, clock.instant());
+            attempts.register(clock.instant());
+            joinAttempts.save(attempts);
+        });
+    }
+
+    private void clearJoinAttempts(UUID teenId) {
+        tx.executeWithoutResult(status -> joinAttempts.clear(teenId));
     }
 
     List<FamilyMember> members(UUID userId, Role role) {

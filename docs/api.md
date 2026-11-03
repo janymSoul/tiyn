@@ -58,7 +58,8 @@ Returns the same `user` object. 401 `unauthenticated` if the user no longer exis
 Link the teen to a parent by the parent's code. Case and surrounding spaces are ignored. Re-joining after an unlink works.
 
 Request `{ "code": "SXVPUR" }`. Response `200`: `{ "parent": { "id": "…", "displayName": "Aigerim" } }`. Keep the parent `id`: payouts are addressed to it.
-Errors: 422 `invalid_join_code`, 403 `forbidden` (caller is not a teen), 409 `conflict`.
+Every call counts as an attempt per caller: after 5 attempts within 15 minutes the caller gets 429 `join_rate_limited` (even for a correct code) until the 15-minute window from the first attempt elapses. A successful join resets the counter. The counter is stored in Postgres, so it holds across replicas; it is per account, not per IP.
+Errors: 422 `invalid_join_code`, 403 `forbidden` (caller is not a teen), 429 `join_rate_limited`, 409 `conflict`.
 
 ### `GET /family`
 
