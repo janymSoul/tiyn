@@ -1,5 +1,6 @@
 package kz.tiyn.notification.push;
 
+import java.time.Duration;
 import java.time.Instant;
 import kz.tiyn.platform.tick.Ticker;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,11 @@ class DeliveredPurgeTicker implements Ticker {
     DeliveredPurgeTicker(DeliveredStore delivered, NotificationProperties properties) {
         this.delivered = delivered;
         this.properties = properties;
+    }
+
+    @Override
+    public Duration interval() {
+        return Duration.ofHours(1);
     }
 
     @Override

@@ -55,8 +55,6 @@ tiyn:
     ttl: ${JWT_TTL:168h}
   google:
     client-ids: ${GOOGLE_CLIENT_IDS}
-  tick:
-    interval: ${TICK_INTERVAL:PT1M}
 
 server:
   port: ${HTTP_PORT:8080}

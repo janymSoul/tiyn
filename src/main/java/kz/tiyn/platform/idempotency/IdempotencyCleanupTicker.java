@@ -3,6 +3,7 @@ package kz.tiyn.platform.idempotency;
 import static kz.tiyn.platform.jooq.platform.Tables.IDEMPOTENCY_KEYS;
 import static org.jooq.impl.DSL.row;
 
+import java.time.Duration;
 import java.time.Instant;
 import kz.tiyn.platform.tick.Ticker;
 import kz.tiyn.platform.time.Instants;
@@ -20,6 +21,11 @@ class IdempotencyCleanupTicker implements Ticker {
     IdempotencyCleanupTicker(DSLContext dsl, IdempotencyProperties properties) {
         this.dsl = dsl;
         this.properties = properties;
+    }
+
+    @Override
+    public Duration interval() {
+        return Duration.ofHours(1);
     }
 
     @Override

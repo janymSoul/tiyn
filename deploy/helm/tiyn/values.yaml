@@ -22,7 +22,6 @@ config:
     region: us-east-1
     bucket: ""
     viewUrlTtl: PT10M
-  tickInterval: PT1M
   dashboard:
     recentWindow: P7D
     maxTasks: 50
