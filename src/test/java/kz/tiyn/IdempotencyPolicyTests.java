@@ -21,9 +21,6 @@ class IdempotencyPolicyTests {
 
     private static final String LEGACY_HEADER = "Idempotency-Key";
 
-    private static final Set<String> CREATIONS_AWAITING_A_KEY =
-            Set.of("kz.tiyn.ledger.wallet.GoalController.create", "kz.tiyn.task.series.SeriesController.create");
-
     @Test
     void everyPostHandlerTakesTheIdempotencyContextOrIsMarkedNaturallyIdempotent() {
         var classes = new ClassFileImporter()
@@ -40,7 +37,7 @@ class IdempotencyPolicyTests {
 
     private static ArchCondition<JavaMethod> handleRetries() {
         return new ArchCondition<>(
-                "take an IdempotencyContext, be @NaturallyIdempotent, or be a listed creation awaiting a key") {
+                "take an IdempotencyContext or an Idempotency-Key header, or be @NaturallyIdempotent") {
             @Override
             public void check(JavaMethod method, ConditionEvents events) {
                 if (!isCovered(method)) {
@@ -54,8 +51,7 @@ class IdempotencyPolicyTests {
     private static boolean isCovered(JavaMethod method) {
         return takesContext(method)
                 || takesLegacyKeyHeader(method)
-                || method.isAnnotatedWith(NaturallyIdempotent.class)
-                || CREATIONS_AWAITING_A_KEY.contains(method.getOwner().getFullName() + "." + method.getName());
+                || method.isAnnotatedWith(NaturallyIdempotent.class);
     }
 
     private static boolean takesContext(JavaMethod method) {

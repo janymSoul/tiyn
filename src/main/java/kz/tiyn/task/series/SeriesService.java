@@ -1,8 +1,11 @@
 package kz.tiyn.task.series;
 
 import java.time.Clock;
+import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.identity.FamilyDirectory;
+import kz.tiyn.platform.idempotency.IdempotencyContext;
+import kz.tiyn.platform.idempotency.IdempotencyKeys;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.platform.security.Role;
 import kz.tiyn.task.series.dto.CreateSeriesRequest;
@@ -20,21 +23,24 @@ class SeriesService {
     private final FamilyDirectory family;
     private final TransactionTemplate tx;
     private final Clock clock;
+    private final IdempotencyKeys idempotency;
 
     SeriesService(
             SeriesStore series,
             TaskAssignment assignment,
             FamilyDirectory family,
             TransactionTemplate tx,
-            Clock clock) {
+            Clock clock,
+            IdempotencyKeys idempotency) {
         this.series = series;
         this.assignment = assignment;
         this.family = family;
         this.tx = tx;
         this.clock = clock;
+        this.idempotency = idempotency;
     }
 
-    TaskSeries create(Principal caller, CreateSeriesRequest request) {
+    TaskSeries create(Principal caller, IdempotencyContext context, CreateSeriesRequest request) {
         requireParent(caller);
         if (request.teenId() == null) {
             throw new TaskException(TaskError.TEEN_REQUIRED);
@@ -61,11 +67,16 @@ class SeriesService {
                 request.startsOn());
         var now = clock.instant();
         TaskSeries created = TaskSeries.create(UUID.randomUUID(), caller.userId(), draft, now);
-        tx.executeWithoutResult(status -> {
+        return tx.execute(status -> {
+            Optional<UUID> previous =
+                    idempotency.claimOrFindPrevious(caller.userId(), context, "series.create", created.id(), request);
+            if (previous.isPresent()) {
+                return series.find(previous.get()).orElseThrow(() -> new TaskException(TaskError.NOT_FOUND));
+            }
             series.insert(created);
             created.dueOccurrence(now).ifPresent(assignment::assignOccurrence);
+            return created;
         });
-        return created;
     }
 
     void close(Principal caller, UUID id) {

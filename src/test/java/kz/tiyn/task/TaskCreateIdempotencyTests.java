@@ -2,6 +2,7 @@ package kz.tiyn.task;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 @IntegrationTest
@@ -83,8 +85,8 @@ class TaskCreateIdempotencyTests {
         String body = createBody(f, 100, "Chore");
 
         for (String key : new String[] {null, " ", "k".repeat(101)}) {
-            var request = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/tasks")
-                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+            var request = post("/tasks")
+                    .contentType(MediaType.APPLICATION_JSON)
                     .header("Authorization", f.parent().bearer())
                     .content(body);
             if (key != null) {

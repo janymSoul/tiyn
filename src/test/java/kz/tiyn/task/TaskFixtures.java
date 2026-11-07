@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -66,7 +67,7 @@ public final class TaskFixtures {
             request.header(headers[i], headers[i + 1]);
             hasKey |= headers[i].equalsIgnoreCase("Idempotency-Key");
         }
-        if (path.equals("/tasks") && !hasKey) {
+        if (Set.of("/tasks", "/goals", "/task-series").contains(path) && !hasKey) {
             request.header("Idempotency-Key", UUID.randomUUID().toString());
         }
         return mvc.perform(request);

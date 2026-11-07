@@ -5,6 +5,7 @@ import java.util.UUID;
 import kz.tiyn.ledger.wallet.dto.AmountRequest;
 import kz.tiyn.ledger.wallet.dto.CreateGoalRequest;
 import kz.tiyn.ledger.wallet.dto.GoalResponse;
+import kz.tiyn.platform.idempotency.IdempotencyContext;
 import kz.tiyn.platform.idempotency.NaturallyIdempotent;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.http.HttpStatus;
@@ -28,8 +29,11 @@ class GoalController {
 
     @PostMapping("/goals")
     @ResponseStatus(HttpStatus.CREATED)
-    GoalResponse create(@AuthenticationPrincipal Principal caller, @RequestBody CreateGoalRequest request) {
-        return toResponse(service.create(caller, request.name(), request.targetAmount()));
+    GoalResponse create(
+            @AuthenticationPrincipal Principal caller,
+            IdempotencyContext idempotency,
+            @RequestBody CreateGoalRequest request) {
+        return toResponse(service.create(caller, idempotency, request.name(), request.targetAmount()));
     }
 
     @GetMapping("/goals")

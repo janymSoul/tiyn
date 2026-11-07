@@ -1,9 +1,13 @@
 package kz.tiyn.ledger.wallet;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.ledger.wallet.error.LedgerError;
 import kz.tiyn.ledger.wallet.error.LedgerException;
+import kz.tiyn.platform.idempotency.IdempotencyContext;
+import kz.tiyn.platform.idempotency.IdempotencyKeys;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.platform.security.Role;
 import org.springframework.stereotype.Service;
@@ -18,25 +22,37 @@ class GoalService {
     private final WalletStore wallets;
     private final LedgerStore ledger;
     private final TransactionTemplate tx;
+    private final IdempotencyKeys idempotency;
 
-    GoalService(GoalStore goals, WalletStore wallets, LedgerStore ledger, TransactionTemplate tx) {
+    GoalService(
+            GoalStore goals,
+            WalletStore wallets,
+            LedgerStore ledger,
+            TransactionTemplate tx,
+            IdempotencyKeys idempotency) {
         this.goals = goals;
         this.wallets = wallets;
         this.ledger = ledger;
         this.tx = tx;
+        this.idempotency = idempotency;
     }
 
-    GoalView create(Principal caller, String name, Long targetAmount) {
+    GoalView create(Principal caller, IdempotencyContext context, String name, Long targetAmount) {
         requireTeen(caller);
         if (targetAmount == null) {
             throw new LedgerException(LedgerError.INVALID_AMOUNT);
         }
         Goal goal = Goal.create(UUID.randomUUID(), caller.userId(), Wallet.KZT, name, targetAmount);
-        tx.executeWithoutResult(status -> {
+        return tx.execute(status -> {
+            Optional<UUID> previous = idempotency.claimOrFindPrevious(
+                    caller.userId(), context, "goal.create", goal.id(), Arrays.asList(name, targetAmount));
+            if (previous.isPresent()) {
+                return new GoalView(owned(caller, previous.get()), goals.saved(previous.get()));
+            }
             wallets.ensure(caller.userId(), Wallet.KZT);
             goals.insert(goal);
+            return new GoalView(goal, 0);
         });
-        return new GoalView(goal, 0);
     }
 
     List<GoalView> list(Principal caller) {

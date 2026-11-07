@@ -3,6 +3,7 @@ package kz.tiyn.ledger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -150,6 +152,39 @@ class GoalFlowTests {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").value("invalid_idempotency_key"));
         assertBalance(f, 15_000_00, 0, 15_000_00);
+    }
+
+    @Test
+    void repeatingACreateWithTheSameKeyReturnsTheSameGoalAndADifferentRequestIsRefused() throws Exception {
+        Family f = fx.linkedFamily();
+        String body = "{\"name\":\"Bike\",\"targetAmount\":500}";
+
+        String first = fx.send("/goals", body, f.teen().bearer(), "Idempotency-Key", "g-1")
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        fx.send("/goals", body, f.teen().bearer(), "Idempotency-Key", "g-1")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(json.readTree(first).get("id").asText()));
+        fx.send("/goals", "{\"name\":\"Bike\",\"targetAmount\":900}", f.teen().bearer(), "Idempotency-Key", "g-1")
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_idempotency_key"));
+
+        mvc.perform(get("/goals").header("Authorization", f.teen().bearer()))
+                .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    @Test
+    void creatingAGoalWithoutAKeyIsRefused() throws Exception {
+        Family f = fx.linkedFamily();
+
+        mvc.perform(post("/goals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", f.teen().bearer())
+                        .content("{\"name\":\"Bike\",\"targetAmount\":500}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_idempotency_key"));
     }
 
     @Test
