@@ -228,7 +228,7 @@ Register or refresh a device: `{ "token": "<fcm token>", "platform": "ANDROID", 
 `{ "token": "…" }`. Call it on sign-out. Tokens that Firebase reports as dead are removed by the server.
 
 ### What a push contains
-A localised `notification` (title and body in Russian or Kazakh by the device's locale) plus a `data` map of strings: `type` always, and `taskId` or `payoutId` when relevant, for deep links. `type` is one of:
+A localised `notification` (title and body in Russian or Kazakh by the device's locale) plus a `data` map of strings: `type` always, and `taskId` or `payoutId` when relevant, for deep links. `taskId` is always the id of the task the event is about; for a milestone's own push (assigned, submitted, approved, …) it is the milestone's id, and a child task's push carries the child's id. Open the milestone through `GET /tasks/{id}`. `type` is one of:
 
 | Recipient | Types |
 |---|---|

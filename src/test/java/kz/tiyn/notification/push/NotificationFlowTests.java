@@ -149,6 +149,27 @@ class NotificationFlowTests {
     }
 
     @Test
+    void aMilestonePushCarriesTheMilestoneOwnId() throws Exception {
+        Family f = fx.linkedFamily();
+        String teen = device(f.teen(), "ru");
+        String parent = device(f.parent(), "ru");
+
+        UUID milestone = fx.createItem(f, "MILESTONE", null, 7200);
+        assertThat(awaitPush(teen, "TASK_ASSIGNED").push().data()).containsEntry("taskId", milestone.toString());
+
+        UUID child = fx.createItem(f, "TASK", milestone, 3600);
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> assertThat(sender.sentTo(teen, "TASK_ASSIGNED"))
+                .extracting(s -> s.push().data().get("taskId"))
+                .containsExactlyInAnyOrder(milestone.toString(), child.toString()));
+
+        submit(f, milestone);
+        assertThat(awaitPush(parent, "TASK_SUBMITTED").push().data()).containsEntry("taskId", milestone.toString());
+
+        fx.send("/tasks/" + milestone + "/approve", "", f.parent().bearer()).andExpect(status().isOk());
+        assertThat(awaitPush(teen, "TASK_APPROVED").push().data()).containsEntry("taskId", milestone.toString());
+    }
+
+    @Test
     void rejectionRedoAndCancellationGoToTheTeenWithTheNote() throws Exception {
         Family f = fx.linkedFamily();
         String teen = device(f.teen(), "ru");
