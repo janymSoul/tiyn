@@ -37,8 +37,7 @@ class WalletOverviewReaderImpl implements WalletOverviewReader {
                         v.savedAmount(),
                         v.goal().currency()))
                 .toList();
-        OpenPayout open = payouts.listForTeen(teenId, PayoutState.REQUESTED).stream()
-                .findFirst()
+        OpenPayout open = payouts.findOpenForTeen(teenId)
                 .map(p -> new OpenPayout(
                         p.id(),
                         p.parentId(),

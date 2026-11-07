@@ -317,17 +317,17 @@ class PayoutFlowTests {
 
         mvc.perform(get("/payouts").header("Authorization", f.teen().bearer()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].id").value(id.toString()));
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(id.toString()));
         mvc.perform(get("/payouts?state=requested")
                         .header("Authorization", f.parent().bearer()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1));
+                .andExpect(jsonPath("$.items.length()").value(1));
         mvc.perform(get("/payouts?state=fulfilled")
                         .header("Authorization", f.parent().bearer()))
-                .andExpect(jsonPath("$.length()").value(0));
+                .andExpect(jsonPath("$.items.length()").value(0));
         mvc.perform(get("/payouts").header("Authorization", other.parent().bearer()))
-                .andExpect(jsonPath("$.length()").value(0));
+                .andExpect(jsonPath("$.items.length()").value(0));
         mvc.perform(get("/payouts?state=bogus").header("Authorization", f.teen().bearer()))
                 .andExpect(status().isUnprocessableEntity());
     }

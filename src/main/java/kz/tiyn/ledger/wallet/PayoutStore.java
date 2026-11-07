@@ -8,6 +8,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.ledger.tables.records.PayoutsRecord;
+import kz.tiyn.platform.paging.Cursor;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.time.Instants;
 import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.Condition;
@@ -18,8 +21,6 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 class PayoutStore {
-
-    static final int LIST_LIMIT = 100;
 
     private final DSLContext dsl;
     private final ApplicationEventPublisher events;
@@ -107,21 +108,34 @@ class PayoutStore {
                 .where(PAYOUTS.TEEN_ID.eq(teenId).and(PAYOUTS.STATE.eq(PayoutState.REQUESTED.name()))));
     }
 
-    List<Payout> listForTeen(UUID teenId, PayoutState state) {
-        return list(PAYOUTS.TEEN_ID.eq(teenId), state);
-    }
-
-    List<Payout> listForParent(UUID parentId, PayoutState state) {
-        return list(PAYOUTS.PARENT_ID.eq(parentId), state);
-    }
-
-    private List<Payout> list(Condition owner, PayoutState state) {
-        Condition where = state == null ? owner : owner.and(PAYOUTS.STATE.eq(state.name()));
+    Optional<Payout> findOpenForTeen(UUID teenId) {
         return dsl.selectFrom(PAYOUTS)
-                .where(where)
-                .orderBy(PAYOUTS.REQUESTED_AT.desc())
-                .limit(LIST_LIMIT)
-                .fetch()
+                .where(PAYOUTS.TEEN_ID.eq(teenId))
+                .and(PAYOUTS.STATE.eq(PayoutState.REQUESTED.name()))
+                .fetchOptional()
+                .map(PayoutStore::toPayout);
+    }
+
+    Page<Payout> pageForTeen(UUID teenId, PayoutState state, String filterHash, PageRequest request) {
+        return page(PAYOUTS.TEEN_ID.eq(teenId), state, filterHash, request);
+    }
+
+    Page<Payout> pageForParent(UUID parentId, PayoutState state, String filterHash, PageRequest request) {
+        return page(PAYOUTS.PARENT_ID.eq(parentId), state, filterHash, request);
+    }
+
+    private Page<Payout> page(Condition owner, PayoutState state, String filterHash, PageRequest request) {
+        Condition where = state == null ? owner : owner.and(PAYOUTS.STATE.eq(state.name()));
+        var ordered = dsl.selectFrom(PAYOUTS).where(where).orderBy(PAYOUTS.REQUESTED_AT.desc(), PAYOUTS.ID.desc());
+        Optional<Cursor> after = request.after(filterHash);
+        List<PayoutsRecord> fetched = after.isPresent()
+                ? ordered.seek(
+                                Instants.toUtc(after.get().sortKey()),
+                                after.get().id())
+                        .limit(request.fetchSize())
+                        .fetch()
+                : ordered.limit(request.fetchSize()).fetch();
+        return Page.of(fetched, request, r -> new Cursor(Instants.fromUtc(r.getRequestedAt()), r.getId(), filterHash))
                 .map(PayoutStore::toPayout);
     }
 
