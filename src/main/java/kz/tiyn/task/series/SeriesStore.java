@@ -6,14 +6,16 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.task.tables.records.TaskSeriesRecord;
+import kz.tiyn.platform.paging.Cursor;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
+import kz.tiyn.platform.time.Instants;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 
 @Repository
 class SeriesStore {
-
-    static final int LIST_LIMIT = 100;
 
     private final DSLContext dsl;
 
@@ -46,7 +48,7 @@ class SeriesStore {
                 .map(SeriesStore::toSeries);
     }
 
-    List<TaskSeries> listForParent(UUID parentId, UUID teenId, Boolean active) {
+    Page<TaskSeries> pageForParent(UUID parentId, UUID teenId, Boolean active, String filterHash, PageRequest request) {
         Condition where = TASK_SERIES.PARENT_ID.eq(parentId);
         if (teenId != null) {
             where = where.and(TASK_SERIES.TEEN_ID.eq(teenId));
@@ -54,15 +56,18 @@ class SeriesStore {
         if (active != null) {
             where = where.and(TASK_SERIES.ACTIVE.eq(active));
         }
-        return dsl
-                .selectFrom(TASK_SERIES)
-                .where(where)
-                .orderBy(TASK_SERIES.CREATED_AT.desc(), TASK_SERIES.ID)
-                .limit(LIST_LIMIT)
-                .fetch()
-                .stream()
-                .map(SeriesStore::toSeries)
-                .toList();
+        var ordered =
+                dsl.selectFrom(TASK_SERIES).where(where).orderBy(TASK_SERIES.CREATED_AT.desc(), TASK_SERIES.ID.desc());
+        Optional<Cursor> after = request.after(filterHash);
+        List<TaskSeriesRecord> fetched = after.isPresent()
+                ? ordered.seek(
+                                Instants.toUtc(after.get().sortKey()),
+                                after.get().id())
+                        .limit(request.fetchSize())
+                        .fetch()
+                : ordered.limit(request.fetchSize()).fetch();
+        return Page.of(fetched, request, r -> new Cursor(Instants.fromUtc(r.getCreatedAt()), r.getId(), filterHash))
+                .map(SeriesStore::toSeries);
     }
 
     List<TaskSeries> findActive() {

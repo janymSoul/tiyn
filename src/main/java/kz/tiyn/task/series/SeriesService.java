@@ -1,12 +1,14 @@
 package kz.tiyn.task.series;
 
 import java.time.Clock;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.identity.FamilyDirectory;
 import kz.tiyn.platform.idempotency.IdempotencyContext;
 import kz.tiyn.platform.idempotency.IdempotencyKeys;
+import kz.tiyn.platform.paging.Cursor;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.platform.security.Role;
 import kz.tiyn.task.series.dto.CreateSeriesRequest;
@@ -80,12 +82,13 @@ class SeriesService {
         });
     }
 
-    List<TaskSeries> list(Principal caller, UUID teenId, Boolean active) {
+    Page<TaskSeries> list(Principal caller, UUID teenId, Boolean active, PageRequest page) {
         requireParent(caller);
         if (teenId != null && !family.areLinked(caller.userId(), teenId)) {
             throw new TaskException(TaskError.FORBIDDEN);
         }
-        return series.listForParent(caller.userId(), teenId, active);
+        return series.pageForParent(
+                caller.userId(), teenId, active, Cursor.hashOf("task-series", teenId, active), page);
     }
 
     TaskSeries get(Principal caller, UUID id) {

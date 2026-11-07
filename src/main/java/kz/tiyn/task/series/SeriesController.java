@@ -1,8 +1,9 @@
 package kz.tiyn.task.series;
 
-import java.util.List;
 import java.util.UUID;
 import kz.tiyn.platform.idempotency.IdempotencyContext;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.task.series.dto.CreateSeriesRequest;
 import kz.tiyn.task.series.dto.SeriesResponse;
@@ -37,13 +38,12 @@ class SeriesController {
     }
 
     @GetMapping("/task-series")
-    List<SeriesResponse> list(
+    Page<SeriesResponse> list(
             @AuthenticationPrincipal Principal caller,
             @RequestParam(required = false) UUID teenId,
-            @RequestParam(required = false) Boolean active) {
-        return service.list(caller, teenId, active).stream()
-                .map(SeriesController::toResponse)
-                .toList();
+            @RequestParam(required = false) Boolean active,
+            PageRequest page) {
+        return service.list(caller, teenId, active, page).map(SeriesController::toResponse);
     }
 
     @GetMapping("/task-series/{id}")
