@@ -84,7 +84,7 @@ A module with a single feature may keep everything in its root package, with onl
 | Auth | Spring Security resource server, HS256 JWT | Verification in platform; issuing by `AccessTokenIssuer`; Google ID tokens verified with Spring's `NimbusJwtDecoder` against Google's JWKS. |
 | Object storage | AWS SDK v2 (S3) | Backend stores proof images (validated, EXIF-stripped) and issues pre-signed GET URLs for review. |
 | Push | Firebase Admin SDK (FCM) | Notification module only; APNs bridged by FCM. |
-| Scheduling | Spring `SchedulingConfigurer` + ShedLock (JDBC) | One fixed-delay task and one lock per ticker, so one replica runs each ticker; see `docs/modules.md`, "Time-driven work". |
+| Scheduling | Spring `SchedulingConfigurer` + ShedLock (JDBC) | One fixed-delay task and one lock per ticker, so a ticker never overlaps with itself across replicas; see `docs/modules.md`, "Time-driven work". |
 | Config | `application.yml` bound from env vars, `@ConfigurationProperties` records | 12-factor; secrets never in the repo; invalid config fails startup. |
 | Quality | Spotless (Palantir Java Format), ArchUnit, JUnit 5, Testcontainers | `spotless:check` runs in `verify`. |
 
@@ -102,7 +102,7 @@ All generated classes live under one package tree, which Modulith cannot see as 
 
 - **Kubernetes is the likely platform** (driven by the data-residency constraint below), but nothing in the code depends on it. The application is a single stateless container behind a load balancer (SSL termination, CORS). Several replicas are safe: ticks are guarded by ShedLock and idempotent, and event delivery is guarded by the registry.
 - **Postgres 16** with automated backups and point-in-time recovery. The ledger's correctness depends on the DB, so this tier is non-negotiable managed infrastructure.
-- **Time-driven work** (task expiry, recurrence, payout expiry) runs inside the API pods as one scheduled task per `Ticker`, each under its own ShedLock lock, so one replica runs each ticker per cycle. There is no CronJob.
+- **Time-driven work** (task expiry, recurrence, payout expiry) runs inside the API pods as one scheduled task per `Ticker`, each under its own ShedLock lock, so a ticker never overlaps with itself across replicas. Replicas still each run it about once per interval, which is safe because tickers are idempotent. There is no CronJob.
 - **Data residency: host in Kazakhstan.** Kazakhstan's personal-data law is understood to require citizens' personal data to be stored on servers inside the country, so the database and object storage live with a Kazakhstan provider. This rules out region-locked managed services (Cloud SQL, GCS, Cloud Run) and favours Kubernetes with Postgres and an S3-compatible store (SeaweedFS). Confirm the legal details, and the status of Google sign-in and FCM token passthrough, with counsel.
 - **JVM sizing.** Startup takes seconds and memory is higher than a static binary. Acceptable for always-running pods; size the heap explicitly rather than relying on container defaults.
 

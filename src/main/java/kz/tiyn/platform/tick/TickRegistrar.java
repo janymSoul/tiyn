@@ -2,6 +2,7 @@ package kz.tiyn.platform.tick;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.HashSet;
 import java.util.List;
 import net.javacrumbs.shedlock.core.DefaultLockingTaskExecutor;
 import net.javacrumbs.shedlock.core.LockConfiguration;
@@ -46,6 +47,7 @@ class TickRegistrar implements SchedulingConfigurer, DisposableBean {
         scheduler.setAwaitTerminationSeconds(AWAIT_TERMINATION_SECONDS);
         scheduler.initialize();
         registrar.setTaskScheduler(scheduler);
+        requireUniqueNames();
         for (Ticker ticker : tickers) {
             registrar.addFixedDelayTask(() -> run(ticker), ticker.interval());
         }
@@ -58,12 +60,21 @@ class TickRegistrar implements SchedulingConfigurer, DisposableBean {
         }
     }
 
+    private void requireUniqueNames() {
+        var seen = new HashSet<String>();
+        for (Ticker ticker : tickers) {
+            if (!seen.add(ticker.name())) {
+                throw new IllegalStateException("two tickers are named " + ticker.name() + " and would share a lock");
+            }
+        }
+    }
+
     private void run(Ticker ticker) {
         try {
-            var now = clock.instant();
             locks.executeWithLock(
-                    (Runnable) () -> ticker.tick(now),
-                    new LockConfiguration(now, LOCK_PREFIX + ticker.name(), ticker.lockAtMostFor(), LOCK_AT_LEAST_FOR));
+                    (Runnable) () -> ticker.tick(clock.instant()),
+                    new LockConfiguration(
+                            clock.instant(), LOCK_PREFIX + ticker.name(), ticker.lockAtMostFor(), LOCK_AT_LEAST_FOR));
         } catch (RuntimeException e) {
             log.error("ticker {} failed", ticker.name(), e);
         }

@@ -356,7 +356,7 @@ public interface Ticker {
 
 **Decision: one fixed-delay task and one ShedLock lock per ticker, inside the API pods.** `TickRegistrar` (in `kz.tiyn.platform.tick`, a Spring `SchedulingConfigurer`) registers a fixed-delay task for every `Ticker` bean, using the ticker's own `interval()`. Each run goes through ShedLock's `DefaultLockingTaskExecutor` under the lock `tick:<name()>` (a row in `platform.shedlock`), with a minimum hold of 5 seconds and a maximum of the ticker's `lockAtMostFor()`. Consequences:
 - Different tickers run in parallel, including on different pods, because they hold different locks.
-- A slow ticker delays only itself. The lock also keeps it from overlapping with itself on another pod.
+- A slow ticker delays only itself. The lock also keeps it from overlapping with itself on another pod. It does not make a ticker run only once per interval across pods: each pod's timer fires on its own, so with several pods a ticker runs about once per pod per interval. That is safe only because every ticker is idempotent.
 - Each ticker has its own cadence. Most run every minute; `DeliveredPurgeTicker` and `IdempotencyCleanupTicker` run hourly.
 - A ticker that throws is logged and does not affect the others.
 - `tiyn.tick.enabled` (default `true`) switches registration off. Integration tests set it to `false` so tickers run only when a test calls them.

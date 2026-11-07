@@ -2,6 +2,7 @@ package kz.tiyn.platform.tick;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.awaitility.Awaitility.await;
 
@@ -69,6 +70,13 @@ class TickRegistrarTests {
         registrar.getFixedDelayTaskList().forEach(task -> task.getRunnable().run());
 
         assertThat(counting.ticks.get()).isZero();
+    }
+
+    @Test
+    void refusesTwoTickersWithTheSameNameBecauseTheyWouldShareALock() {
+        assertThatThrownBy(() -> registrarFor(new CountingTicker(), new CountingTicker()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("CountingTicker");
     }
 
     @Test
