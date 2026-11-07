@@ -54,7 +54,11 @@ public record Cursor(Instant sortKey, UUID id, String filterHash) {
                     || parts[3].length() != HASH_LENGTH) {
                 throw invalid();
             }
-            return new Cursor(Instant.parse(parts[1]), UUID.fromString(parts[2]), parts[3]);
+            UUID id = UUID.fromString(parts[2]);
+            if (!id.toString().equals(parts[2])) {
+                throw invalid();
+            }
+            return new Cursor(Instant.parse(parts[1]), id, parts[3]);
         } catch (IllegalArgumentException | DateTimeParseException e) {
             throw invalid();
         }

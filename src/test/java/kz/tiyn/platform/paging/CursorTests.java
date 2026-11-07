@@ -60,6 +60,13 @@ class CursorTests {
     }
 
     @Test
+    void anIdThatIsNotInCanonicalFormIsInvalid() {
+        assertInvalid(() -> Cursor.decode(encodePayload("1|" + SORT_KEY + "|1-1-1-1-1|" + HASH)));
+        assertInvalid(() -> Cursor.decode(
+                encodePayload("1|" + SORT_KEY + "|" + ID.toString().toUpperCase() + "|" + HASH)));
+    }
+
+    @Test
     void anUnknownVersionIsInvalid() {
         assertInvalid(() -> Cursor.decode(encodePayload("2|" + SORT_KEY + "|" + ID + "|" + HASH)));
         assertInvalid(() -> Cursor.decode(encodePayload("0|" + SORT_KEY + "|" + ID + "|" + HASH)));
