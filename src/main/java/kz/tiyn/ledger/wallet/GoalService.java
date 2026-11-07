@@ -1,13 +1,15 @@
 package kz.tiyn.ledger.wallet;
 
 import java.util.Arrays;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.ledger.wallet.error.LedgerError;
 import kz.tiyn.ledger.wallet.error.LedgerException;
 import kz.tiyn.platform.idempotency.IdempotencyContext;
 import kz.tiyn.platform.idempotency.IdempotencyKeys;
+import kz.tiyn.platform.paging.Cursor;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.platform.security.Role;
 import org.springframework.stereotype.Service;
@@ -55,9 +57,9 @@ class GoalService {
         });
     }
 
-    List<GoalView> list(Principal caller) {
+    Page<GoalView> list(Principal caller, PageRequest page) {
         requireTeen(caller);
-        return goals.listForTeen(caller.userId());
+        return goals.pageForTeen(caller.userId(), Cursor.hashOf("goals"), page);
     }
 
     GoalView get(Principal caller, UUID id) {

@@ -28,7 +28,7 @@ class WalletOverviewReaderImpl implements WalletOverviewReader {
     @Override
     @Transactional(readOnly = true)
     public WalletOverview overview(UUID teenId) {
-        List<GoalSummary> active = goals.listForTeen(teenId).stream()
+        List<GoalSummary> active = goals.listRecentForTeen(teenId).stream()
                 .filter(v -> v.goal().state() == GoalState.ACTIVE)
                 .map(v -> new GoalSummary(
                         v.goal().id(),

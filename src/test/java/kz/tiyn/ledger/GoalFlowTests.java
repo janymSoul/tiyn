@@ -96,8 +96,8 @@ class GoalFlowTests {
 
         assertBalance(f, 15_000_00, 7_500_00, 7_500_00);
         mvc.perform(get("/goals").header("Authorization", f.teen().bearer()))
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].savedAmount").value(7_500_00));
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].savedAmount").value(7_500_00));
     }
 
     @Test
@@ -172,7 +172,7 @@ class GoalFlowTests {
                 .andExpect(jsonPath("$.error").value("invalid_idempotency_key"));
 
         mvc.perform(get("/goals").header("Authorization", f.teen().bearer()))
-                .andExpect(jsonPath("$.length()").value(1));
+                .andExpect(jsonPath("$.items.length()").value(1));
     }
 
     @Test
