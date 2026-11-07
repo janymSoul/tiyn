@@ -6,11 +6,14 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.task.tables.records.TaskSeriesRecord;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 
 @Repository
 class SeriesStore {
+
+    static final int LIST_LIMIT = 100;
 
     private final DSLContext dsl;
 
@@ -41,6 +44,25 @@ class SeriesStore {
                 .where(TASK_SERIES.ID.eq(id))
                 .fetchOptional()
                 .map(SeriesStore::toSeries);
+    }
+
+    List<TaskSeries> listForParent(UUID parentId, UUID teenId, Boolean active) {
+        Condition where = TASK_SERIES.PARENT_ID.eq(parentId);
+        if (teenId != null) {
+            where = where.and(TASK_SERIES.TEEN_ID.eq(teenId));
+        }
+        if (active != null) {
+            where = where.and(TASK_SERIES.ACTIVE.eq(active));
+        }
+        return dsl
+                .selectFrom(TASK_SERIES)
+                .where(where)
+                .orderBy(TASK_SERIES.CREATED_AT.desc(), TASK_SERIES.ID)
+                .limit(LIST_LIMIT)
+                .fetch()
+                .stream()
+                .map(SeriesStore::toSeries)
+                .toList();
     }
 
     List<TaskSeries> findActive() {

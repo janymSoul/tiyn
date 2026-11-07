@@ -15,11 +15,14 @@ class WalletOverviewReaderImpl implements WalletOverviewReader {
     private final BalanceReaderImpl balances;
     private final GoalStore goals;
     private final PayoutStore payouts;
+    private final LedgerProperties properties;
 
-    WalletOverviewReaderImpl(BalanceReaderImpl balances, GoalStore goals, PayoutStore payouts) {
+    WalletOverviewReaderImpl(
+            BalanceReaderImpl balances, GoalStore goals, PayoutStore payouts, LedgerProperties properties) {
         this.balances = balances;
         this.goals = goals;
         this.payouts = payouts;
+        this.properties = properties;
     }
 
     @Override
@@ -36,7 +39,13 @@ class WalletOverviewReaderImpl implements WalletOverviewReader {
                 .toList();
         OpenPayout open = payouts.listForTeen(teenId, PayoutState.REQUESTED).stream()
                 .findFirst()
-                .map(p -> new OpenPayout(p.id(), p.parentId(), p.amount(), p.currency(), p.requestedAt()))
+                .map(p -> new OpenPayout(
+                        p.id(),
+                        p.parentId(),
+                        p.amount(),
+                        p.currency(),
+                        p.requestedAt(),
+                        p.expiresAt(properties.payoutExpiry())))
                 .orElse(null);
         return new WalletOverview(balances.balance(teenId), active, open);
     }

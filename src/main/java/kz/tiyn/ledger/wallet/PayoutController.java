@@ -23,9 +23,11 @@ import org.springframework.web.bind.annotation.RestController;
 class PayoutController {
 
     private final PayoutService service;
+    private final LedgerProperties properties;
 
-    PayoutController(PayoutService service) {
+    PayoutController(PayoutService service, LedgerProperties properties) {
         this.service = service;
+        this.properties = properties;
     }
 
     @PostMapping("/payouts")
@@ -40,7 +42,7 @@ class PayoutController {
     @GetMapping("/payouts")
     List<PayoutResponse> list(@AuthenticationPrincipal Principal caller, @RequestParam(required = false) String state) {
         return service.list(caller, parseState(state)).stream()
-                .map(PayoutController::toResponse)
+                .map(this::toResponse)
                 .toList();
     }
 
@@ -78,7 +80,7 @@ class PayoutController {
         }
     }
 
-    private static PayoutResponse toResponse(Payout p) {
+    private PayoutResponse toResponse(Payout p) {
         return new PayoutResponse(
                 p.id(),
                 p.teenId(),
@@ -87,6 +89,7 @@ class PayoutController {
                 p.currency(),
                 p.state().name(),
                 p.requestedAt(),
+                p.expiresAt(properties.payoutExpiry()),
                 p.resolvedAt(),
                 p.cancelReason() == null ? null : p.cancelReason().name());
     }

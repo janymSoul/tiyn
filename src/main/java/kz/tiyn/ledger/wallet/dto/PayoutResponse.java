@@ -13,5 +13,6 @@ public record PayoutResponse(
         String currency,
         String state,
         Instant requestedAt,
+        Instant expiresAt,
         Instant resolvedAt,
         String cancelReason) {}

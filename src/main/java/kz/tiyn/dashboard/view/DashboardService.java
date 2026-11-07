@@ -66,7 +66,8 @@ class DashboardService {
                                 overview.openPayout().parentId(),
                                 overview.openPayout().amount(),
                                 overview.openPayout().currency(),
-                                overview.openPayout().requestedAt()));
+                                overview.openPayout().requestedAt(),
+                                overview.openPayout().expiresAt()));
     }
 
     private static TaskItem item(BoardTask t) {

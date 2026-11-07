@@ -24,7 +24,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 - **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
 - **Eventual consistency:** a rewarded approval and an expired penalty reach the wallet through events, usually within seconds. After `approve`, the balance may lag; re-read it instead of assuming.
 - **Roles:** `PARENT` and `TEEN`. A teen may be linked to several parents; a parent to several teens. A parent only sees and acts on tasks they created for linked teens.
-- **Lists are not paginated** and no ordering is promised.
+- **Lists are not paginated** and no ordering is promised, except `GET /task-series`, which is newest first and capped at 100.
 
 ## Identity
 
@@ -87,10 +87,10 @@ A task has a state machine: `ASSIGNED` → `SUBMITTED` → `APPROVED` or `REJECT
   "title": "Wash dishes", "description": "", "rewardAmount": 150000, "penaltyAmount": 0,
   "currency": "KZT", "state": "ASSIGNED", "deadlineAt": "2026-11-03T18:00:00Z",
   "submittedAt": null, "decidedAt": null, "decisionNote": null,
-  "milestoneId": null, "approvedTasks": null, "totalTasks": null
+  "milestoneId": null, "seriesId": null, "approvedTasks": null, "totalTasks": null
 }
 ```
-`approvedTasks` and `totalTasks` appear only on a milestone returned by `GET /tasks/{id}`.
+`approvedTasks` and `totalTasks` appear only on a milestone returned by `GET /tasks/{id}`. `seriesId` appears only on a task that a recurring series created (see `GET /task-series/{id}`) and is omitted on every other task.
 
 ### `POST /tasks` (parent) → `201 TaskResponse`
 
@@ -153,6 +153,18 @@ Header `Idempotency-Key` required.
 - Response: `{ id, teenId, title, description, rewardAmount, penaltyAmount, currency, recurrence, timezone, dueTime, startsOn, active }`.
 - Errors: 403 `forbidden`, 422 `teen_required`, `invalid_schedule`, plus the title and reward errors above.
 
+### `GET /task-series` (parent) → `SeriesResponse[]`
+
+The series the caller created, newest first, at most 100. Each element has the shape `POST /task-series` returns.
+- `?teenId=<uuid>`: only that teen's series. The teen must be linked to the caller right now, otherwise 403 `forbidden`.
+- `?active=true|false`: only running or only stopped series. Anything else is 400 `invalid_request`.
+
+Without `teenId` the list also contains stopped series of teens who were unlinked since. Teens get 403 `forbidden`. Each task a series created carries its `seriesId`.
+
+### `GET /task-series/{id}` (parent) → `SeriesResponse`
+
+One series. 404 `not_found` when the id is unknown or belongs to another parent; teens get 403 `forbidden`.
+
 ### `DELETE /task-series/{id}` (parent) → `204`
 
 Stops new occurrences; existing tasks stay. 404 `not_found`.
@@ -187,9 +199,9 @@ Errors: 422 `invalid_name`, `invalid_amount`, `exceeds_target`, `insufficient_fu
 A teen asks a linked parent for money; the parent hands over the cash and confirms. `PayoutResponse`:
 ```json
 { "id": "…", "teenId": "…", "parentId": "…", "amount": 1000000, "currency": "KZT",
-  "state": "REQUESTED", "requestedAt": "…", "resolvedAt": null, "cancelReason": null }
+  "state": "REQUESTED", "requestedAt": "…", "expiresAt": "…", "resolvedAt": null, "cancelReason": null }
 ```
-`state`: `REQUESTED`, `FULFILLED` or `CANCELLED`; `cancelReason`: `TEEN_CANCELLED`, `DECLINED`, `EXPIRED` or `UNLINKED`. A teen can have **one** open payout at a time. An open request is also held back from `availableAmount`. Requests expire after `LEDGER_PAYOUT_EXPIRY` (default 7 days).
+`state`: `REQUESTED`, `FULFILLED` or `CANCELLED`; `cancelReason`: `TEEN_CANCELLED`, `DECLINED`, `EXPIRED` or `UNLINKED`. A teen can have **one** open payout at a time. An open request is also held back from `availableAmount`. Requests expire after `LEDGER_PAYOUT_EXPIRY` (default 7 days). `expiresAt` is `requestedAt` plus that period, computed by the server; use it for a countdown and never derive it on the client. It is the instant the request becomes eligible for expiry, so it is present only while `state` is `REQUESTED` and omitted once the payout is fulfilled or cancelled; the expiry ticker runs about once a minute, so a request can stay open for a short while after `expiresAt`.
 
 | Endpoint | Caller | Notes |
 |---|---|---|
@@ -214,7 +226,7 @@ One call for the home screen:
   "chores": [ { "id": "…", "kind": "TASK", "title": "…", "description": "…", "rewardAmount": 0, "penaltyAmount": 0, "currency": "KZT", "state": "ASSIGNED", "deadlineAt": "…", "milestoneId": null } ],
   "milestones": [ { "…": "same fields, plus approvedTasks and totalTasks" } ],
   "goals": [ { "id": "…", "name": "…", "targetAmount": 0, "savedAmount": 0, "currency": "KZT" } ],
-  "openPayout": { "id": "…", "parentId": "…", "amount": 0, "currency": "KZT", "requestedAt": "…" }
+  "openPayout": { "id": "…", "parentId": "…", "amount": 0, "currency": "KZT", "requestedAt": "…", "expiresAt": "…" }
 }
 ```
 `pendingAmount` is the sum of rewards of tasks awaiting a parent's decision. `milestoneId` is the id of the milestone a task belongs to, or `null`; the client can use it to group tasks under their milestone. `chores` and `milestones` hold open work plus recently decided tasks (window `DASHBOARD_RECENT_WINDOW`, default 7 days, at most `DASHBOARD_MAX_TASKS` = 50 tasks). `goals` lists active goals. `openPayout` is omitted when there is none.
@@ -228,7 +240,7 @@ Register or refresh a device: `{ "token": "<fcm token>", "platform": "ANDROID", 
 `{ "token": "…" }`. Call it on sign-out. Tokens that Firebase reports as dead are removed by the server.
 
 ### What a push contains
-A localised `notification` (title and body in Russian or Kazakh by the device's locale) plus a `data` map of strings: `type` always, and `taskId` or `payoutId` when relevant, for deep links. `type` is one of:
+A localised `notification` (title and body in Russian or Kazakh by the device's locale) plus a `data` map of strings: `type` always, and `taskId` or `payoutId` when relevant, for deep links. `taskId` is always the id of the task the event is about; for a milestone's own push (assigned, submitted, approved, …) it is the milestone's id, and a child task's push carries the child's id. Open the milestone through `GET /tasks/{id}`. `type` is one of:
 
 | Recipient | Types |
 |---|---|

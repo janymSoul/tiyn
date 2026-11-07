@@ -154,6 +154,7 @@ class TaskController {
                 t.decidedAt(),
                 t.decisionNote(),
                 t.milestoneId(),
+                t.seriesId(),
                 progress == null ? null : progress.approvedTasks(),
                 progress == null ? null : progress.totalTasks());
     }
