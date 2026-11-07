@@ -19,7 +19,7 @@ ingress:
 
 fcm:
   existingSecret: tiyn-fcm
-  dryRun: true
+  dryRun: false
 
 postgres:
   enabled: false
