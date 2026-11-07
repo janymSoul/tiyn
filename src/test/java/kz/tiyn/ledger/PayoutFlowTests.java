@@ -102,6 +102,20 @@ class PayoutFlowTests {
     }
 
     @Test
+    void aResolvedRequestNoLongerReportsAnExpiry() throws Exception {
+        Family f = richFamily(500_00);
+        UUID payout = idOf(requestPayout(f, f.parent().id(), 300_00, "k1").andExpect(status().isCreated()));
+
+        fx.send("/payouts/" + payout + "/decline", "", f.parent().bearer())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("CANCELLED"))
+                .andExpect(jsonPath("$.expiresAt").doesNotExist());
+        mvc.perform(get("/payouts/" + payout).header("Authorization", f.teen().bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.expiresAt").doesNotExist());
+    }
+
+    @Test
     void repeatingTheSameKeyReturnsTheOriginalRequest() throws Exception {
         Family f = richFamily(500_00);
 

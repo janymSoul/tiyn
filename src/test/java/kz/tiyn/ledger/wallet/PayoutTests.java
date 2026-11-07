@@ -55,6 +55,20 @@ class PayoutTests {
     }
 
     @Test
+    void aResolvedRequestHasNoExpiry() {
+        Payout fulfilled = requested(20_000);
+        fulfilled.fulfil(PARENT, NOW.plusSeconds(60));
+        Payout declined = requested(20_000);
+        declined.decline(PARENT, NOW.plusSeconds(60));
+        Payout expired = requested(20_000);
+        expired.expire(NOW, NOW);
+
+        assertThat(fulfilled.expiresAt(Duration.ofDays(7))).isNull();
+        assertThat(declined.expiresAt(Duration.ofDays(7))).isNull();
+        assertThat(expired.expiresAt(Duration.ofDays(7))).isNull();
+    }
+
+    @Test
     void theExpiryInstantIsExactlyWhenTheRequestBecomesExpirable() {
         Duration expiry = Duration.ofDays(7);
         Payout early = requested(20_000);

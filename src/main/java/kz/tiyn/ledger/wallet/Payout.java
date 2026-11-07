@@ -116,7 +116,7 @@ final class Payout {
     }
 
     Instant expiresAt(Duration expiry) {
-        return requestedAt.plus(expiry);
+        return state == PayoutState.REQUESTED ? requestedAt.plus(expiry) : null;
     }
 
     void expire(Instant cutoff, Instant now) {

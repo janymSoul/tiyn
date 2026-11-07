@@ -201,7 +201,7 @@ A teen asks a linked parent for money; the parent hands over the cash and confir
 { "id": "…", "teenId": "…", "parentId": "…", "amount": 1000000, "currency": "KZT",
   "state": "REQUESTED", "requestedAt": "…", "expiresAt": "…", "resolvedAt": null, "cancelReason": null }
 ```
-`state`: `REQUESTED`, `FULFILLED` or `CANCELLED`; `cancelReason`: `TEEN_CANCELLED`, `DECLINED`, `EXPIRED` or `UNLINKED`. A teen can have **one** open payout at a time. An open request is also held back from `availableAmount`. Requests expire after `LEDGER_PAYOUT_EXPIRY` (default 7 days). `expiresAt` is `requestedAt` plus that period, computed by the server; use it for a countdown and never derive it on the client. It is the instant the request becomes eligible for expiry, so it only means something while `state` is `REQUESTED`; the expiry ticker runs about once a minute, so a request can stay open for a short while after `expiresAt`.
+`state`: `REQUESTED`, `FULFILLED` or `CANCELLED`; `cancelReason`: `TEEN_CANCELLED`, `DECLINED`, `EXPIRED` or `UNLINKED`. A teen can have **one** open payout at a time. An open request is also held back from `availableAmount`. Requests expire after `LEDGER_PAYOUT_EXPIRY` (default 7 days). `expiresAt` is `requestedAt` plus that period, computed by the server; use it for a countdown and never derive it on the client. It is the instant the request becomes eligible for expiry, so it is present only while `state` is `REQUESTED` and omitted once the payout is fulfilled or cancelled; the expiry ticker runs about once a minute, so a request can stay open for a short while after `expiresAt`.
 
 | Endpoint | Caller | Notes |
 |---|---|---|
