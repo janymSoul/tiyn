@@ -24,7 +24,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 - **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
 - **Eventual consistency:** a rewarded approval and an expired penalty reach the wallet through events, usually within seconds. After `approve`, the balance may lag; re-read it instead of assuming.
 - **Roles:** `PARENT` and `TEEN`. A teen may be linked to several parents; a parent to several teens. A parent only sees and acts on tasks they created for linked teens.
-- **Lists are not paginated** and no ordering is promised.
+- **Lists are not paginated** and no ordering is promised, except `GET /task-series`, which is newest first and capped at 100.
 
 ## Identity
 
@@ -152,6 +152,18 @@ Header `Idempotency-Key` required.
 - Each occurrence becomes an ordinary task, created by a ticker; the first is created immediately when due.
 - Response: `{ id, teenId, title, description, rewardAmount, penaltyAmount, currency, recurrence, timezone, dueTime, startsOn, active }`.
 - Errors: 403 `forbidden`, 422 `teen_required`, `invalid_schedule`, plus the title and reward errors above.
+
+### `GET /task-series` (parent) → `SeriesResponse[]`
+
+The series the caller created, newest first, at most 100. Each element has the shape `POST /task-series` returns.
+- `?teenId=<uuid>`: only that teen's series. The teen must be linked to the caller right now, otherwise 403 `forbidden`.
+- `?active=true|false`: only running or only stopped series. Anything else is 400 `invalid_request`.
+
+Without `teenId` the list also contains stopped series of teens who were unlinked since. Teens get 403 `forbidden`. Each task a series created carries its `seriesId`.
+
+### `GET /task-series/{id}` (parent) → `SeriesResponse`
+
+One series. 404 `not_found` when the id is unknown or belongs to another parent; teens get 403 `forbidden`.
 
 ### `DELETE /task-series/{id}` (parent) → `204`
 

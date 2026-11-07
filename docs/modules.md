@@ -169,6 +169,8 @@ Used by the dashboard module to show "Pending" funds (TEN-01). Pending is task-o
 | `POST /tasks/{id}/cancel` | parent | cancel; a milestone cancels its open tasks |
 | `GET /tasks/{id}/proofs` | parent | proofs with presigned view URLs |
 | `POST /task-series` | parent | create a daily or weekly series (`recurrence`, `dueTime`, optional `timezone`, `startsOn`); `Idempotency-Key` required |
+| `GET /task-series` | parent | the series the caller created, newest first, at most 100; optional `teenId` (must be linked, else 403) and `active` |
+| `GET /task-series/{id}` | parent | one series; someone else's series is 404 |
 | `DELETE /task-series/{id}` | parent | close a series (repeatable) |
 
 Error codes: `not_found` 404, `forbidden` 403; `invalid_transition`, `deadline_passed`, `concurrent_modification` 409; `invalid_reward`, `invalid_deadline`, `invalid_title`, `invalid_note`, `invalid_milestone`, `invalid_kind`, `invalid_schedule`, `invalid_filter`, `unsupported_proof`, `invalid_idempotency_key`, `teen_required` 422. Rewards are capped by `tiyn.task.max-reward-amount` (default 10,000,000 minor units).

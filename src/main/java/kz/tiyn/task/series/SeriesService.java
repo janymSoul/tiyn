@@ -1,6 +1,7 @@
 package kz.tiyn.task.series;
 
 import java.time.Clock;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.identity.FamilyDirectory;
@@ -77,6 +78,21 @@ class SeriesService {
             created.dueOccurrence(now).ifPresent(assignment::assignOccurrence);
             return created;
         });
+    }
+
+    List<TaskSeries> list(Principal caller, UUID teenId, Boolean active) {
+        requireParent(caller);
+        if (teenId != null && !family.areLinked(caller.userId(), teenId)) {
+            throw new TaskException(TaskError.FORBIDDEN);
+        }
+        return series.listForParent(caller.userId(), teenId, active);
+    }
+
+    TaskSeries get(Principal caller, UUID id) {
+        requireParent(caller);
+        return series.find(id)
+                .filter(found -> found.parentId().equals(caller.userId()))
+                .orElseThrow(() -> new TaskException(TaskError.NOT_FOUND));
     }
 
     void close(Principal caller, UUID id) {
