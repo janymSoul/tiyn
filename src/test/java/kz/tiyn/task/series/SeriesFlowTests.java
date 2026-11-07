@@ -2,6 +2,7 @@ package kz.tiyn.task.series;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -127,6 +128,26 @@ class SeriesFlowTests {
         UUID series = createSeries(f, "DAILY", null);
 
         assertThat(occurrences(series)).isEqualTo(1);
+    }
+
+    @Test
+    void anOccurrenceNamesItsSeriesAndAPlainTaskOmitsTheField() throws Exception {
+        Family f = fx.linkedFamily();
+        UUID series = createSeries(f, "DAILY", null);
+        UUID plain = fx.createTask(f, 100);
+        UUID occurrence = jdbc.queryForObject("SELECT id FROM task.tasks WHERE series_id = ?", UUID.class, series);
+
+        mvc.perform(get("/tasks/" + occurrence).header("Authorization", f.teen().bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seriesId").value(series.toString()));
+        mvc.perform(get("/tasks/" + plain).header("Authorization", f.teen().bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seriesId").doesNotExist());
+        mvc.perform(get("/tasks").header("Authorization", f.parent().bearer()))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$[?(@.id == '" + occurrence + "')].seriesId").value(series.toString()))
+                .andExpect(jsonPath("$[?(@.id == '" + plain + "')].seriesId").isEmpty());
     }
 
     @Test

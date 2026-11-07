@@ -87,10 +87,10 @@ A task has a state machine: `ASSIGNED` → `SUBMITTED` → `APPROVED` or `REJECT
   "title": "Wash dishes", "description": "", "rewardAmount": 150000, "penaltyAmount": 0,
   "currency": "KZT", "state": "ASSIGNED", "deadlineAt": "2026-11-03T18:00:00Z",
   "submittedAt": null, "decidedAt": null, "decisionNote": null,
-  "milestoneId": null, "approvedTasks": null, "totalTasks": null
+  "milestoneId": null, "seriesId": null, "approvedTasks": null, "totalTasks": null
 }
 ```
-`approvedTasks` and `totalTasks` appear only on a milestone returned by `GET /tasks/{id}`.
+`approvedTasks` and `totalTasks` appear only on a milestone returned by `GET /tasks/{id}`. `seriesId` appears only on a task that a recurring series created (see `GET /task-series/{id}`) and is omitted on every other task.
 
 ### `POST /tasks` (parent) → `201 TaskResponse`
 
