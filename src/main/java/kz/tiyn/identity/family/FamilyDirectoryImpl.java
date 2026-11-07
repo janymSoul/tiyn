@@ -1,5 +1,6 @@
 package kz.tiyn.identity.family;
 
+import java.util.Set;
 import java.util.UUID;
 import kz.tiyn.identity.FamilyDirectory;
 import org.springframework.stereotype.Component;
@@ -16,5 +17,10 @@ class FamilyDirectoryImpl implements FamilyDirectory {
     @Override
     public boolean areLinked(UUID parentId, UUID teenId) {
         return links.existsActive(parentId, teenId);
+    }
+
+    @Override
+    public Set<UUID> linkedTeenIds(UUID parentId) {
+        return links.activeTeenIds(parentId);
     }
 }
