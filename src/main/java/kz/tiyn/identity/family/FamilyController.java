@@ -7,6 +7,7 @@ import kz.tiyn.identity.account.error.IdentityException;
 import kz.tiyn.identity.family.dto.FamilyResponse;
 import kz.tiyn.identity.family.dto.JoinRequest;
 import kz.tiyn.identity.family.dto.JoinResponse;
+import kz.tiyn.platform.idempotency.NaturallyIdempotent;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -27,6 +28,7 @@ class FamilyController {
     }
 
     @PostMapping("/links/join")
+    @NaturallyIdempotent
     JoinResponse join(@AuthenticationPrincipal Principal principal, @RequestBody JoinRequest request) {
         User parent = service.join(principal.userId(), request.code());
         return new JoinResponse(new JoinResponse.Parent(parent.id(), parent.displayName()));

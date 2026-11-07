@@ -209,6 +209,7 @@
                       <schema><inputSchema>task</inputSchema></schema>
                       <schema><inputSchema>ledger</inputSchema></schema>
                       <schema><inputSchema>notification</inputSchema></schema>
+                      <schema><inputSchema>platform</inputSchema></schema>
                     </schemata>
                   </database>
                   <target>

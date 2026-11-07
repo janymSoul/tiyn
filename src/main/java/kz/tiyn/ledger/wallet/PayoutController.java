@@ -6,6 +6,7 @@ import kz.tiyn.ledger.wallet.dto.PayoutResponse;
 import kz.tiyn.ledger.wallet.dto.RequestPayoutRequest;
 import kz.tiyn.ledger.wallet.error.LedgerError;
 import kz.tiyn.ledger.wallet.error.LedgerException;
+import kz.tiyn.platform.idempotency.NaturallyIdempotent;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -49,16 +50,19 @@ class PayoutController {
     }
 
     @PostMapping("/payouts/{id}/fulfil")
+    @NaturallyIdempotent
     PayoutResponse fulfil(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
         return toResponse(service.fulfil(caller, id));
     }
 
     @PostMapping("/payouts/{id}/cancel")
+    @NaturallyIdempotent
     PayoutResponse cancel(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
         return toResponse(service.cancel(caller, id));
     }
 
     @PostMapping("/payouts/{id}/decline")
+    @NaturallyIdempotent
     PayoutResponse decline(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
         return toResponse(service.decline(caller, id));
     }

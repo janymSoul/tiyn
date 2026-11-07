@@ -2,6 +2,7 @@ package kz.tiyn.task.series;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -83,6 +85,39 @@ class SeriesFlowTests {
 
     private int occurrences(UUID seriesId) {
         return jdbc.queryForObject("SELECT count(*) FROM task.tasks WHERE series_id = ?", Integer.class, seriesId);
+    }
+
+    @Test
+    void creatingASeriesWithoutAKeyIsRefusedAndCreatesNothing() throws Exception {
+        Family f = fx.linkedFamily();
+
+        mvc.perform(post("/task-series")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", f.parent().bearer())
+                        .content(body(f, "DAILY", null)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_idempotency_key"));
+    }
+
+    @Test
+    void repeatingACreateWithTheSameKeyReturnsTheSameSeriesWithoutANewOccurrence() throws Exception {
+        Family f = fx.linkedFamily();
+        String request = body(f, "DAILY", null);
+
+        String first = fx.send("/task-series", request, f.parent().bearer(), "Idempotency-Key", "s-1")
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        UUID id = UUID.fromString(json.readTree(first).get("id").asText());
+        fx.send("/task-series", request, f.parent().bearer(), "Idempotency-Key", "s-1")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(id.toString()));
+        fx.send("/task-series", body(f, "WEEKLY", null), f.parent().bearer(), "Idempotency-Key", "s-1")
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_idempotency_key"));
+
+        assertThat(occurrences(id)).isEqualTo(1);
     }
 
     @Test

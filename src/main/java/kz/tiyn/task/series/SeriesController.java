@@ -1,6 +1,7 @@
 package kz.tiyn.task.series;
 
 import java.util.UUID;
+import kz.tiyn.platform.idempotency.IdempotencyContext;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.task.series.dto.CreateSeriesRequest;
 import kz.tiyn.task.series.dto.SeriesResponse;
@@ -25,8 +26,11 @@ class SeriesController {
 
     @PostMapping("/task-series")
     @ResponseStatus(HttpStatus.CREATED)
-    SeriesResponse create(@AuthenticationPrincipal Principal caller, @RequestBody CreateSeriesRequest request) {
-        TaskSeries s = service.create(caller, request);
+    SeriesResponse create(
+            @AuthenticationPrincipal Principal caller,
+            IdempotencyContext idempotency,
+            @RequestBody CreateSeriesRequest request) {
+        TaskSeries s = service.create(caller, idempotency, request);
         return new SeriesResponse(
                 s.id(),
                 s.teenId(),

@@ -21,7 +21,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 | 422 | `validation_failed` | bean validation failure |
 | 500 | `internal_error` | unexpected; retry is safe only for idempotent calls |
 
-- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Creation endpoints (`POST /tasks`, `/goals`, `/task-series`) take no key, so a retried request creates a second object.
+- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
 - **Eventual consistency:** a rewarded approval and an expired penalty reach the wallet through events, usually within seconds. After `approve`, the balance may lag; re-read it instead of assuming.
 - **Roles:** `PARENT` and `TEEN`. A teen may be linked to several parents; a parent to several teens. A parent only sees and acts on tasks they created for linked teens.
 - **Lists are not paginated** and no ordering is promised.
@@ -94,13 +94,15 @@ A task has a state machine: `ASSIGNED` → `SUBMITTED` → `APPROVED` or `REJECT
 
 ### `POST /tasks` (parent) → `201 TaskResponse`
 
+Header `Idempotency-Key` required.
+
 ```json
 { "teenId": "…", "kind": "TASK", "title": "…", "description": "…", "rewardAmount": 150000,
   "penaltyAmount": 0, "currency": "KZT", "deadlineAt": "2026-11-03T18:00:00Z", "milestoneId": null }
 ```
 - `teenId` required and must be linked. `kind` defaults to `TASK`. `title` 1–200 characters after trimming. `currency` must be `KZT`. `rewardAmount` > 0 and at most the maximum; `penaltyAmount` 0 up to the maximum (taken from the wallet on expiry). `deadlineAt` must be in the future.
 - `milestoneId` puts the task under an open milestone of the same family; a milestone cannot nest.
-- Errors: 403 `forbidden`, 422 `teen_required`, `invalid_kind`, `invalid_title`, `invalid_reward`, `invalid_penalty`, `invalid_deadline`, `invalid_milestone`.
+- Errors: 403 `forbidden`, 422 `teen_required`, `invalid_kind`, `invalid_title`, `invalid_reward`, `invalid_penalty`, `invalid_deadline`, `invalid_milestone`, `invalid_idempotency_key`.
 
 ### `GET /tasks`
 
@@ -140,6 +142,8 @@ One entry per submission attempt. `imageUrl` is a presigned URL that stops worki
 
 ### `POST /task-series` (parent) → `201`
 
+Header `Idempotency-Key` required.
+
 ```json
 { "teenId": "…", "title": "…", "description": "…", "rewardAmount": 50000, "penaltyAmount": 0,
   "currency": "KZT", "recurrence": "DAILY", "timezone": "Asia/Almaty", "dueTime": "18:00:00", "startsOn": "2026-11-02" }
@@ -169,7 +173,7 @@ Parents get 403 `forbidden`.
 
 | Endpoint | Body | Notes |
 |---|---|---|
-| `POST /goals` → `201` | `{ "name": "Bike", "targetAmount": 2000000 }` | name 1–100 characters, target > 0 |
+| `POST /goals` → `201` | `{ "name": "Bike", "targetAmount": 2000000 }` + `Idempotency-Key` | name 1–100 characters, target > 0 |
 | `GET /goals` | | the teen's goals |
 | `GET /goals/{id}` | | 404 `not_found` for someone else's goal |
 | `POST /goals/{id}/lock` | `{ "amount": 50000 }` + `Idempotency-Key` | saved plus amount must not exceed the target |
@@ -207,13 +211,13 @@ One call for the home screen:
 {
   "balance": { "balanceAmount": 0, "lockedAmount": 0, "availableAmount": 0, "currency": "KZT" },
   "pendingAmount": 150000,
-  "chores": [ { "id": "…", "kind": "TASK", "title": "…", "description": "…", "rewardAmount": 0, "penaltyAmount": 0, "currency": "KZT", "state": "ASSIGNED", "deadlineAt": "…" } ],
+  "chores": [ { "id": "…", "kind": "TASK", "title": "…", "description": "…", "rewardAmount": 0, "penaltyAmount": 0, "currency": "KZT", "state": "ASSIGNED", "deadlineAt": "…", "milestoneId": null } ],
   "milestones": [ { "…": "same fields, plus approvedTasks and totalTasks" } ],
   "goals": [ { "id": "…", "name": "…", "targetAmount": 0, "savedAmount": 0, "currency": "KZT" } ],
   "openPayout": { "id": "…", "parentId": "…", "amount": 0, "currency": "KZT", "requestedAt": "…" }
 }
 ```
-`pendingAmount` is the sum of rewards of tasks awaiting a parent's decision. `chores` and `milestones` hold open work plus recently decided tasks (window `DASHBOARD_RECENT_WINDOW`, default 7 days, at most `DASHBOARD_MAX_TASKS` = 50 tasks). `goals` lists active goals. `openPayout` is omitted when there is none.
+`pendingAmount` is the sum of rewards of tasks awaiting a parent's decision. `milestoneId` is the id of the milestone a task belongs to, or `null`; the client can use it to group tasks under their milestone. `chores` and `milestones` hold open work plus recently decided tasks (window `DASHBOARD_RECENT_WINDOW`, default 7 days, at most `DASHBOARD_MAX_TASKS` = 50 tasks). `goals` lists active goals. `openPayout` is omitted when there is none.
 
 ## Push notifications
 
@@ -245,6 +249,5 @@ These are facts about the current API, listed so they are decided on purpose and
 2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
 3. **No pagination, ordering guarantees or `If-Modified-Since`.** Fine at MVP size, painful after months of tasks.
 4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
-5. **Creation endpoints are not idempotent** (`POST /tasks`, `/goals`, `/task-series`), so a retry after a network failure duplicates.
-6. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
-7. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
+5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
+6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.

@@ -161,14 +161,14 @@ Used by the dashboard module to show "Pending" funds (TEN-01). Pending is task-o
 
 | Route | Caller | Purpose |
 |---|---|---|
-| `POST /tasks` | parent | create a task or milestone; optional `milestoneId` |
+| `POST /tasks` | parent | create a task or milestone; optional `milestoneId`; `Idempotency-Key` required (platform keys, ADR-0001) |
 | `GET /tasks?teenId&state` | parent or teen | list (a teen sees only their own; capped at 200) |
 | `GET /tasks/{id}` | parent or teen | detail; milestones include progress |
 | `POST /tasks/{id}/submit` | teen | multipart `file` or JSON `{text}`; `Idempotency-Key` required |
 | `POST /tasks/{id}/approve`, `/reject`, `/request-redo` | parent | review; reject and redo take `{note?}`, redo also `{deadlineAt?}` |
 | `POST /tasks/{id}/cancel` | parent | cancel; a milestone cancels its open tasks |
 | `GET /tasks/{id}/proofs` | parent | proofs with presigned view URLs |
-| `POST /task-series` | parent | create a daily or weekly series (`recurrence`, `dueTime`, optional `timezone`, `startsOn`) |
+| `POST /task-series` | parent | create a daily or weekly series (`recurrence`, `dueTime`, optional `timezone`, `startsOn`); `Idempotency-Key` required |
 | `DELETE /task-series/{id}` | parent | close a series (repeatable) |
 
 Error codes: `not_found` 404, `forbidden` 403; `invalid_transition`, `deadline_passed`, `concurrent_modification` 409; `invalid_reward`, `invalid_deadline`, `invalid_title`, `invalid_note`, `invalid_milestone`, `invalid_kind`, `invalid_schedule`, `invalid_filter`, `unsupported_proof`, `invalid_idempotency_key`, `teen_required` 422. Rewards are capped by `tiyn.task.max-reward-amount` (default 10,000,000 minor units).
@@ -238,7 +238,7 @@ Errors: `forbidden` 403, `not_found` 404, `invalid_amount` / `amount_too_small` 
 
 | Route | Notes |
 |---|---|
-| `POST /goals` | `{name, targetAmount}`; name 1 to 100 characters, target > 0; 201 |
+| `POST /goals` | `{name, targetAmount}` + required `Idempotency-Key` (platform keys, ADR-0001); name 1 to 100 characters, target > 0; 201 |
 | `GET /goals`, `GET /goals/{id}` | with `savedAmount`; another teen's goal is `not_found`; list capped at 100 |
 | `POST /goals/{id}/lock` | `{amount}` + required `Idempotency-Key`; must fit *available* and the goal's remaining target |
 | `POST /goals/{id}/unlock` | `{amount}` + required `Idempotency-Key`; at most what the goal holds |

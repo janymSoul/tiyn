@@ -10,7 +10,7 @@ import org.springframework.modulith.core.ApplicationModules;
 
 class ModularityTests {
 
-    private static final List<String> TABLE_OWNERS = List.of("identity", "task", "ledger", "notification");
+    private static final List<String> TABLE_OWNERS = List.of("identity", "task", "ledger", "notification", "platform");
 
     @Test
     void verifiesModuleBoundaries() {

@@ -4,6 +4,7 @@ import kz.tiyn.identity.account.dto.SignInRequest;
 import kz.tiyn.identity.account.dto.SignInResponse;
 import kz.tiyn.identity.account.dto.SignInResult;
 import kz.tiyn.identity.account.dto.UserResponse;
+import kz.tiyn.platform.idempotency.NaturallyIdempotent;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +22,7 @@ class AccountController {
     }
 
     @PostMapping("/auth/google")
+    @NaturallyIdempotent
     SignInResponse signIn(@RequestBody SignInRequest request) {
         SignInResult result = service.signIn(request.idToken(), request.role(), request.displayName());
         return new SignInResponse(result.token(), UserResponse.from(result.user()));

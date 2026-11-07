@@ -44,6 +44,7 @@ Before you say a task is finished, all of the following must hold:
 | How do I test this? | `docs/testing.md` |
 | Java style, design principles, error handling, naming? | `docs/conventions.md` |
 | What must the product do? | `docs/use-cases.md` |
+| Why was a cross-cutting decision made? | `docs/adr/` (MADR format, one file per decision; new ADRs go here, never outside this repo) |
 
 ## Environment
 
