@@ -61,8 +61,13 @@ public final class TaskFixtures {
         if (bearer != null) {
             request.header("Authorization", bearer);
         }
+        boolean hasKey = false;
         for (int i = 0; i < headers.length; i += 2) {
             request.header(headers[i], headers[i + 1]);
+            hasKey |= headers[i].equalsIgnoreCase("Idempotency-Key");
+        }
+        if (path.equals("/tasks") && !hasKey) {
+            request.header("Idempotency-Key", UUID.randomUUID().toString());
         }
         return mvc.perform(request);
     }

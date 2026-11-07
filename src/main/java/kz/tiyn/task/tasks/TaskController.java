@@ -3,6 +3,8 @@ package kz.tiyn.task.tasks;
 import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
+import kz.tiyn.platform.idempotency.IdempotencyContext;
+import kz.tiyn.platform.idempotency.NaturallyIdempotent;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.task.tasks.dto.CreateTaskRequest;
 import kz.tiyn.task.tasks.dto.NoteRequest;
@@ -36,8 +38,11 @@ class TaskController {
 
     @PostMapping("/tasks")
     @ResponseStatus(HttpStatus.CREATED)
-    TaskResponse create(@AuthenticationPrincipal Principal caller, @RequestBody CreateTaskRequest request) {
-        return toResponse(service.create(caller, request));
+    TaskResponse create(
+            @AuthenticationPrincipal Principal caller,
+            IdempotencyContext idempotency,
+            @RequestBody CreateTaskRequest request) {
+        return toResponse(service.create(caller, idempotency, request));
     }
 
     @GetMapping("/tasks")
@@ -78,11 +83,13 @@ class TaskController {
     }
 
     @PostMapping("/tasks/{id}/approve")
+    @NaturallyIdempotent
     TaskResponse approve(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
         return toResponse(service.approve(caller, id));
     }
 
     @PostMapping("/tasks/{id}/reject")
+    @NaturallyIdempotent
     TaskResponse reject(
             @AuthenticationPrincipal Principal caller,
             @PathVariable UUID id,
@@ -91,6 +98,7 @@ class TaskController {
     }
 
     @PostMapping("/tasks/{id}/request-redo")
+    @NaturallyIdempotent
     TaskResponse requestRedo(
             @AuthenticationPrincipal Principal caller,
             @PathVariable UUID id,
@@ -100,6 +108,7 @@ class TaskController {
     }
 
     @PostMapping("/tasks/{id}/cancel")
+    @NaturallyIdempotent
     TaskResponse cancel(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
         return toResponse(service.cancel(caller, id));
     }

@@ -161,7 +161,7 @@ Used by the dashboard module to show "Pending" funds (TEN-01). Pending is task-o
 
 | Route | Caller | Purpose |
 |---|---|---|
-| `POST /tasks` | parent | create a task or milestone; optional `milestoneId` |
+| `POST /tasks` | parent | create a task or milestone; optional `milestoneId`; `Idempotency-Key` required (platform keys, ADR-0001) |
 | `GET /tasks?teenId&state` | parent or teen | list (a teen sees only their own; capped at 200) |
 | `GET /tasks/{id}` | parent or teen | detail; milestones include progress |
 | `POST /tasks/{id}/submit` | teen | multipart `file` or JSON `{text}`; `Idempotency-Key` required |

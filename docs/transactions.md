@@ -105,6 +105,12 @@ Every reward, payout, penalty, and file upload is idempotent. Three layers:
 2. **`UNIQUE` constraint.** An `idempotency_keys` table (or a `UNIQUE` column on the effect table) makes a replay a no-op or a conflict, handled as success. The guard runs *inside* the transaction so the key and the effect commit together — you can never record the key without the effect or vice versa.
 3. **Idempotent event consumers.** Delivery is at-least-once, so consumers must dedupe too. The ledger's `TaskApproved` listener uses `REWARD-TASK-{taskId}` as the ledger entry's idempotency key — a redelivered event inserts nothing the second time.
 
+### Platform idempotency keys (ADR-0001)
+
+`platform.idempotency_keys` is the shared guard for requests that create an entity. It is keyed by `(user_id, key)` and stores the operation name, a hash of the request, and the id of the entity the first request created, never a response body. The owning service calls `IdempotencyKeys.claimOrFindPrevious(userId, context, operation, newResourceId, request)` as the first statement of its transaction. An empty result means the claim is new and the service creates the entity with that id; a present result is the entity created by the first request, which the service reloads and returns. A different operation or request under the same key is 422 `invalid_idempotency_key`. The claim commits or rolls back with the effect, so a failed create does not burn the key, and concurrent requests with the same key wait on the unique index. Controllers receive the key as an `IdempotencyContext` argument, which rejects a missing, blank or over-long `Idempotency-Key`. Rows older than `IDEMPOTENCY_TTL` (default 24 hours) are deleted by `IdempotencyCleanupTicker`.
+
+Every `POST` handler must take an `IdempotencyContext` or be annotated `@NaturallyIdempotent`; `IdempotencyPolicyTests` fails the build otherwise. Submit, goal lock and unlock, and payouts still use their older header-based keys.
+
 ### File-upload idempotency
 
 Per the PRD "Important" note, a retried upload must not create a duplicate object. The client sends an `Idempotency-Key` header with the submit request; the media module derives the S3 object key deterministically from it, so a retry overwrites the same key rather than creating a new object. No DB uniqueness needed — the object store's key space enforces it.

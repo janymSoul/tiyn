@@ -7,11 +7,14 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 import kz.tiyn.identity.FamilyDirectory;
 import kz.tiyn.media.InvalidMediaException;
 import kz.tiyn.media.Storage;
+import kz.tiyn.platform.idempotency.IdempotencyContext;
+import kz.tiyn.platform.idempotency.IdempotencyKeys;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.platform.security.Role;
 import kz.tiyn.platform.tx.ConflictRetry;
@@ -27,6 +30,7 @@ class TaskService {
 
     private final TaskStore tasks;
     private final IdempotencyStore keys;
+    private final IdempotencyKeys idempotency;
     private final FamilyDirectory family;
     private final Storage storage;
     private final TransactionTemplate tx;
@@ -36,6 +40,7 @@ class TaskService {
     TaskService(
             TaskStore tasks,
             IdempotencyStore keys,
+            IdempotencyKeys idempotency,
             FamilyDirectory family,
             Storage storage,
             TransactionTemplate tx,
@@ -43,6 +48,7 @@ class TaskService {
             Clock clock) {
         this.tasks = tasks;
         this.keys = keys;
+        this.idempotency = idempotency;
         this.family = family;
         this.storage = storage;
         this.tx = tx;
@@ -50,7 +56,7 @@ class TaskService {
         this.clock = clock;
     }
 
-    Task create(Principal caller, CreateTaskRequest request) {
+    Task create(Principal caller, IdempotencyContext context, CreateTaskRequest request) {
         requireRole(caller, Role.PARENT);
         if (request.teenId() == null) {
             throw new TaskException(TaskError.TEEN_REQUIRED);
@@ -68,10 +74,16 @@ class TaskService {
                 request.currency(),
                 request.deadlineAt());
         return tx.execute(status -> {
+            UUID id = UUID.randomUUID();
+            Optional<UUID> previous =
+                    idempotency.claimOrFindPrevious(caller.userId(), context, "task.create", id, request);
+            if (previous.isPresent()) {
+                return tasks.find(previous.get()).orElseThrow(() -> new TaskException(TaskError.NOT_FOUND));
+            }
             Task task = request.milestoneId() == null
-                    ? Task.assign(UUID.randomUUID(), draft, clock.instant(), properties.maxRewardAmount())
+                    ? Task.assign(id, draft, clock.instant(), properties.maxRewardAmount())
                     : Task.assignInMilestone(
-                            UUID.randomUUID(),
+                            id,
                             tasks.findLocked(request.milestoneId())
                                     .orElseThrow(() -> new TaskException(TaskError.INVALID_MILESTONE)),
                             draft,

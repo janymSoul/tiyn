@@ -5,6 +5,7 @@ import java.util.UUID;
 import kz.tiyn.ledger.wallet.dto.AmountRequest;
 import kz.tiyn.ledger.wallet.dto.CreateGoalRequest;
 import kz.tiyn.ledger.wallet.dto.GoalResponse;
+import kz.tiyn.platform.idempotency.NaturallyIdempotent;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -60,6 +61,7 @@ class GoalController {
     }
 
     @PostMapping("/goals/{id}/close")
+    @NaturallyIdempotent
     GoalResponse close(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
         return toResponse(service.close(caller, id));
     }
