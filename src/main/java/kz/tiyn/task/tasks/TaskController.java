@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.UUID;
 import kz.tiyn.platform.idempotency.IdempotencyContext;
 import kz.tiyn.platform.idempotency.NaturallyIdempotent;
+import kz.tiyn.platform.paging.BoundedList;
 import kz.tiyn.platform.paging.Page;
 import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
@@ -115,6 +116,7 @@ class TaskController {
     }
 
     @GetMapping("/tasks/{id}/proofs")
+    @BoundedList("one entry per proof attempt")
     List<ProofResponse> proofs(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
         return service.proofs(caller, id);
     }
