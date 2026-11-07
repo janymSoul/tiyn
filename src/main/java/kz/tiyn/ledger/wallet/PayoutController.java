@@ -1,12 +1,13 @@
 package kz.tiyn.ledger.wallet;
 
-import java.util.List;
 import java.util.UUID;
 import kz.tiyn.ledger.wallet.dto.PayoutResponse;
 import kz.tiyn.ledger.wallet.dto.RequestPayoutRequest;
 import kz.tiyn.ledger.wallet.error.LedgerError;
 import kz.tiyn.ledger.wallet.error.LedgerException;
 import kz.tiyn.platform.idempotency.NaturallyIdempotent;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -40,10 +41,9 @@ class PayoutController {
     }
 
     @GetMapping("/payouts")
-    List<PayoutResponse> list(@AuthenticationPrincipal Principal caller, @RequestParam(required = false) String state) {
-        return service.list(caller, parseState(state)).stream()
-                .map(this::toResponse)
-                .toList();
+    Page<PayoutResponse> list(
+            @AuthenticationPrincipal Principal caller, @RequestParam(required = false) String state, PageRequest page) {
+        return service.list(caller, parseState(state), page).map(this::toResponse);
     }
 
     @GetMapping("/payouts/{id}")

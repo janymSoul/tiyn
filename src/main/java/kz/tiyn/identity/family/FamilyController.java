@@ -8,6 +8,7 @@ import kz.tiyn.identity.family.dto.FamilyResponse;
 import kz.tiyn.identity.family.dto.JoinRequest;
 import kz.tiyn.identity.family.dto.JoinResponse;
 import kz.tiyn.platform.idempotency.NaturallyIdempotent;
+import kz.tiyn.platform.paging.BoundedList;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -35,6 +36,7 @@ class FamilyController {
     }
 
     @GetMapping("/family")
+    @BoundedList("a user is linked to a handful of family members")
     FamilyResponse family(@AuthenticationPrincipal Principal principal) {
         return new FamilyResponse(service.members(principal.userId(), principal.role()).stream()
                 .map(m -> new FamilyResponse.Member(m.id(), m.role().name(), m.displayName()))

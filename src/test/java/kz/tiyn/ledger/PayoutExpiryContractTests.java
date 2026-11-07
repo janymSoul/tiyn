@@ -84,7 +84,8 @@ class PayoutExpiryContractTests {
         UUID payout = openPayout(f);
 
         assertExpiresAfterConfiguredExpiry(body("/payouts/" + payout, f.teen().bearer()));
-        assertExpiresAfterConfiguredExpiry(body("/payouts", f.parent().bearer()).get(0));
+        assertExpiresAfterConfiguredExpiry(
+                body("/payouts", f.parent().bearer()).get("items").get(0));
         assertExpiresAfterConfiguredExpiry(body("/dashboard", f.teen().bearer()).get("openPayout"));
         assertThat(overviews.overview(f.teen().id()).openPayout().expiresAt())
                 .isEqualTo(Instant.parse(body("/payouts/" + payout, f.teen().bearer())

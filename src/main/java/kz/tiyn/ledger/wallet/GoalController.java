@@ -1,12 +1,13 @@
 package kz.tiyn.ledger.wallet;
 
-import java.util.List;
 import java.util.UUID;
 import kz.tiyn.ledger.wallet.dto.AmountRequest;
 import kz.tiyn.ledger.wallet.dto.CreateGoalRequest;
 import kz.tiyn.ledger.wallet.dto.GoalResponse;
 import kz.tiyn.platform.idempotency.IdempotencyContext;
 import kz.tiyn.platform.idempotency.NaturallyIdempotent;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -37,8 +38,8 @@ class GoalController {
     }
 
     @GetMapping("/goals")
-    List<GoalResponse> list(@AuthenticationPrincipal Principal caller) {
-        return service.list(caller).stream().map(GoalController::toResponse).toList();
+    Page<GoalResponse> list(@AuthenticationPrincipal Principal caller, PageRequest page) {
+        return service.list(caller, page).map(GoalController::toResponse);
     }
 
     @GetMapping("/goals/{id}")

@@ -2,12 +2,14 @@ package kz.tiyn.ledger.wallet;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 import kz.tiyn.identity.FamilyDirectory;
 import kz.tiyn.ledger.wallet.error.LedgerError;
 import kz.tiyn.ledger.wallet.error.LedgerException;
+import kz.tiyn.platform.paging.Cursor;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.platform.security.Role;
 import kz.tiyn.platform.tx.ConflictException;
@@ -159,10 +161,11 @@ class PayoutService {
         return payout;
     }
 
-    List<Payout> list(Principal caller, PayoutState state) {
+    Page<Payout> list(Principal caller, PayoutState state, PageRequest page) {
+        String filterHash = Cursor.hashOf("payouts", state);
         return caller.role() == Role.TEEN
-                ? payouts.listForTeen(caller.userId(), state)
-                : payouts.listForParent(caller.userId(), state);
+                ? payouts.pageForTeen(caller.userId(), state, filterHash, page)
+                : payouts.pageForParent(caller.userId(), state, filterHash, page);
     }
 
     private Payout resolve(Principal caller, UUID id, BiConsumer<Payout, Instant> action) {

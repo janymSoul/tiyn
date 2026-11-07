@@ -9,8 +9,12 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.task.tables.records.TasksRecord;
+import kz.tiyn.platform.paging.Cursor;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.time.Instants;
 import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.Condition;
@@ -68,7 +72,8 @@ class TaskStore {
                 .map(this::toTask);
     }
 
-    List<Task> list(UUID parentId, UUID teenId, TaskState state) {
+    Page<Task> page(
+            UUID parentId, UUID teenId, Set<UUID> teenScope, TaskState state, String filterHash, PageRequest request) {
         Condition where = DSL.noCondition();
         if (parentId != null) {
             where = where.and(TASKS.PARENT_ID.eq(parentId));
@@ -76,12 +81,23 @@ class TaskStore {
         if (teenId != null) {
             where = where.and(TASKS.TEEN_ID.eq(teenId));
         }
+        if (teenScope != null) {
+            where = where.and(TASKS.TEEN_ID.in(teenScope));
+        }
         if (state != null) {
             where = where.and(TASKS.STATE.eq(state.name()));
         }
-        return dsl.selectFrom(TASKS).where(where).orderBy(TASKS.CREATED_AT.desc()).limit(200).fetch().stream()
-                .map(this::toTask)
-                .toList();
+        var ordered = dsl.selectFrom(TASKS).where(where).orderBy(TASKS.CREATED_AT.desc(), TASKS.ID.desc());
+        Optional<Cursor> after = request.after(filterHash);
+        List<TasksRecord> fetched = after.isPresent()
+                ? ordered.seek(
+                                Instants.toUtc(after.get().sortKey()),
+                                after.get().id())
+                        .limit(request.fetchSize())
+                        .fetch()
+                : ordered.limit(request.fetchSize()).fetch();
+        return Page.of(fetched, request, r -> new Cursor(Instants.fromUtc(r.getCreatedAt()), r.getId(), filterHash))
+                .map(this::toTask);
     }
 
     List<Task> board(UUID teenId, Instant since, int limit) {

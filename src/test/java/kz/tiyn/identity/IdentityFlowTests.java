@@ -229,6 +229,23 @@ class IdentityFlowTests {
     }
 
     @Test
+    void aParentsLinkedTeensAreTheActiveLinksOnly() throws Exception {
+        JsonNode mother = signIn(uniqueSub(), "PARENT", "Mother");
+        JsonNode first = signIn(uniqueSub(), "TEEN", "First");
+        JsonNode second = signIn(uniqueSub(), "TEEN", "Second");
+        assertThat(directory.linkedTeenIds(id(mother))).isEmpty();
+        for (JsonNode teen : new JsonNode[] {first, second}) {
+            send("/links/join", codeBody(mother), bearer(teen)).andExpect(status().isOk());
+        }
+
+        assertThat(directory.linkedTeenIds(id(mother))).containsExactlyInAnyOrder(id(first), id(second));
+
+        mvc.perform(delete("/links/" + id(second)).header("Authorization", bearer(mother)))
+                .andExpect(status().isNoContent());
+        assertThat(directory.linkedTeenIds(id(mother))).containsExactly(id(first));
+    }
+
+    @Test
     void joinResponseCarriesTheParentIdSoTheTeenCanAddressPayouts() throws Exception {
         JsonNode parent = signIn(uniqueSub(), "PARENT", "Aigul");
         JsonNode teen = signIn(uniqueSub(), "TEEN", "Dana");

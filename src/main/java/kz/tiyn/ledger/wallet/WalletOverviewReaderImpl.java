@@ -28,7 +28,7 @@ class WalletOverviewReaderImpl implements WalletOverviewReader {
     @Override
     @Transactional(readOnly = true)
     public WalletOverview overview(UUID teenId) {
-        List<GoalSummary> active = goals.listForTeen(teenId).stream()
+        List<GoalSummary> active = goals.listRecentForTeen(teenId).stream()
                 .filter(v -> v.goal().state() == GoalState.ACTIVE)
                 .map(v -> new GoalSummary(
                         v.goal().id(),
@@ -37,8 +37,7 @@ class WalletOverviewReaderImpl implements WalletOverviewReader {
                         v.savedAmount(),
                         v.goal().currency()))
                 .toList();
-        OpenPayout open = payouts.listForTeen(teenId, PayoutState.REQUESTED).stream()
-                .findFirst()
+        OpenPayout open = payouts.findOpenForTeen(teenId)
                 .map(p -> new OpenPayout(
                         p.id(),
                         p.parentId(),

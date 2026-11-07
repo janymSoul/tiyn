@@ -5,6 +5,7 @@ import static kz.tiyn.platform.jooq.identity.Tables.USERS;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.identity.tables.records.FamilyLinksRecord;
 import kz.tiyn.platform.security.Role;
@@ -40,6 +41,14 @@ class LinkStore {
                 .where(FAMILY_LINKS.PARENT_ID.eq(parentId))
                 .and(FAMILY_LINKS.TEEN_ID.eq(teenId))
                 .and(FAMILY_LINKS.REMOVED_AT.isNull()));
+    }
+
+    Set<UUID> activeTeenIds(UUID parentId) {
+        return Set.copyOf(dsl.select(FAMILY_LINKS.TEEN_ID)
+                .from(FAMILY_LINKS)
+                .where(FAMILY_LINKS.PARENT_ID.eq(parentId))
+                .and(FAMILY_LINKS.REMOVED_AT.isNull())
+                .fetch(FAMILY_LINKS.TEEN_ID));
     }
 
     List<FamilyMember> activeMembers(UUID userId, Role role) {

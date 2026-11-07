@@ -66,6 +66,10 @@ class SeriesQueryFlowTests {
         return mvc.perform(get(path).header("Authorization", who.bearer()));
     }
 
+    private JsonNode itemsAs(Person who, String path) throws Exception {
+        return listAs(who, path).get("items");
+    }
+
     private JsonNode listAs(Person who, String path) throws Exception {
         return json.readTree(getAs(who, path)
                 .andExpect(status().isOk())
@@ -99,7 +103,7 @@ class SeriesQueryFlowTests {
         JsonNode first = createSeries(f.parent(), f.teen().id(), "Walk dog");
         JsonNode second = createSeries(f.parent(), f.teen().id(), "Take out trash");
 
-        JsonNode listed = listAs(f.parent(), "/task-series");
+        JsonNode listed = itemsAs(f.parent(), "/task-series");
 
         assertThat(ids(listed))
                 .containsExactly(second.get("id").asText(), first.get("id").asText());
@@ -126,7 +130,7 @@ class SeriesQueryFlowTests {
         getAs(mine.parent(), "/task-series/" + foreign.get("id").asText())
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("not_found"));
-        assertThat(ids(listAs(mine.parent(), "/task-series")))
+        assertThat(ids(itemsAs(mine.parent(), "/task-series")))
                 .containsExactly(own.get("id").asText());
     }
 
@@ -157,11 +161,11 @@ class SeriesQueryFlowTests {
         JsonNode forFirst = createSeries(f.parent(), f.teen().id(), "First teen");
         JsonNode forOther = createSeries(f.parent(), other.id(), "Other teen");
 
-        assertThat(ids(listAs(f.parent(), "/task-series?teenId=" + f.teen().id())))
+        assertThat(ids(itemsAs(f.parent(), "/task-series?teenId=" + f.teen().id())))
                 .containsExactly(forFirst.get("id").asText());
-        assertThat(ids(listAs(f.parent(), "/task-series?teenId=" + other.id())))
+        assertThat(ids(itemsAs(f.parent(), "/task-series?teenId=" + other.id())))
                 .containsExactly(forOther.get("id").asText());
-        assertThat(ids(listAs(f.parent(), "/task-series")))
+        assertThat(ids(itemsAs(f.parent(), "/task-series")))
                 .containsExactly(forOther.get("id").asText(), forFirst.get("id").asText());
     }
 
@@ -188,11 +192,11 @@ class SeriesQueryFlowTests {
                         .header("Authorization", f.parent().bearer()))
                 .andExpect(status().isNoContent());
 
-        assertThat(ids(listAs(f.parent(), "/task-series?active=true")))
+        assertThat(ids(itemsAs(f.parent(), "/task-series?active=true")))
                 .containsExactly(running.get("id").asText());
-        assertThat(ids(listAs(f.parent(), "/task-series?active=false")))
+        assertThat(ids(itemsAs(f.parent(), "/task-series?active=false")))
                 .containsExactly(stopped.get("id").asText());
-        assertThat(ids(listAs(f.parent(), "/task-series"))).hasSize(2);
+        assertThat(ids(itemsAs(f.parent(), "/task-series"))).hasSize(2);
         assertThat(listAs(f.parent(), "/task-series/" + stopped.get("id").asText())
                         .get("active")
                         .asBoolean())
@@ -206,39 +210,5 @@ class SeriesQueryFlowTests {
         getAs(f.parent(), "/task-series?active=maybe")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("invalid_request"));
-    }
-
-    @Test
-    void theListQueryIsBackedByAParentCreatedIndex() {
-        assertThat(jdbc.queryForObject(
-                        "SELECT count(*) FROM pg_indexes WHERE schemaname = 'task'"
-                                + " AND tablename = 'task_series' AND indexname = 'task_series_parent_created_idx'",
-                        Integer.class))
-                .isEqualTo(1);
-    }
-
-    @Test
-    void theListIsCappedAtOneHundredNewestSeries() throws Exception {
-        Family f = fx.linkedFamily();
-        IntStream.range(0, 101)
-                .forEach(i -> jdbc.update(
-                        """
-                        INSERT INTO task.task_series
-                            (id, parent_id, teen_id, kind, title, reward_amount, currency, recurrence, timezone,
-                             due_time, starts_on, created_at)
-                        VALUES (?, ?, ?, 'TASK', ?, 100, 'KZT', 'DAILY', 'Asia/Almaty', '23:59', current_date,
-                                now() - make_interval(mins => ?))
-                        """,
-                        UUID.randomUUID(),
-                        f.parent().id(),
-                        f.teen().id(),
-                        "series " + i,
-                        i));
-
-        JsonNode listed = listAs(f.parent(), "/task-series");
-
-        assertThat(listed).hasSize(100);
-        assertThat(listed.get(0).get("title").asText()).isEqualTo("series 0");
-        assertThat(listed.get(99).get("title").asText()).isEqualTo("series 99");
     }
 }

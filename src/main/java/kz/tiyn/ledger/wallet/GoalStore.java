@@ -8,15 +8,20 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.platform.jooq.ledger.tables.records.SavingsGoalsRecord;
+import kz.tiyn.platform.paging.Cursor;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
+import kz.tiyn.platform.time.Instants;
 import org.jooq.DSLContext;
 import org.jooq.Field;
+import org.jooq.Record;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
 class GoalStore {
 
-    static final int LIST_LIMIT = 100;
+    static final int OVERVIEW_LIMIT = 100;
 
     private final DSLContext dsl;
 
@@ -55,18 +60,44 @@ class GoalStore {
                 .longValueExact();
     }
 
-    List<GoalView> listForTeen(UUID teenId) {
-        Field<BigDecimal> saved =
-                DSL.field(dsl.select(DSL.coalesce(DSL.sum(LEDGER_ENTRIES.LOCKED_DELTA), BigDecimal.ZERO))
-                        .from(LEDGER_ENTRIES)
-                        .where(LEDGER_ENTRIES.REF_ID.eq(SAVINGS_GOALS.ID)));
+    List<GoalView> listRecentForTeen(UUID teenId) {
+        Field<BigDecimal> saved = savedAmount();
         return dsl.select(SAVINGS_GOALS.asterisk(), saved)
                 .from(SAVINGS_GOALS)
                 .where(SAVINGS_GOALS.TEEN_ID.eq(teenId))
                 .orderBy(SAVINGS_GOALS.CREATED_AT.desc(), SAVINGS_GOALS.ID)
-                .limit(LIST_LIMIT)
+                .limit(OVERVIEW_LIMIT)
                 .fetch(r ->
                         new GoalView(toGoal(r.into(SAVINGS_GOALS)), r.get(saved).longValueExact()));
+    }
+
+    Page<GoalView> pageForTeen(UUID teenId, String filterHash, PageRequest request) {
+        Field<BigDecimal> saved = savedAmount();
+        var ordered = dsl.select(SAVINGS_GOALS.asterisk(), saved)
+                .from(SAVINGS_GOALS)
+                .where(SAVINGS_GOALS.TEEN_ID.eq(teenId))
+                .orderBy(SAVINGS_GOALS.CREATED_AT.desc(), SAVINGS_GOALS.ID.desc());
+        Optional<Cursor> after = request.after(filterHash);
+        List<Record> fetched = after.isPresent()
+                ? ordered.seek(
+                                Instants.toUtc(after.get().sortKey()),
+                                after.get().id())
+                        .limit(request.fetchSize())
+                        .fetch()
+                : ordered.limit(request.fetchSize()).fetch();
+        return Page.of(
+                        fetched,
+                        request,
+                        r -> new Cursor(
+                                Instants.fromUtc(r.get(SAVINGS_GOALS.CREATED_AT)), r.get(SAVINGS_GOALS.ID), filterHash))
+                .map(r ->
+                        new GoalView(toGoal(r.into(SAVINGS_GOALS)), r.get(saved).longValueExact()));
+    }
+
+    private static Field<BigDecimal> savedAmount() {
+        return DSL.field(DSL.select(DSL.coalesce(DSL.sum(LEDGER_ENTRIES.LOCKED_DELTA), BigDecimal.ZERO))
+                .from(LEDGER_ENTRIES)
+                .where(LEDGER_ENTRIES.REF_ID.eq(SAVINGS_GOALS.ID)));
     }
 
     private static Goal toGoal(SavingsGoalsRecord r) {
