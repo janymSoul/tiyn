@@ -328,14 +328,14 @@ A missed task with a penalty sends the teen the deadline message with the deduct
   "chores": [],
   "milestones": [],
   "goals": [],
-  "openPayout": {"id": "...", "parentId": "...", "amount": 0, "currency": "KZT", "requestedAt": "..."}
+  "openPayout": {"id": "...", "parentId": "...", "amount": 0, "currency": "KZT", "requestedAt": "...", "expiresAt": "..."}
 }
 ```
 `pendingAmount` is the sum of rewards of `SUBMITTED` tasks. `chores` is every task that is not a milestone; a task inside a milestone carries `milestoneId` so the client nests it. `milestones` carry `approvedTasks` and `totalTasks` ("3 of 5"). `goals` lists active goals with their saved amount. `openPayout` is omitted when the teen has no request open. The dashboard has its own response records; the suppliers' types never cross the module boundary.
 
 **Which tasks.** Open work (`ASSIGNED`, `SUBMITTED`) ordered by deadline, then tasks decided in the last `tiyn.dashboard.recent-window` (env `DASHBOARD_RECENT_WINDOW`, default `P7D`) newest first, capped at `tiyn.dashboard.max-tasks` (env `DASHBOARD_MAX_TASKS`, default 50), so open work is never pushed out by history. "Decided" is `decided_at`, falling back to `updated_at` for tasks that have none (expired). Full history stays on `GET /tasks`.
 
-**Contracts it consumes** (each owned by the supplier, in its root package): `ledger.WalletOverviewReader` (balance, active goals and the open payout, read in one read-only transaction so they are one snapshot), `task.TaskBoardReader` (tasks plus milestone progress in two queries, no N+1), `task.PendingReader`. Pending and balance come from different modules, so for a moment after an approval a reward can show in neither; the UI must not promise "immediately credited".
+**Contracts it consumes** (each owned by the supplier, in its root package): `ledger.WalletOverviewReader` (balance, active goals and the open payout, read in one read-only transaction so they are one snapshot; the open payout carries `expiresAt`, computed by the ledger from `payout-expiry`, so the dashboard never reads that config), `task.TaskBoardReader` (tasks plus milestone progress in two queries, no N+1), `task.PendingReader`. Pending and balance come from different modules, so for a moment after an approval a reward can show in neither; the UI must not promise "immediately credited".
 
 ## Time-driven work
 

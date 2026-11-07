@@ -3,6 +3,7 @@ package kz.tiyn.ledger.wallet;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import kz.tiyn.ledger.PayoutCancelled;
@@ -43,6 +44,28 @@ class PayoutTests {
         assertError(() -> requested(-1), LedgerError.INVALID_AMOUNT);
         assertError(() -> requested(9_999), LedgerError.AMOUNT_TOO_SMALL);
         assertThat(requested(10_000).amount()).isEqualTo(10_000);
+    }
+
+    @Test
+    void anOpenRequestExpiresAfterTheExpiryCountedFromWhenItWasRequested() {
+        Payout payout = requested(20_000);
+
+        assertThat(payout.expiresAt(Duration.ofDays(7))).isEqualTo(NOW.plus(Duration.ofDays(7)));
+        assertThat(payout.expiresAt(Duration.ofHours(36))).isEqualTo(NOW.plus(Duration.ofHours(36)));
+    }
+
+    @Test
+    void theExpiryInstantIsExactlyWhenTheRequestBecomesExpirable() {
+        Duration expiry = Duration.ofDays(7);
+        Payout early = requested(20_000);
+        Payout onTime = requested(20_000);
+        Instant expiresAt = onTime.expiresAt(expiry);
+
+        early.expire(expiresAt.minusSeconds(1).minus(expiry), expiresAt.minusSeconds(1));
+        onTime.expire(expiresAt.minus(expiry), expiresAt);
+
+        assertThat(early.state()).isEqualTo(PayoutState.REQUESTED);
+        assertThat(onTime.state()).isEqualTo(PayoutState.CANCELLED);
     }
 
     @Test

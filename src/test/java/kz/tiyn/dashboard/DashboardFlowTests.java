@@ -152,7 +152,8 @@ class DashboardFlowTests {
                 .andExpect(jsonPath("$.goals[0].savedAmount").value(500_000))
                 .andExpect(jsonPath("$.openPayout.amount").value(300_000))
                 .andExpect(
-                        jsonPath("$.openPayout.parentId").value(f.parent().id().toString()));
+                        jsonPath("$.openPayout.parentId").value(f.parent().id().toString()))
+                .andExpect(jsonPath("$.openPayout.expiresAt").exists());
     }
 
     @Test

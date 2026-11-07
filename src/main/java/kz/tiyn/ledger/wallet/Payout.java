@@ -1,5 +1,6 @@
 package kz.tiyn.ledger.wallet;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -112,6 +113,10 @@ final class Payout {
         resolvedAt = now;
         resolvedBy = by;
         events.record(new PayoutFulfilled(id, teenId, parentId, amount, currency));
+    }
+
+    Instant expiresAt(Duration expiry) {
+        return requestedAt.plus(expiry);
     }
 
     void expire(Instant cutoff, Instant now) {

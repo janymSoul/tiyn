@@ -33,5 +33,6 @@ public record DashboardResponse(
 
     public record GoalItem(UUID id, String name, long targetAmount, long savedAmount, String currency) {}
 
-    public record PayoutItem(UUID id, UUID parentId, long amount, String currency, Instant requestedAt) {}
+    public record PayoutItem(
+            UUID id, UUID parentId, long amount, String currency, Instant requestedAt, Instant expiresAt) {}
 }

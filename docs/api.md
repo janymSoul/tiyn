@@ -187,9 +187,9 @@ Errors: 422 `invalid_name`, `invalid_amount`, `exceeds_target`, `insufficient_fu
 A teen asks a linked parent for money; the parent hands over the cash and confirms. `PayoutResponse`:
 ```json
 { "id": "…", "teenId": "…", "parentId": "…", "amount": 1000000, "currency": "KZT",
-  "state": "REQUESTED", "requestedAt": "…", "resolvedAt": null, "cancelReason": null }
+  "state": "REQUESTED", "requestedAt": "…", "expiresAt": "…", "resolvedAt": null, "cancelReason": null }
 ```
-`state`: `REQUESTED`, `FULFILLED` or `CANCELLED`; `cancelReason`: `TEEN_CANCELLED`, `DECLINED`, `EXPIRED` or `UNLINKED`. A teen can have **one** open payout at a time. An open request is also held back from `availableAmount`. Requests expire after `LEDGER_PAYOUT_EXPIRY` (default 7 days).
+`state`: `REQUESTED`, `FULFILLED` or `CANCELLED`; `cancelReason`: `TEEN_CANCELLED`, `DECLINED`, `EXPIRED` or `UNLINKED`. A teen can have **one** open payout at a time. An open request is also held back from `availableAmount`. Requests expire after `LEDGER_PAYOUT_EXPIRY` (default 7 days). `expiresAt` is `requestedAt` plus that period, computed by the server; use it for a countdown and never derive it on the client. It is the instant the request becomes eligible for expiry, so it only means something while `state` is `REQUESTED`; the expiry ticker runs about once a minute, so a request can stay open for a short while after `expiresAt`.
 
 | Endpoint | Caller | Notes |
 |---|---|---|
@@ -214,7 +214,7 @@ One call for the home screen:
   "chores": [ { "id": "…", "kind": "TASK", "title": "…", "description": "…", "rewardAmount": 0, "penaltyAmount": 0, "currency": "KZT", "state": "ASSIGNED", "deadlineAt": "…", "milestoneId": null } ],
   "milestones": [ { "…": "same fields, plus approvedTasks and totalTasks" } ],
   "goals": [ { "id": "…", "name": "…", "targetAmount": 0, "savedAmount": 0, "currency": "KZT" } ],
-  "openPayout": { "id": "…", "parentId": "…", "amount": 0, "currency": "KZT", "requestedAt": "…" }
+  "openPayout": { "id": "…", "parentId": "…", "amount": 0, "currency": "KZT", "requestedAt": "…", "expiresAt": "…" }
 }
 ```
 `pendingAmount` is the sum of rewards of tasks awaiting a parent's decision. `milestoneId` is the id of the milestone a task belongs to, or `null`; the client can use it to group tasks under their milestone. `chores` and `milestones` hold open work plus recently decided tasks (window `DASHBOARD_RECENT_WINDOW`, default 7 days, at most `DASHBOARD_MAX_TASKS` = 50 tasks). `goals` lists active goals. `openPayout` is omitted when there is none.

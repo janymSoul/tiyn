@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 import kz.tiyn.support.IntegrationTest;
 import kz.tiyn.task.TaskFixtures;
@@ -83,6 +84,21 @@ class PayoutFlowTests {
         Balance balance = balances.balance(f.teen().id());
         assertThat(balance.balanceAmount()).isEqualTo(500_00);
         assertThat(balance.availableAmount()).isEqualTo(200_00);
+    }
+
+    @Test
+    void aRequestExpiresSevenDaysAfterItWasRequestedByDefault() throws Exception {
+        Family f = richFamily(500_00);
+
+        String created = requestPayout(f, f.parent().id(), 300_00, "k1")
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        var node = json.readTree(created);
+        assertThat(Instant.parse(node.get("expiresAt").asText()))
+                .isEqualTo(Instant.parse(node.get("requestedAt").asText()).plus(Duration.ofDays(7)));
     }
 
     @Test
