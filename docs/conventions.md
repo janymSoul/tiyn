@@ -85,7 +85,7 @@ tiyn/
       security/                 #   JWT verification and issuing, Principal, Role
       web/                      #   ApiException, ErrorBody, GlobalExceptionHandler
       tx/                       #   ConflictException, ConflictRetry (whole-transaction retry)
-      tick/                     #   Ticker, TickScheduler, ShedLock configuration
+      tick/                     #   Ticker, TickRegistrar, ShedLock configuration
     identity/ task/ ledger/ media/ notification/
                                 # each: root-package API + events, plus one sub-package per feature
   src/main/resources/

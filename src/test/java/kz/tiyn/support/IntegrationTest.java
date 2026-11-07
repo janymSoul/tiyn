@@ -18,6 +18,6 @@ import org.springframework.test.context.TestPropertySource;
             "tiyn.google.client-ids=test-client-id",
             "tiyn.media.storage=memory",
             "tiyn.notification.sender=logging",
-            "tiyn.tick.interval=PT1H"
+            "tiyn.tick.enabled=false"
         })
 public @interface IntegrationTest {}

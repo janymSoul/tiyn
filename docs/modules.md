@@ -341,20 +341,34 @@ A missed task with a penalty sends the teen the deadline message with the deduct
 
 Some state changes happen because time passes, not because a request arrives: expiring overdue tasks, creating the next occurrence of a recurring task, and cancelling stale payout requests. No request wakes the process for these, so something must.
 
-Each module with such work registers a `Ticker` bean and the platform scheduler runs them all:
+Each module with such work registers a `Ticker` bean and the platform registers one scheduled task per ticker:
 ```java
 public interface Ticker {
 
     void tick(Instant now);
+
+    default String name() { return getClass().getSimpleName(); }
+    default Duration interval() { return Duration.ofMinutes(1); }
+    default Duration lockAtMostFor() { return Duration.ofMinutes(5); }
 }
 ```
 `tick` must be idempotent and safe to run concurrently with itself: each item is processed in its own short transaction, and transitions are guarded by the FSM (a no-op when the state no longer fits) and the version column. A failure on one item is logged and does not block the rest of the batch. Tickers that take an explicit `now` are tested by calling `tick(Instant)` with chosen instants, never by sleeping.
 
-**Decision: `@Scheduled` plus ShedLock inside the API pods.** `TickScheduler` (in `kz.tiyn.platform.tick`) runs every `Ticker` on a fixed delay (`TICK_INTERVAL`, default one minute). A ShedLock row in `platform.shedlock` makes one replica run each cycle. A ticker that throws is logged and does not stop the others. There is no CronJob: booting a JVM every minute would cost far more than the work, and the lock only avoids duplicate effort, since correctness already comes from idempotent tickers.
+**Decision: one fixed-delay task and one ShedLock lock per ticker, inside the API pods.** `TickRegistrar` (in `kz.tiyn.platform.tick`, a Spring `SchedulingConfigurer`) registers a fixed-delay task for every `Ticker` bean, using the ticker's own `interval()`. Each run goes through ShedLock's `DefaultLockingTaskExecutor` under the lock `tick:<name()>` (a row in `platform.shedlock`), with a minimum hold of `interval() - 5s` and a maximum of the ticker's `lockAtMostFor()`. Consequences:
+- Different tickers run in parallel, including on different pods, because they hold different locks.
+- Across replicas a ticker runs about once per interval, not once per pod. After a run the lock stays held until the ticker's `interval()` minus 5 seconds, so the other pods' timers find it held and skip, and the lock passes to whichever pod's timer fires next. The cap `lockAtMostFor()` is raised to that hold when it is shorter, because ShedLock rejects a minimum longer than the maximum.
+- A slow ticker delays only itself. The lock also keeps it from overlapping with itself on another pod.
+- Each ticker has its own cadence. Most run every minute; `DeliveredPurgeTicker` and `IdempotencyCleanupTicker` run hourly.
+- A ticker that throws is logged and does not affect the others.
+- `tiyn.tick.enabled` (default `true`) switches registration off. Integration tests set it to `false` so tickers run only when a test calls them.
+
+There is no CronJob: booting a JVM every minute would cost far more than the work, and the lock only avoids duplicate effort, since correctness already comes from idempotent tickers.
+
+**The pool is fixed at 4 threads** (`tick-` prefix), however many tickers exist. A ticker needs a thread only while it runs, and most finish in milliseconds, so the cap stops tickers from competing with request handling for database connections (the Hikari pool is 20 by default). The cost is that more than four slow tickers running at once queue for a thread. If that happens, make a ticker faster before raising the cap. On shutdown the scheduler waits up to 25 seconds for running tickers. Virtual threads are not enabled, so a blocked ticker holds one of the four platform threads.
+
+**A ticker must never rely on another ticker having run.** Tickers have no order and may run at the same moment or on different pods. If one needs the result of another's work, it reacts to an event that work publishes, or it re-derives the state it needs from the database. `SchedulingRulesTests` fails the build if a ticker depends on another ticker, if anything but `TickRegistrar` calls `Ticker.tick`, or if `@Scheduled`, `@EnableScheduling` or ShedLock is used outside `kz.tiyn.platform.tick`.
 
 Events do not need a ticker to be delivered, but redelivery of failed ones does: `EventResubmitTicker` asks the registry to resubmit publications still incomplete after `tiyn.events.resubmit-after` (default one minute; `docs/events-outbox.md`).
-
-Tickers run one after another under a single lock, so a slow ticker delays the rest. A job that needs its own cadence gets its own `@Scheduled` method and lock name.
 
 ---
 
