@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.UUID;
 import kz.tiyn.platform.idempotency.IdempotencyContext;
 import kz.tiyn.platform.idempotency.NaturallyIdempotent;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.task.tasks.dto.CreateTaskRequest;
 import kz.tiyn.task.tasks.dto.NoteRequest;
@@ -46,13 +48,12 @@ class TaskController {
     }
 
     @GetMapping("/tasks")
-    List<TaskResponse> list(
+    Page<TaskResponse> list(
             @AuthenticationPrincipal Principal caller,
             @RequestParam(required = false) UUID teenId,
-            @RequestParam(required = false) String state) {
-        return service.list(caller, teenId, parseState(state)).stream()
-                .map(TaskController::toResponse)
-                .toList();
+            @RequestParam(required = false) String state,
+            PageRequest page) {
+        return service.list(caller, teenId, parseState(state), page).map(TaskController::toResponse);
     }
 
     @GetMapping("/tasks/{id}")

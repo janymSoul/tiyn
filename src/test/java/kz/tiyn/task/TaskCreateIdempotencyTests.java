@@ -164,7 +164,7 @@ class TaskCreateIdempotencyTests {
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
-        return json.readTree(response);
+        return json.readTree(response).get("items");
     }
 
     private String createBody(Family f, long reward, String title) throws Exception {

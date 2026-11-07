@@ -145,9 +145,10 @@ class SeriesFlowTests {
                 .andExpect(jsonPath("$.seriesId").doesNotExist());
         mvc.perform(get("/tasks").header("Authorization", f.parent().bearer()))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[?(@.id == '" + occurrence + "')].seriesId")
+                        .value(series.toString()))
                 .andExpect(
-                        jsonPath("$[?(@.id == '" + occurrence + "')].seriesId").value(series.toString()))
-                .andExpect(jsonPath("$[?(@.id == '" + plain + "')].seriesId").isEmpty());
+                        jsonPath("$.items[?(@.id == '" + plain + "')].seriesId").isEmpty());
     }
 
     @Test
@@ -232,9 +233,9 @@ class SeriesFlowTests {
 
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/tasks")
                         .header("Authorization", f.teen().bearer()))
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].title").value("Walk dog"))
-                .andExpect(jsonPath("$[0].state").value("ASSIGNED"));
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].title").value("Walk dog"))
+                .andExpect(jsonPath("$.items[0].state").value("ASSIGNED"));
     }
 
     @Test

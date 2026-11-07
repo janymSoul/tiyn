@@ -4,9 +4,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -15,6 +13,9 @@ import kz.tiyn.media.InvalidMediaException;
 import kz.tiyn.media.Storage;
 import kz.tiyn.platform.idempotency.IdempotencyContext;
 import kz.tiyn.platform.idempotency.IdempotencyKeys;
+import kz.tiyn.platform.paging.Cursor;
+import kz.tiyn.platform.paging.Page;
+import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.platform.security.Role;
 import kz.tiyn.platform.tx.ConflictRetry;
@@ -98,14 +99,12 @@ class TaskService {
         return authorised(caller, id);
     }
 
-    List<Task> list(Principal caller, UUID teenId, TaskState state) {
+    Page<Task> list(Principal caller, UUID teenId, TaskState state, PageRequest page) {
+        String filterHash = Cursor.hashOf("tasks", teenId, state);
         if (caller.role() == Role.TEEN) {
-            return tasks.list(null, caller.userId(), state);
+            return tasks.page(null, caller.userId(), null, state, filterHash, page);
         }
-        Map<UUID, Boolean> linked = new HashMap<>();
-        return tasks.list(caller.userId(), teenId, state).stream()
-                .filter(t -> linked.computeIfAbsent(t.teenId(), id -> family.areLinked(caller.userId(), id)))
-                .toList();
+        return tasks.page(caller.userId(), teenId, family.linkedTeenIds(caller.userId()), state, filterHash, page);
     }
 
     Task submitText(Principal caller, UUID id, String idempotencyKey, String text) {

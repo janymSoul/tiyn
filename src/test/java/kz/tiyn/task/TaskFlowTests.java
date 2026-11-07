@@ -351,10 +351,10 @@ class TaskFlowTests {
 
         mvc.perform(get("/tasks?state=SUBMITTED")
                         .header("Authorization", f.parent().bearer()))
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].id").value(done.toString()));
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(done.toString()));
         mvc.perform(get("/tasks").header("Authorization", f.teen().bearer()))
-                .andExpect(jsonPath("$.length()").value(2));
+                .andExpect(jsonPath("$.items.length()").value(2));
         mvc.perform(get("/tasks?state=NOPE").header("Authorization", f.parent().bearer()))
                 .andExpect(status().isUnprocessableEntity());
         assertThat(open).isNotEqualTo(done);
