@@ -35,6 +35,14 @@ class PaginationIndexTests {
     }
 
     @Test
+    void theParentTaskListKnowsThatParentAndTeenAreCorrelated() {
+        assertThat(jdbc.queryForObject(
+                        "SELECT count(*) FROM pg_statistic_ext WHERE stxname = 'tasks_parent_teen_stats'",
+                        Integer.class))
+                .isEqualTo(1);
+    }
+
+    @Test
     void indexesThatTheKeysetIndexesSupersededAreGone() {
         assertThat(indexNames())
                 .doesNotContain(
