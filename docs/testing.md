@@ -90,6 +90,8 @@ One such black-box test per PRD user scenario (Scenario 1: milestone; Scenario 2
 
 ## 4. Architecture tests
 
+`PaginationPolicyTests` (ADR-0002) fails the build when a `GET` handler returns a `List`, array or `Collection` unless it is annotated `@BoundedList("<why it stays small>")` with a non-blank reason. Every paginated endpoint extends `PagedEndpointContract` in `kz.tiyn.support`, which runs the shared scenarios (full walk, inserts between pages, ties, last and empty page, filter-bound cursors, limit bounds, caller scoping) against it.
+
 `ModularityTests` runs on every build:
 
 - `ApplicationModules.of(TiynApplication.class).verify()` fails on a dependency that crosses a module's internal packages, a cycle between modules, or a reference to a non-exposed type.

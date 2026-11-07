@@ -86,7 +86,7 @@ public interface FamilyDirectory {
 }
 ```
 Links are soft-deleted (`removed_at`). `areLinked` and every other lookup must ignore removed links; re-linking a removed pair clears `removed_at` on the existing row and increments its `generation`, which is part of the event key so that a relink produces a new event.
-Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.g. the task module checks a parent may approve a given teen's task). Token verification is not part of identity's API: the `platform` module verifies bearer tokens and hands controllers a `Principal(userId, role)`.
+Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.g. the task module checks a parent may approve a given teen's task). `linkedTeenIds(parentId)` returns the parent's active links so a paged list can apply the link check inside its own SQL query instead of filtering a page afterwards. Token verification is not part of identity's API: the `platform` module verifies bearer tokens and hands controllers a `Principal(userId, role)`.
 
 **Concurrency.** Registration, join-code allocation and linking can race. Every unique-rule violation (same Google subject, same join code, same link) is reported by the store as one `ConflictException`, and the service retries the whole transaction up to five times; if it still conflicts the caller gets 409 `conflict`. The recovery is the same in all three cases (the retry finds the winner's row, or draws a fresh code), so nothing depends on Postgres-generated constraint names. The transaction is opened per attempt with a `TransactionTemplate`, because a unique violation aborts the Postgres transaction and a retry needs a fresh one.
 
@@ -162,14 +162,14 @@ Used by the dashboard module to show "Pending" funds (TEN-01). Pending is task-o
 | Route | Caller | Purpose |
 |---|---|---|
 | `POST /tasks` | parent | create a task or milestone; optional `milestoneId`; `Idempotency-Key` required (platform keys, ADR-0001) |
-| `GET /tasks?teenId&state` | parent or teen | list (a teen sees only their own; capped at 200) |
+| `GET /tasks?teenId&state` | parent or teen | keyset page, newest first (see ADR-0002); a teen sees only their own, a parent only tasks for teens linked to them now |
 | `GET /tasks/{id}` | parent or teen | detail; milestones include progress |
 | `POST /tasks/{id}/submit` | teen | multipart `file` or JSON `{text}`; `Idempotency-Key` required |
 | `POST /tasks/{id}/approve`, `/reject`, `/request-redo` | parent | review; reject and redo take `{note?}`, redo also `{deadlineAt?}` |
 | `POST /tasks/{id}/cancel` | parent | cancel; a milestone cancels its open tasks |
 | `GET /tasks/{id}/proofs` | parent | proofs with presigned view URLs |
 | `POST /task-series` | parent | create a daily or weekly series (`recurrence`, `dueTime`, optional `timezone`, `startsOn`); `Idempotency-Key` required |
-| `GET /task-series` | parent | the series the caller created, newest first, at most 100; optional `teenId` (must be linked, else 403) and `active` |
+| `GET /task-series` | parent | keyset page of the series the caller created, newest first; optional `teenId` (must be linked, else 403) and `active` |
 | `GET /task-series/{id}` | parent | one series; someone else's series is 404 |
 | `DELETE /task-series/{id}` | parent | close a series (repeatable) |
 
@@ -228,7 +228,7 @@ public interface BalanceReader {
 | Route | Caller | Notes |
 |---|---|---|
 | `POST /payouts` | teen | `{parentId, amount}` + required `Idempotency-Key` (scoped per teen; replay returns the original) |
-| `GET /payouts?state=` | teen (own) / parent (addressed to them) | newest first, capped at 100 |
+| `GET /payouts?state=` | teen (own) / parent (addressed to them) | keyset page, newest first by `requested_at` |
 | `GET /payouts/{id}` | teen owner / addressed parent | anyone else gets `not_found` |
 | `POST /payouts/{id}/fulfil` | parent, still linked | debits the wallet; repeating is a no-op |
 | `POST /payouts/{id}/decline` | parent, still linked | `DECLINED` |
@@ -241,7 +241,7 @@ Errors: `forbidden` 403, `not_found` 404, `invalid_amount` / `amount_too_small` 
 | Route | Notes |
 |---|---|
 | `POST /goals` | `{name, targetAmount}` + required `Idempotency-Key` (platform keys, ADR-0001); name 1 to 100 characters, target > 0; 201 |
-| `GET /goals`, `GET /goals/{id}` | with `savedAmount`; another teen's goal is `not_found`; list capped at 100 |
+| `GET /goals`, `GET /goals/{id}` | with `savedAmount`; another teen's goal is `not_found`; list is a keyset page, newest first |
 | `POST /goals/{id}/lock` | `{amount}` + required `Idempotency-Key`; must fit *available* and the goal's remaining target |
 | `POST /goals/{id}/unlock` | `{amount}` + required `Idempotency-Key`; at most what the goal holds |
 | `POST /goals/{id}/close` | releases everything saved (`GOAL_UNLOCK`, key `GOAL-CLOSE-{goalId}`) and closes; repeating is a no-op |

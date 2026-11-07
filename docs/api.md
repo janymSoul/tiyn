@@ -24,7 +24,34 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 - **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
 - **Eventual consistency:** a rewarded approval and an expired penalty reach the wallet through events, usually within seconds. After `approve`, the balance may lag; re-read it instead of assuming.
 - **Roles:** `PARENT` and `TEEN`. A teen may be linked to several parents; a parent to several teens. A parent only sees and acts on tasks they created for linked teens.
-- **Lists are not paginated** and no ordering is promised, except `GET /task-series`, which is newest first and capped at 100.
+- **Lists that grow are paginated** with an opaque cursor, always newest first; see [Pagination](#pagination). `GET /family` and `GET /tasks/{id}/proofs` stay plain because the domain keeps them small.
+
+## Pagination
+
+`GET /tasks`, `GET /payouts`, `GET /goals` and `GET /task-series` are paginated. Anything that grows with time is, and so will the wallet history be. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list.
+
+**Request.** Two optional query parameters:
+- `limit`: items per page, default 50. Below 1, above 100 or not a number is 400 `invalid_request`.
+- `cursor`: the `nextCursor` of the previous page. Leave it out (or send it empty) for the first page.
+
+**Response.**
+```json
+{ "items": [ { "id": "…" } ], "nextCursor": "MXwyMDI2LTExLTA3VDEwOjE1OjMwLjEyMzQ1Nlp8…" }
+```
+`nextCursor` is present only when more items exist and is **omitted on the last page**; that is the only way to know a list has ended. An empty list is `{ "items": [] }`. There is no total count and no page number. A page holds `limit` items except the last, so keep requesting with `nextCursor` until it is absent.
+
+**Order.** Each endpoint has one fixed order, newest first, and the client cannot change it. Rows with the same timestamp are ordered by `id` descending, so no row is skipped or repeated across a page boundary.
+
+| Endpoint | Newest first by | Filters (a cursor is valid only with the filters it was issued for) |
+|---|---|---|
+| `GET /tasks` | `created_at`, then `id` | `teenId` (parent), `state` |
+| `GET /payouts` | `requested_at`, then `id` | `state` |
+| `GET /goals` | `created_at`, then `id` | none |
+| `GET /task-series` | `created_at`, then `id` | `teenId`, `active` |
+
+**Cursor.** Treat it as an opaque string: do not parse, build or store it. It identifies the last item you received and the filters of that request. Pages are stable while rows are added: new items appear at the top on the next refresh from the first page and never shift or duplicate the page you are on. Changing a filter means starting again without a cursor. A cursor that is malformed, from an unknown format version, or used with different filters than it was issued for is 422 `invalid_cursor`; drop it and restart from the first page. A cursor never exposes other users' data: every page is scoped to the caller.
+
+**Cursors are for browsing, not for sync.** A row carries the time its transaction started, not the time it committed, so a row can appear with an older timestamp than rows you already have. Refreshing from the first page picks it up; asking for "everything after X" with a cursor would miss it. Do not use cursors to mirror the server.
 
 ## Identity
 
@@ -106,7 +133,7 @@ Header `Idempotency-Key` required.
 
 ### `GET /tasks`
 
-Teen: their own tasks. Parent: tasks they created, optionally `?teenId=<uuid>`. Both accept `?state=ASSIGNED|SUBMITTED|APPROVED|REJECTED|CANCELLED|EXPIRED`. Returns `TaskResponse[]`. Unknown state: 422 `invalid_filter`.
+Teen: their own tasks. Parent: tasks they created, optionally `?teenId=<uuid>`. Both accept `?state=ASSIGNED|SUBMITTED|APPROVED|REJECTED|CANCELLED|EXPIRED`. Returns a page of `TaskResponse` (`{ "items": [...], "nextCursor": "…" }`), newest first by creation time; see [Pagination](#pagination). A parent sees only tasks for teens who are linked to them now. Unknown state: 422 `invalid_filter`; bad `limit`: 400 `invalid_request`; bad `cursor`: 422 `invalid_cursor`.
 
 ### `GET /tasks/{id}` → `TaskResponse`
 
@@ -153,11 +180,12 @@ Header `Idempotency-Key` required.
 - Response: `{ id, teenId, title, description, rewardAmount, penaltyAmount, currency, recurrence, timezone, dueTime, startsOn, active }`.
 - Errors: 403 `forbidden`, 422 `teen_required`, `invalid_schedule`, plus the title and reward errors above.
 
-### `GET /task-series` (parent) → `SeriesResponse[]`
+### `GET /task-series` (parent) → page of `SeriesResponse`
 
-The series the caller created, newest first, at most 100. Each element has the shape `POST /task-series` returns.
+The series the caller created, newest first by creation time, paginated (see [Pagination](#pagination)). Each item has the shape `POST /task-series` returns.
 - `?teenId=<uuid>`: only that teen's series. The teen must be linked to the caller right now, otherwise 403 `forbidden`.
 - `?active=true|false`: only running or only stopped series. Anything else is 400 `invalid_request`.
+- `?limit=` and `?cursor=` as described under Pagination.
 
 Without `teenId` the list also contains stopped series of teens who were unlinked since. Teens get 403 `forbidden`. Each task a series created carries its `seriesId`.
 
@@ -186,7 +214,7 @@ Parents get 403 `forbidden`.
 | Endpoint | Body | Notes |
 |---|---|---|
 | `POST /goals` → `201` | `{ "name": "Bike", "targetAmount": 2000000 }` + `Idempotency-Key` | name 1–100 characters, target > 0 |
-| `GET /goals` | | the teen's goals |
+| `GET /goals` | | page of the teen's goals, newest first |
 | `GET /goals/{id}` | | 404 `not_found` for someone else's goal |
 | `POST /goals/{id}/lock` | `{ "amount": 50000 }` + `Idempotency-Key` | saved plus amount must not exceed the target |
 | `POST /goals/{id}/unlock` | `{ "amount": 20000 }` + `Idempotency-Key` | cannot unlock more than saved |
@@ -206,7 +234,7 @@ A teen asks a linked parent for money; the parent hands over the cash and confir
 | Endpoint | Caller | Notes |
 |---|---|---|
 | `POST /payouts` → `201` | teen | `{ "parentId": "…", "amount": 1000000 }` + `Idempotency-Key`; amount at least the minimum and no more than available |
-| `GET /payouts?state=` | both | teen: own; parent: addressed to them |
+| `GET /payouts?state=` | both | page of payouts, newest first by `requestedAt`; teen: own; parent: addressed to them |
 | `GET /payouts/{id}` | both | only participants; others get 404 |
 | `POST /payouts/{id}/fulfil` | parent | debits the wallet |
 | `POST /payouts/{id}/decline` | parent | |
@@ -259,7 +287,7 @@ These are facts about the current API, listed so they are decided on purpose and
 
 1. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
 2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
-3. **No pagination, ordering guarantees or `If-Modified-Since`.** Fine at MVP size, painful after months of tasks.
+3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
 4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
 5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
 6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
