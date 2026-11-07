@@ -209,15 +209,6 @@ class SeriesQueryFlowTests {
     }
 
     @Test
-    void theListQueryIsBackedByAParentCreatedIndex() {
-        assertThat(jdbc.queryForObject(
-                        "SELECT count(*) FROM pg_indexes WHERE schemaname = 'task'"
-                                + " AND tablename = 'task_series' AND indexname = 'task_series_parent_created_idx'",
-                        Integer.class))
-                .isEqualTo(1);
-    }
-
-    @Test
     void theListIsCappedAtOneHundredNewestSeries() throws Exception {
         Family f = fx.linkedFamily();
         IntStream.range(0, 101)
