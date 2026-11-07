@@ -10,7 +10,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.javacrumbs.shedlock.core.LockConfiguration;
@@ -41,12 +43,39 @@ class TickRegistrarTests {
         assertThat(fast.ticks.get()).isEqualTo(1);
         assertThat(slow.ticks.get()).isEqualTo(1);
         assertThat(locks.requested)
-                .extracting(LockConfiguration::getName, LockConfiguration::getLockAtMostFor)
+                .extracting(
+                        LockConfiguration::getName,
+                        LockConfiguration::getLockAtLeastFor,
+                        LockConfiguration::getLockAtMostFor)
                 .containsExactly(
-                        tuple("tick:CountingTicker", Duration.ofMinutes(5)),
-                        tuple("tick:SlowTicker", Duration.ofMinutes(20)));
-        assertThat(locks.requested)
-                .allSatisfy(config -> assertThat(config.getLockAtLeastFor()).isEqualTo(Duration.ofSeconds(5)));
+                        tuple("tick:CountingTicker", Duration.ofSeconds(55), Duration.ofMinutes(5)),
+                        tuple(
+                                "tick:SlowTicker",
+                                Duration.ofMinutes(59).plusSeconds(55),
+                                Duration.ofMinutes(59).plusSeconds(55)));
+    }
+
+    @Test
+    void aVeryShortIntervalNeedsNoMinimumHold() {
+        var registrar = registrarFor(new CountingTicker(Duration.ofMillis(20)));
+
+        registrar.getFixedDelayTaskList().forEach(task -> task.getRunnable().run());
+
+        assertThat(locks.requested.get(0).getLockAtLeastFor()).isEqualTo(Duration.ZERO);
+    }
+
+    @Test
+    void onlyOneOfSeveralReplicasRunsATickerInAnInterval() {
+        var shared = new SharedLocks();
+        var tickers = List.of(new CountingTicker(), new CountingTicker(), new CountingTicker());
+        for (CountingTicker ticker : tickers) {
+            var registrar = new ScheduledTaskRegistrar();
+            new TickRegistrar(List.of(ticker), shared, Clock.systemUTC()).configureTasks(registrar);
+            registrar.getFixedDelayTaskList().forEach(task -> task.getRunnable().run());
+        }
+
+        assertThat(tickers.stream().mapToInt(ticker -> ticker.ticks.get()).sum())
+                .isEqualTo(1);
     }
 
     @Test
@@ -168,6 +197,20 @@ class TickRegistrarTests {
         @Override
         public void tick(Instant now) {
             throw new IllegalStateException("boom");
+        }
+    }
+
+    static class SharedLocks implements LockProvider {
+
+        private final Map<String, Instant> lockedUntil = new ConcurrentHashMap<>();
+
+        @Override
+        public synchronized Optional<SimpleLock> lock(LockConfiguration configuration) {
+            if (lockedUntil.getOrDefault(configuration.getName(), Instant.MIN).isAfter(Instant.now())) {
+                return Optional.empty();
+            }
+            lockedUntil.put(configuration.getName(), configuration.getLockAtMostUntil());
+            return Optional.of(() -> lockedUntil.put(configuration.getName(), configuration.getUnlockTime()));
         }
     }
 

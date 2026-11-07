@@ -23,7 +23,7 @@ class TickRegistrar implements SchedulingConfigurer, DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(TickRegistrar.class);
     private static final String LOCK_PREFIX = "tick:";
-    private static final Duration LOCK_AT_LEAST_FOR = Duration.ofSeconds(5);
+    private static final Duration LOCK_MARGIN = Duration.ofSeconds(5);
     private static final int POOL_SIZE = 4;
     private static final int AWAIT_TERMINATION_SECONDS = 25;
 
@@ -60,6 +60,10 @@ class TickRegistrar implements SchedulingConfigurer, DisposableBean {
         }
     }
 
+    private static Duration lockAtLeastFor(Ticker ticker) {
+        return ticker.interval().compareTo(LOCK_MARGIN) > 0 ? ticker.interval().minus(LOCK_MARGIN) : Duration.ZERO;
+    }
+
     private void requireUniqueNames() {
         var seen = new HashSet<String>();
         for (Ticker ticker : tickers) {
@@ -71,10 +75,12 @@ class TickRegistrar implements SchedulingConfigurer, DisposableBean {
 
     private void run(Ticker ticker) {
         try {
+            Duration lockAtLeastFor = lockAtLeastFor(ticker);
+            Duration lockAtMostFor =
+                    ticker.lockAtMostFor().compareTo(lockAtLeastFor) > 0 ? ticker.lockAtMostFor() : lockAtLeastFor;
             locks.executeWithLock(
                     (Runnable) () -> ticker.tick(clock.instant()),
-                    new LockConfiguration(
-                            clock.instant(), LOCK_PREFIX + ticker.name(), ticker.lockAtMostFor(), LOCK_AT_LEAST_FOR));
+                    new LockConfiguration(clock.instant(), LOCK_PREFIX + ticker.name(), lockAtMostFor, lockAtLeastFor));
         } catch (RuntimeException e) {
             log.error("ticker {} failed", ticker.name(), e);
         }
