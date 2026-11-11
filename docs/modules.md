@@ -171,7 +171,7 @@ Used by the dashboard module to show "Pending" funds (TEN-01). Pending is task-o
 | `POST /tasks/{id}/submit` | teen | multipart `file` or JSON `{text}`; `Idempotency-Key` required |
 | `POST /tasks/{id}/approve`, `/reject`, `/request-redo` | parent | review; reject and redo take `{note?}`, redo also `{deadlineAt?}` |
 | `POST /tasks/{id}/cancel` | parent | cancel; a milestone cancels its open tasks |
-| `GET /tasks/{id}/proofs` | parent | proofs with presigned view URLs |
+| `GET /tasks/{id}/proofs` | parent or owning teen | proofs with presigned view URLs |
 | `POST /task-series` | parent | create a daily or weekly series (`recurrence`, `dueTime`, optional `timezone`, `startsOn`); `Idempotency-Key` required |
 | `GET /task-series` | parent | keyset page of the series the caller created, newest first; optional `teenId` (must be linked, else 403) and `active` |
 | `GET /task-series/{id}` | parent | one series; someone else's series is 404 |
@@ -239,6 +239,8 @@ public interface BalanceReader {
 | `POST /payouts/{id}/cancel` | teen | `TEEN_CANCELLED` |
 
 Errors: `forbidden` 403, `not_found` 404, `invalid_amount` / `amount_too_small` / `insufficient_funds` / `parent_required` / `invalid_idempotency_key` / `invalid_filter` 422, `payout_already_open` / `invalid_transition` 409. Repeating the same cancellation is a no-op; resolving a payout another way is `invalid_transition`. The fulfil debit must fit `balance − locked` (funds locked in goals can never be paid out).
+
+**Wallet history API.** `GET /wallet/entries` is a keyset page over `ledger_entries` ordered by `(created_at DESC, id DESC)`, served by the existing `ledger_entries_teen_created_id_idx` (no migration). A teen reads their own; a parent must pass `teenId` of a currently linked teen (`FamilyDirectory.areLinked`), otherwise `forbidden`; a parent without `teenId` gets `teen_required` 422. `amount` is `balance_delta - locked_delta`, the effect on *available*; the related id is mapped from `ref_id` by kind (`taskId`, `payoutId`, `goalId`). Entries are append-only, so a page never changes under a cursor.
 
 **Savings goals API** (teen only; a parent gets `forbidden`; goals are private to the teen). A goal is a label on part of the wallet's money: locking moves nothing, it writes a `GOAL_LOCK` entry (`balance_delta = 0`, `locked_delta = +amount`) and raises `wallets.locked_amount`, which lowers *available*. The money stays in the total balance. A goal's `savedAmount` is derived: the sum of `locked_delta` over the entries whose `ref_id` is the goal, so the goals and the wallet's locked total cannot drift apart (a test asserts `locked_amount = sum of saved`).
 
