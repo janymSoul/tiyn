@@ -10,6 +10,7 @@ import kz.tiyn.platform.jooq.identity.tables.records.JoinRequestsRecord;
 import kz.tiyn.platform.paging.Cursor;
 import kz.tiyn.platform.paging.Page;
 import kz.tiyn.platform.paging.PageRequest;
+import kz.tiyn.platform.security.Role;
 import kz.tiyn.platform.time.Instants;
 import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.Condition;
@@ -45,6 +46,15 @@ class JoinRequestStore {
                 .where(pendingOf(parentId).and(JOIN_REQUESTS.TEEN_ID.eq(teenId)))
                 .fetchOptional()
                 .map(JoinRequestStore::toRequest);
+    }
+
+    List<JoinRequest> findPendingForUpdate(UUID userId, Role role) {
+        var self = role == Role.PARENT ? JOIN_REQUESTS.PARENT_ID : JOIN_REQUESTS.TEEN_ID;
+        return dsl.selectFrom(JOIN_REQUESTS)
+                .where(self.eq(userId).and(JOIN_REQUESTS.STATE.eq(PENDING)))
+                .orderBy(JOIN_REQUESTS.ID)
+                .forUpdate()
+                .fetch(JoinRequestStore::toRequest);
     }
 
     Page<PendingJoinRequest> pagePending(UUID parentId, String filterHash, PageRequest request) {

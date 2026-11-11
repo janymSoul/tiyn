@@ -54,6 +54,12 @@ class RefreshTokenStore {
                 .execute();
     }
 
+    int deleteAllOf(UUID userId) {
+        return dsl.deleteFrom(REFRESH_TOKENS)
+                .where(REFRESH_TOKENS.USER_ID.eq(userId))
+                .execute();
+    }
+
     int deleteExpired(Instant cutoff, int limit) {
         return dsl.deleteFrom(REFRESH_TOKENS)
                 .where(REFRESH_TOKENS.ID.in(dsl.select(REFRESH_TOKENS.ID)

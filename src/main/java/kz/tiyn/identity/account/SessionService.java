@@ -58,6 +58,11 @@ class SessionService {
         tx.executeWithoutResult(status -> findBySecret(secret).ifPresent(this::revokeFamily));
     }
 
+    void endAll(UUID userId) {
+        int removed = tokens.deleteAllOf(userId);
+        log.info("sessions ended userId={} refreshTokens={}", userId, removed);
+    }
+
     private Optional<SignInResult> rotate(String secret) {
         Optional<RefreshToken> found = findBySecret(secret);
         if (found.isEmpty()) {

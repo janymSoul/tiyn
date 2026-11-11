@@ -86,11 +86,24 @@ class FamilyService implements FamilyExit {
     }
 
     @Override
-    public void unlinkAll(User user) {
+    public void leave(User user) {
         Instant now = clock.instant();
+        joinAttempts.clear(user.id());
+        settlePendingRequests(user, now);
         links.findActiveForUpdate(user.id(), user.role()).forEach(link -> {
             link.unlink(now);
             links.save(link);
+        });
+    }
+
+    private void settlePendingRequests(User user, Instant now) {
+        joinRequests.findPendingForUpdate(user.id(), user.role()).forEach(request -> {
+            if (user.role() == Role.PARENT) {
+                request.declineBy(user.id(), now);
+            } else {
+                request.withdrawBy(user.id(), now);
+            }
+            joinRequests.save(request);
         });
     }
 
@@ -108,12 +121,16 @@ class FamilyService implements FamilyExit {
     }
 
     private JoinRequest requestOnce(User parent, User teen) {
-        return tx.execute(
-                status -> joinRequests.findPending(parent.id(), teen.id()).orElseGet(() -> {
-                    JoinRequest request = JoinRequest.submit(UUID.randomUUID(), parent, teen);
-                    joinRequests.insert(request);
-                    return request;
-                }));
+        return tx.execute(status -> {
+            accounts.shareActiveUser(parent.id())
+                    .orElseThrow(() -> new IdentityException(IdentityError.INVALID_JOIN_CODE));
+            accounts.shareActiveUser(teen.id()).orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
+            return joinRequests.findPending(parent.id(), teen.id()).orElseGet(() -> {
+                JoinRequest request = JoinRequest.submit(UUID.randomUUID(), parent, teen);
+                joinRequests.insert(request);
+                return request;
+            });
+        });
     }
 
     private Void unlinkOnce(UUID parentId, UUID teenId) {

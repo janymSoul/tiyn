@@ -42,7 +42,7 @@ class AccountDeletionService {
         if (openPayouts.hasOpenPayout(user.id(), user.role())) {
             throw new IdentityException(IdentityError.ACCOUNT_HAS_OPEN_PAYOUT);
         }
-        family.unlinkAll(user);
+        family.leave(user);
         accounts.delete(user);
         return user;
     }

@@ -4,5 +4,5 @@ import kz.tiyn.identity.account.User;
 
 public interface FamilyExit {
 
-    void unlinkAll(User user);
+    void leave(User user);
 }

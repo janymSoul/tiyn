@@ -122,6 +122,7 @@ class AccountService implements AccountDirectory {
     public void delete(User user) {
         user.delete(clock.instant());
         users.save(user);
+        sessions.endAll(user.id());
     }
 
     private User signInOnce(GoogleIdentity identity, String roleInput, String displayNameInput) {
