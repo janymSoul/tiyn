@@ -66,7 +66,7 @@ Request:
 - `role`: **optional**; required only when the account doesn't exist yet. `PARENT` or `TEEN`, upper-case, **only used the first time** an account signs in. An existing account keeps its role and name, and the fields are ignored.
 
 Client flow: call without `role`. On `422 role_required` (the account is new and nothing was created), ask the user for their role and call again with the same `idToken` and the `role`.
-- `displayName`: optional, at most 100 characters; falls back to the Google profile name.
+- `displayName`: optional, at most 100 characters; falls back to the Google profile name. Normalised like `PATCH /me` (below) before it is stored.
 
 Response `200`:
 ```json
@@ -79,6 +79,23 @@ Errors: 401 `invalid_identity` (bad or wrong-audience token), 422 `role_required
 ### `GET /me`
 
 Returns the same `user` object. 401 `unauthenticated` if the user no longer exists.
+
+### `PATCH /me` (parent or teen)
+
+Edit the caller's profile. Partial update: a field that is absent (or `null`) stays as it is, so `{}` is a harmless no-op that returns the current profile.
+
+Request:
+```json
+{ "displayName": "Aigerim" }
+```
+- `displayName`: the only editable field. The name is shown to the people the caller is linked to (`GET /family`, `POST /links/join`), so it is normalised before it is stored, the same way as at sign-in: control characters, invisible format characters (zero-width characters, byte-order mark) and Unicode bidi override, embedding and isolate characters are removed, every run of whitespace becomes one space, and the ends are trimmed. The result must be 1–100 characters; the length is checked after normalising. The response carries the stored value, which can differ from what was sent. Names stored before this rule are not rewritten.
+- `role`, `joinCode`, the Google subject and `id` cannot be changed. Sending them, or any other field, is 400 `invalid_body`. There is no email field (none is stored). The push-notification language is a property of the device, not the account: change it with `PUT /devices`.
+
+Response `200`: the same `user` object as `GET /me`.
+
+Repeating the call with the same body gives the same result, so it needs no `Idempotency-Key`. Two simultaneous edits are serialised on the user row; the last one to commit wins.
+
+Errors: 400 `invalid_body` (malformed JSON or an unknown field), 401 `unauthenticated` (no token, or the user no longer exists), 422 `invalid_display_name` (blank or empty after normalising, or longer than 100 characters).
 
 ### `POST /links/join` (teen)
 
@@ -289,5 +306,5 @@ These are facts about the current API, listed so they are decided on purpose and
 2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
 3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
 4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
-5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
+5. **No account deletion or data export.** The last matters for the Kazakhstan personal-data law. The profile has one editable field, `displayName` (`PATCH /me`); there is no avatar and no email.
 6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
