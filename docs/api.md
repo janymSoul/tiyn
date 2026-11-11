@@ -28,7 +28,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 
 ## Pagination
 
-`GET /tasks`, `GET /payouts`, `GET /goals` and `GET /task-series` are paginated. Anything that grows with time is, and so will the wallet history be. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list.
+`GET /tasks`, `GET /payouts`, `GET /goals`, `GET /task-series` and `GET /wallet/entries` are paginated. Anything that grows with time is. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list.
 
 **Request.** Two optional query parameters:
 - `limit`: items per page, default 50. Below 1, above 100 or not a number is 400 `invalid_request`.
@@ -207,6 +207,19 @@ Stops new occurrences; existing tasks stay. 404 `not_found`.
 ```
 Parents get 403 `forbidden`.
 
+### `GET /wallet/entries`
+
+The wallet history: why the balance changed, newest first by creation time, paginated (see [Pagination](#pagination)). Teen: their own entries. Parent: `?teenId=<uuid>` is required and the teen must be linked to the caller right now.
+```json
+{ "items": [ { "id": "…", "kind": "TASK_REWARD", "amount": 50000, "currency": "KZT",
+               "createdAt": "…", "taskId": "…" } ], "nextCursor": "…" }
+```
+- `kind`: `TASK_REWARD`, `PENALTY`, `PAYOUT`, `GOAL_LOCK` or `GOAL_UNLOCK`.
+- `amount` is the signed effect on `availableAmount`: positive for a reward and a goal unlock, negative for a penalty, a payout and a goal lock. A goal lock or unlock moves money between available and locked, so the balance itself does not change; `kind` tells the two apart.
+- Exactly one related id is present when the entry has one: `taskId` (reward, penalty), `payoutId` (payout) or `goalId` (goal lock and unlock). Otherwise the field is omitted.
+- Payout requests that are still open are not entries; the debit appears when the parent fulfils.
+- Errors: 403 `forbidden` (a teen naming another teen, a parent naming an unlinked teen), 422 `teen_required` (parent without `teenId`), 400 `invalid_request` (bad `limit` or `teenId`), 422 `invalid_cursor`.
+
 ### Savings goals
 
 `GoalResponse`: `{ id, name, targetAmount, savedAmount, currency, state }` with `state` `ACTIVE` or `CLOSED`. Saving into a goal moves money from available to locked; it does not leave the wallet.
@@ -286,8 +299,7 @@ Each event is sent at most once per recipient, even if the server redelivers it.
 These are facts about the current API, listed so they are decided on purpose and not found in the app:
 
 1. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
-2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed.
-3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
-4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
-5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
-6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
+2. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
+3. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
+4. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
+5. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.

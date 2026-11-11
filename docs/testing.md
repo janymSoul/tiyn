@@ -123,6 +123,8 @@ Coverage percentage is a guide; the JaCoCo floor only stops it from sliding back
 
 Docker is required for the build itself, not just for tests: jOOQ code generation starts a Postgres container. CI must provide a Docker daemon.
 
+The Testcontainers version in use speaks Docker API 1.32, which current Docker daemons (recent Docker Engine, OrbStack, GitHub runners) reject with `client version 1.32 is too old`. Pin the API version for the Maven JVM: `export JAVA_TOOL_OPTIONS=-Dapi.version=1.44`. CI sets the same option on the Verify step. Bumping Testcontainers is the proper long-term fix.
+
 ## Build, quality gates and CI
 
 `./mvnw verify` is the single gate, locally and in CI. After the tests it runs, in this order:
