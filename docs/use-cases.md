@@ -227,7 +227,8 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 - A penalty behaves like UC-11: the balance may go negative and a debt blocks payout requests and goal locks.
 - Entries are append-only. There is no edit or delete; a mistake is corrected by the opposite adjustment.
 - The amount has the same ceiling as a task reward. A required `Idempotency-Key` makes a retry return the first entry.
-- The reason is stored on the entry but nothing lists entries yet (see "Gaps a client will hit" in `docs/api.md`).
+- The reason is stored on the entry and shown in the wallet history (`GET /wallet/entries`) together with the parent who made it; it also appears in the teen's data export.
+- The parent's account can be deleted later without touching the entry: the actor id stays and points to the anonymised user.
 
 **Support needed.** `Wallet.adjust`, the `Adjustment` value object, ledger kinds `MANUAL_BONUS` and `MANUAL_PENALTY` (migration V17), the `BalanceAdjusted` event and its notification copy.
 

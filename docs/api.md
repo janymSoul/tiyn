@@ -352,11 +352,14 @@ Parents get 403 `forbidden`.
 The wallet history: why the balance changed, newest first by creation time, paginated (see [Pagination](#pagination)). Teen: their own entries. Parent: `?teenId=<uuid>` is required and the teen must be linked to the caller right now.
 ```json
 { "items": [ { "id": "…", "kind": "TASK_REWARD", "amount": 50000, "currency": "KZT",
-               "createdAt": "…", "taskId": "…" } ], "nextCursor": "…" }
+               "createdAt": "…", "taskId": "…" },
+             { "id": "…", "kind": "MANUAL_BONUS", "amount": 25000, "currency": "KZT",
+               "createdAt": "…", "reason": "Great grades", "actorId": "…" } ], "nextCursor": "…" }
 ```
-- `kind`: `TASK_REWARD`, `PENALTY`, `PAYOUT`, `GOAL_LOCK` or `GOAL_UNLOCK`.
-- `amount` is the signed effect on `availableAmount`: positive for a reward and a goal unlock, negative for a penalty, a payout and a goal lock. A goal lock or unlock moves money between available and locked, so the balance itself does not change; `kind` tells the two apart.
+- `kind`: `TASK_REWARD`, `PENALTY`, `PAYOUT`, `GOAL_LOCK`, `GOAL_UNLOCK`, `MANUAL_BONUS` or `MANUAL_PENALTY` (a parent's [manual bonus or penalty](#manual-bonus-or-penalty-parent)).
+- `amount` is the signed effect on `availableAmount`: positive for a reward, a manual bonus and a goal unlock, negative for a penalty, a manual penalty, a payout and a goal lock. A goal lock or unlock moves money between available and locked, so the balance itself does not change; `kind` tells the two apart.
 - Exactly one related id is present when the entry has one: `taskId` (reward, penalty), `payoutId` (payout) or `goalId` (goal lock and unlock). Otherwise the field is omitted.
+- `MANUAL_BONUS` and `MANUAL_PENALTY` entries carry no related id and add two fields that no other kind has: `reason` (the text the parent gave) and `actorId` (the parent who made the adjustment). `actorId` stays on the entry after that parent deletes their account; it then points to an anonymised user.
 - Payout requests that are still open are not entries; the debit appears when the parent fulfils.
 - Errors: 403 `forbidden` (a teen naming another teen, a parent naming an unlinked teen), 422 `teen_required` (parent without `teenId`), 400 `invalid_request` (bad `limit` or `teenId`), 422 `invalid_cursor`.
 
@@ -412,7 +415,8 @@ Errors: 422 `parent_required`, `invalid_amount`, `amount_too_small`, `insufficie
 - A penalty may take the balance below zero, exactly like the automatic missed-task penalty (UC-11): `available` goes negative and blocks payout requests and goal locks until bonuses or rewards pay it down.
 - An adjustment is an append-only ledger entry (`MANUAL_BONUS` or `MANUAL_PENALTY`) that records the parent and the reason. There is no edit and no delete. A mistake is corrected with an adjustment of the opposite kind and the same amount.
 - The teen gets a push (`BONUS_RECEIVED` or `MANUAL_PENALTY_APPLIED`) with the amount; the reason is not in the push.
-- A replay with the same key returns `201` with the same entry and changes nothing. The same key with another teen, kind, amount or reason is 422 `invalid_idempotency_key`.
+- A replay with the same key returns `201` with the same entry and changes nothing. The same key with another teen, kind, amount or reason is 422 `invalid_idempotency_key`. This holds for as long as the entry exists, not only for the 24 hours of the platform keys: the key is stored on the ledger entry, scoped to the parent, so a retry after a long offline period still cannot credit or debit twice.
+- The reason is returned by this call and stays readable in the teen's [wallet history](#get-walletentries) (`reason` and `actorId` on the entry), for the teen and for any linked parent.
 
 Errors: 403 `forbidden` (teen caller, parent not linked, unknown teen); 400 `invalid_request` (malformed `teenId`), `invalid_body` (malformed JSON); 422 `invalid_amount` (missing, not positive, or over the maximum), `invalid_kind`, `invalid_reason`, `invalid_idempotency_key`.
 
@@ -489,7 +493,9 @@ Teen:
   } ],
   "wallet": { "balanceAmount": 100000, "lockedAmount": 40000, "currency": "KZT" },
   "ledgerEntries": [ { "id": "…", "kind": "TASK_REWARD", "balanceDelta": 100000, "lockedDelta": 0, "currency": "KZT",
-                       "refId": "…", "note": null, "actorId": null, "createdAt": "…" } ],
+                       "refId": "…", "note": null, "actorId": null, "createdAt": "…" },
+                     { "id": "…", "kind": "MANUAL_BONUS", "balanceDelta": 25000, "lockedDelta": 0, "currency": "KZT",
+                       "note": "Great grades", "actorId": "…", "createdAt": "…" } ],
   "savingsGoals": [ { "id": "…", "name": "Headphones", "targetAmount": 900000, "savedAmount": 40000, "currency": "KZT",
                       "state": "ACTIVE", "createdAt": "…" } ],
   "payouts": [ { "id": "…", "teenId": "…", "parentId": "…", "amount": 30000, "currency": "KZT", "state": "REQUESTED",
@@ -497,7 +503,7 @@ Teen:
 }
 ```
 
-Parent: `profile` (with `joinCode` and `joinApproval`, the setting of [approval of joins](#put-mejoin-approval-parent)), `familyLinks`, `joinRequests` (the requests addressed to them: `id`, `teenId`, `teenDisplayName`, `state`, `createdAt`, `decidedAt`), `tasks` (the tasks they created, without `proofs`: a proof is the teen's data), `taskSeries` (`id`, `teenId`, `kind`, `title`, `description`, `rewardAmount`, `penaltyAmount`, `currency`, `recurrence`, `timezone`, `dueTime`, `startsOn`, `active`, `createdAt`) and `payouts` addressed to them. A parent has no wallet, ledger entries or goals, so those keys are absent. A user with no data gets the same shape with empty arrays (a teen's `wallet` reads as zeros, like `GET /balance`).
+Parent: `profile` (with `joinCode` and `joinApproval`, the setting of [approval of joins](#put-mejoin-approval-parent)), `familyLinks`, `joinRequests` (the requests addressed to them: `id`, `teenId`, `teenDisplayName`, `state`, `createdAt`, `decidedAt`), `tasks` (the tasks they created, without `proofs`: a proof is the teen's data), `taskSeries` (`id`, `teenId`, `kind`, `title`, `description`, `rewardAmount`, `penaltyAmount`, `currency`, `recurrence`, `timezone`, `dueTime`, `startsOn`, `active`, `createdAt`) and `payouts` addressed to them. A parent has no wallet, ledger entries or goals, so those keys are absent: the manual bonuses and penalties a parent made appear only in the receiving teen's `ledgerEntries` (`note` is the reason, `actorId` the parent), not in the parent's own document. A user with no data gets the same shape with empty arrays (a teen's `wallet` reads as zeros, like `GET /balance`).
 
 What is in it and what is deliberately not:
 - `familyLinks` lists every link ever made, including removed ones (`removedAt` set). The other person appears only as `id` and `displayName`.
