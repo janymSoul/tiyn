@@ -26,7 +26,7 @@ class IdentityExceptionHandler {
                     .UNPROCESSABLE_ENTITY;
             case INVALID_TEEN_ID -> HttpStatus.BAD_REQUEST;
             case JOIN_RATE_LIMITED -> HttpStatus.TOO_MANY_REQUESTS;
-            case CONFLICT -> HttpStatus.CONFLICT;
+            case CONFLICT, INVALID_TRANSITION -> HttpStatus.CONFLICT;
             case IDENTITY_PROVIDER_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
         };
     }

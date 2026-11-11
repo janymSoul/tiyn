@@ -35,6 +35,17 @@ class PaginationIndexTests {
     }
 
     @Test
+    void thePendingJoinRequestListHasAnOwnerSortKeyIdIndexAndOneOpenRequestPerPair() {
+        assertThat(definition("join_requests_parent_pending_created_idx"))
+                .contains("(parent_id, created_at DESC, id DESC)")
+                .contains("state = 'PENDING'");
+        assertThat(definition("join_requests_one_pending_idx"))
+                .contains("UNIQUE")
+                .contains("(teen_id, parent_id)")
+                .contains("state = 'PENDING'");
+    }
+
+    @Test
     void theParentTaskListKnowsThatParentAndTeenAreCorrelated() {
         assertThat(jdbc.queryForObject(
                         "SELECT count(*) FROM pg_statistic_ext WHERE stxname = 'tasks_parent_teen_stats'",

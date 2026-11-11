@@ -51,6 +51,7 @@ kz.tiyn.identity/
   FamilyDirectory.java       # public API for other modules
   FamilyLinked.java          # public event
   FamilyUnlinked.java        # public event
+  JoinRequested.java         # public event
   account/                   # feature: users, sign-in, join codes
     AccountService, UserStore, User, JoinCode, AccountController, AccountConfig
                              #   logic classes stay together, package-private (User is public)
@@ -59,7 +60,8 @@ kz.tiyn.identity/
     error/                   #   IdentityError, IdentityException, IdentityExceptionHandler
   family/                    # feature: parent-teen links
     FamilyLink, LinkStore, FamilyService, FamilyController, FamilyDirectoryImpl
-    dto/                     #   JoinRequest, JoinResponse
+    JoinRequest, JoinRequestStore, JoinRequestService, JoinRequestController
+    dto/                     #   JoinCodeRequest, JoinResponse, JoinPendingResponse
   google/                    # anti-corruption layer for an external system
     GoogleVerifier           #   public interface; JwksGoogleVerifier is package-private
 ```
