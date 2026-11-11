@@ -183,7 +183,6 @@ class TaskService {
     }
 
     List<ProofResponse> proofs(Principal caller, UUID id) {
-        requireRole(caller, Role.PARENT);
         Task task = authorised(caller, id);
         return task.proofs().stream()
                 .map(p -> new ProofResponse(

@@ -181,6 +181,26 @@ class TaskStore {
                 .fetch(TASKS.ID);
     }
 
+    List<Task> submittedFor(UUID parentId, UUID teenId, int limit) {
+        return dsl.selectFrom(TASKS)
+                .where(submittedBy(parentId, teenId))
+                .orderBy(TASKS.SUBMITTED_AT.desc(), TASKS.ID)
+                .limit(limit)
+                .fetch()
+                .map(this::toTask);
+    }
+
+    long countSubmittedFor(UUID parentId, UUID teenId) {
+        return dsl.fetchCount(TASKS, submittedBy(parentId, teenId));
+    }
+
+    private static Condition submittedBy(UUID parentId, UUID teenId) {
+        return TASKS.PARENT_ID
+                .eq(parentId)
+                .and(TASKS.TEEN_ID.eq(teenId))
+                .and(TASKS.STATE.eq(TaskState.SUBMITTED.name()));
+    }
+
     long pendingReward(UUID teenId) {
         Long sum = dsl.select(DSL.coalesce(DSL.sum(TASKS.REWARD_AMOUNT), 0L).cast(Long.class))
                 .from(TASKS)

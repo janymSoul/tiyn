@@ -83,6 +83,10 @@ The wallet aggregate is deliberately large: "available funds = balance − locke
 public interface FamilyDirectory {
 
     boolean areLinked(UUID parentId, UUID teenId);
+
+    Set<UUID> linkedTeenIds(UUID parentId);
+
+    List<LinkedTeen> linkedTeens(UUID parentId);
 }
 ```
 Links are soft-deleted (`removed_at`). `areLinked` and every other lookup must ignore removed links; re-linking a removed pair clears `removed_at` on the existing row and increments its `generation`, which is part of the event key so that a relink produces a new event.
@@ -168,7 +172,7 @@ Used by the dashboard module to show "Pending" funds (TEN-01). Pending is task-o
 | `POST /tasks/{id}/submit` | teen | multipart `file` or JSON `{text}`; `Idempotency-Key` required |
 | `POST /tasks/{id}/approve`, `/reject`, `/request-redo` | parent | review; reject and redo take `{note?}`, redo also `{deadlineAt?}` |
 | `POST /tasks/{id}/cancel` | parent | cancel; a milestone cancels its open tasks |
-| `GET /tasks/{id}/proofs` | parent | proofs with presigned view URLs |
+| `GET /tasks/{id}/proofs` | parent or owning teen | proofs with presigned view URLs |
 | `POST /task-series` | parent | create a daily or weekly series (`recurrence`, `dueTime`, optional `timezone`, `startsOn`); `Idempotency-Key` required |
 | `GET /task-series` | parent | keyset page of the series the caller created, newest first; optional `teenId` (must be linked, else 403) and `active` |
 | `GET /task-series/{id}` | parent | one series; someone else's series is 404 |
@@ -236,6 +240,8 @@ public interface BalanceReader {
 | `POST /payouts/{id}/cancel` | teen | `TEEN_CANCELLED` |
 
 Errors: `forbidden` 403, `not_found` 404, `invalid_amount` / `amount_too_small` / `insufficient_funds` / `parent_required` / `invalid_idempotency_key` / `invalid_filter` 422, `payout_already_open` / `invalid_transition` 409. Repeating the same cancellation is a no-op; resolving a payout another way is `invalid_transition`. The fulfil debit must fit `balance − locked` (funds locked in goals can never be paid out).
+
+**Wallet history API.** `GET /wallet/entries` is a keyset page over `ledger_entries` ordered by `(created_at DESC, id DESC)`, served by the existing `ledger_entries_teen_created_id_idx` (no migration). A teen reads their own; a parent must pass `teenId` of a currently linked teen (`FamilyDirectory.areLinked`), otherwise `forbidden`; a parent without `teenId` gets `teen_required` 422. `amount` is `balance_delta - locked_delta`, the effect on *available*; the related id is mapped from `ref_id` by kind (`taskId`, `payoutId`, `goalId`). Entries are append-only, so a page never changes under a cursor.
 
 **Savings goals API** (teen only; a parent gets `forbidden`; goals are private to the teen). A goal is a label on part of the wallet's money: locking moves nothing, it writes a `GOAL_LOCK` entry (`balance_delta = 0`, `locked_delta = +amount`) and raises `wallets.locked_amount`, which lowers *available*. The money stays in the total balance. A goal's `savedAmount` is derived: the sum of `locked_delta` over the entries whose `ref_id` is the goal, so the goals and the wallet's locked total cannot drift apart (a test asserts `locked_amount = sum of saved`).
 
@@ -321,7 +327,7 @@ A missed task with a penalty sends the teen the deadline message with the deduct
 
 ## 6. Dashboard
 
-**Responsibility.** The teen's home screen in one call (UC-07, TEN-01, TEN-02). It owns no tables and publishes no events; it only composes read contracts of other modules, so the client makes one round trip instead of four (`/balance`, `/tasks`, `/goals`, `/payouts`).
+**Responsibility.** The teen's home screen in one call (UC-07, TEN-01, TEN-02), and the parent's (UC-05). It owns no tables and publishes no events; it only composes read contracts of other modules, so the client makes one round trip instead of four (`/balance`, `/tasks`, `/goals`, `/payouts`).
 
 **Endpoint.** `GET /dashboard` (teen only; a parent gets 403):
 ```json
@@ -337,6 +343,8 @@ A missed task with a penalty sends the teen the deadline message with the deduct
 `pendingAmount` is the sum of rewards of `SUBMITTED` tasks. `chores` is every task that is not a milestone; a task inside a milestone carries `milestoneId` so the client nests it. `milestones` carry `approvedTasks` and `totalTasks` ("3 of 5"). `goals` lists active goals with their saved amount. `openPayout` is omitted when the teen has no request open. The dashboard has its own response records; the suppliers' types never cross the module boundary.
 
 **Which tasks.** Open work (`ASSIGNED`, `SUBMITTED`) ordered by deadline, then tasks decided in the last `tiyn.dashboard.recent-window` (env `DASHBOARD_RECENT_WINDOW`, default `P7D`) newest first, capped at `tiyn.dashboard.max-tasks` (env `DASHBOARD_MAX_TASKS`, default 50), so open work is never pushed out by history. "Decided" is `decided_at`, falling back to `updated_at` for tasks that have none (expired). Full history stays on `GET /tasks`.
+
+**Parent home screen.** `GET /parent/dashboard` (parent only; a teen gets 403) composes the same way for every teen linked to the caller: `identity.FamilyDirectory.linkedTeens` (id and display name, ordered by name), `ledger.WalletOverviewReader` (balance and open payout) and `task.ReviewQueueReader` (the caller's `SUBMITTED` tasks for that teen: the true count plus a preview of the newest `tiyn.dashboard.review-preview`, env `DASHBOARD_REVIEW_PREVIEW`, default 10). The response is `{ totalPendingReviews, totalOpenPayouts, teens: [{ id, displayName, balance, pendingReviewCount, pendingReviews, openPayout }] }`. `openPayout` is shown only when the request is addressed to the caller; an empty `teens` list is a normal answer. The handler is marked `@BoundedList` because a parent has a handful of teens. It reads each supplier once per teen, which stays small by the same bound, and each supplier answers in its own transaction, so the figures are not one snapshot. It owns no tables and adds no migration.
 
 **Contracts it consumes** (each owned by the supplier, in its root package): `ledger.WalletOverviewReader` (balance, active goals and the open payout, read in one read-only transaction so they are one snapshot; the open payout carries `expiresAt`, computed by the ledger from `payout-expiry`, so the dashboard never reads that config), `task.TaskBoardReader` (tasks plus milestone progress in two queries, no N+1), `task.PendingReader`. Pending and balance come from different modules, so for a moment after an approval a reward can show in neither; the UI must not promise "immediately credited".
 
@@ -383,6 +391,8 @@ task.service ──▶ media.Storage
 dashboard ──▶ ledger.WalletOverviewReader
 dashboard ──▶ task.TaskBoardReader
 dashboard ──▶ task.PendingReader
+dashboard ──▶ task.ReviewQueueReader
+dashboard ──▶ identity.FamilyDirectory
 notification ──▶ (events of) task, ledger, identity; nothing depends on notification
 ```
 No cycles. All other relationships are event-driven (via Modulith events): task→ledger, task→notification, ledger→notification, identity→ledger, identity→notification.
