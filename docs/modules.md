@@ -88,13 +88,17 @@ public interface FamilyDirectory {
 Links are soft-deleted (`removed_at`). `areLinked` and every other lookup must ignore removed links; re-linking a removed pair clears `removed_at` on the existing row and increments its `generation`, which is part of the event key so that a relink produces a new event.
 Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.g. the task module checks a parent may approve a given teen's task). `linkedTeenIds(parentId)` returns the parent's active links so a paged list can apply the link check inside its own SQL query instead of filtering a page afterwards. Token verification is not part of identity's API: the `platform` module verifies bearer tokens and hands controllers a `Principal(userId, role)`.
 
+**Account deletion.** `DELETE /me` anonymises the user in one transaction (`User.delete`, a pure transition): the display name becomes `Deleted user`, `idp_sub` becomes the tombstone `deleted:{userId}` (so the same Google account registers again as a new user and the unique key holds), the join code is cleared and `users.deleted_at` is set. The row is kept because other modules reference the id and the ledger is append-only. The service locks the user row `FOR UPDATE`, asks the ledger whether an open payout blocks deletion (409 `account_has_open_payout`; a teen's own open payout, or an open payout addressed to a parent), unlinks every active link through the same `FamilyLink.unlink` transition as `DELETE /links/{teenId}` (one `FamilyUnlinked` each, so tasks, series and payouts are cleaned up by the existing listeners), and finally publishes `AccountDeleted`. Deleted users are invisible: `findById`, `findByIdpSub`, the join-code lookup and `GET /family` filter on `deleted_at IS NULL`, and `platform.security.DeletedAccounts` (implemented by identity) makes the JWT decoder reject the token of a deleted account with 401 on every endpoint, at the cost of one primary-key lookup per authenticated request. Joining takes `FOR SHARE` on both user rows, so a join cannot link a user whose deletion is in flight. Remaining balance is forfeited and stays in the ledger unreachable.
+
 **Concurrency.** Registration, join-code allocation and linking can race. Every unique-rule violation (same Google subject, same join code, same link) is reported by the store as one `ConflictException`, and the service retries the whole transaction up to five times; if it still conflicts the caller gets 409 `conflict`. The recovery is the same in all three cases (the retry finds the winner's row, or draws a fresh code), so nothing depends on Postgres-generated constraint names. The transaction is opened per attempt with a `TransactionTemplate`, because a unique violation aborts the Postgres transaction and a retry needs a fresh one.
 
 **Publishes:**
 - `FamilyLinked(parentId, teenId, generation)` (lets other modules react to a new link, e.g. seed a wallet). Consumers dedupe on `(parentId, teenId, generation)`.
 - `FamilyUnlinked(parentId, teenId, generation)` (the task module cancels the teen's open tasks for that parent). The generation is the one of the link being removed, and the event type already separates it from `FamilyLinked`.
 
-Both are published in the transaction that locks the link row, so changes to one pair are serialised. Modulith delivers events asynchronously and does not order them across listeners, so consumers must be state-based: they look at the current link, not at the order of events. `generation` is what lets a relink after an unlink count as a new fact.
+- `AccountDeleted(userId, role)` (the user was anonymised; notification removes the user's device tokens). Carries no name or other personal data. Consumers are idempotent by nature (delete where user id).
+
+`FamilyLinked` and `FamilyUnlinked` are published in the transaction that locks the link row, so changes to one pair are serialised. Modulith delivers events asynchronously and does not order them across listeners, so consumers must be state-based: they look at the current link, not at the order of events. `generation` is what lets a relink after an unlink count as a new fact.
 
 **HTTP API.** Errors are `{"error": "<code>"}`; bodies are size-limited and reject unknown fields.
 
@@ -105,10 +109,13 @@ Both are published in the transaction that locks the link row, so changes to one
 | `POST /links/join` `{code}` | teen | Link to the parent who owns the code; returns `{parent: {id, displayName}}` | 403 `forbidden`, 422 `invalid_join_code` (unknown and malformed codes look the same), 429 `join_rate_limited` |
 | `GET /family` | bearer | The caller's active links: a parent's teens or a teen's parents, as `{members: [{id, role, displayName}]}` | 401 `unauthenticated` |
 | `DELETE /links/{teenId}` | parent | Remove the link to a teen; repeating it is harmless (204) | 403 `forbidden`, 404 `not_found`, 400 `invalid_teen_id` |
+| `DELETE /me` | bearer | Anonymise the caller's account and remove their links (204, irreversible) | 401 `unauthenticated` (already deleted), 409 `account_has_open_payout` |
 
 **Configuration:** `JWT_SECRET`, `JWT_TTL`, `GOOGLE_CLIENT_IDS` (see `.env.example`).
 
-**Owns:** `users` (including the parents' `join_code`), `family_links`. There is no `families` table: a family is simply the set of links between parents and teens, so a teen can have two parents without a new concept.
+**Also offers** (sync, owned by identity and implemented by ledger so that identity never depends on ledger): `OpenPayoutCheck.hasOpenPayout(userId, role)`, the account-deletion precondition.
+
+**Owns:** `users` (including the parents' `join_code` and `deleted_at`), `family_links`. There is no `families` table: a family is simply the set of links between parents and teens, so a teen can have two parents without a new concept.
 
 ---
 
@@ -313,6 +320,8 @@ A missed task with a penalty sends the teen the deadline message with the deduct
 **Delivery.** `PushSender` is the only FCM boundary; The sender is selected by `tiyn.notification.sender` (`fcm` or `logging`, **no default**, so a forgotten setting fails at startup). `logging` (`LoggingPushSender`, type and priority only, never the text) is for tests and the `local` profile. `fcm` (`FcmPushSender` over the Firebase Admin SDK) builds a notification plus the `data` map, with high priority on Android and `apns-priority` 10 for payout requests; `UNREGISTERED` and `INVALID_ARGUMENT` become `PushRejectedException` (token deleted), every other FCM error stays transient and is retried. Config: `FCM_CREDENTIALS_FILE` (path to the service-account JSON, mount it as a secret), `FCM_DRY_RUN=true` to validate without delivering. `NotificationService.notify` runs in one transaction: it loads the recipient's devices (none means nothing is claimed and nothing is sent), then claims `(event_key, recipient_id)` in `delivered` (`INSERT ... ON CONFLICT DO NOTHING`); only the claimant sends, so a redelivered or concurrent event never pushes twice. A failure on one device is logged and does not block the others; only if no device could be reached does the exception propagate, which rolls the claim back so the publication stays incomplete and is retried. A token the push service rejects (`PushRejectedException`) is deleted. Trade-off: the send happens inside the listener's transaction (a slow push service holds a pooled connection for that time), and a crash after a successful send but before commit can repeat that push on retry, which is acceptable for a hint. Event keys: `TaskAssigned:{taskId}`, `TaskSubmitted:{taskId}:{attemptNo}`, `TaskRedoRequested:{taskId}:{attemptNo}`, `Task*:{taskId}`, `Payout*:{payoutId}`, `PenaltyApplied:{entryId}`, `Family*:{parentId}:{teenId}:{generation}`. A user with no device is simply skipped.
 
 **Housekeeping.** `DeliveredPurgeTicker` deletes `delivered` rows older than `tiyn.notification.delivered-retention` (env `NOTIFICATION_DELIVERED_RETENTION`, default `P30D`). Stale device tokens are not purged yet.
+
+**Account deletion.** On `AccountDeleted` the module deletes every device token of that user (`AccountDeletedListener`; deleting by user id is idempotent), so no push is sent to a deleted account's phone after that. A push about the unlink itself may already have gone out.
 
 **Owns:** `device_tokens`, and the `delivered` table, keyed by event and recipient, which makes it idempotent.
 

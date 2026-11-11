@@ -79,6 +79,8 @@ The service compares the amount with *available* funds (balance minus locked min
 
 The same pattern is used for the identity `family_links` row, so concurrent join/unlink of one pair are serialised.
 
+**Lock order for account deletion (identity): the user row `FOR UPDATE` first, then the user's active `family_links` rows `FOR UPDATE` ordered by `(parent_id, teen_id)`, then the `users` update.** The global link order means two deletions that share several links (a parent and one of their teens) take the same locks in the same sequence and cannot deadlock. The open-payout precondition is a plain read of ledger data inside that transaction and takes no ledger lock; a payout requested in the gap is cancelled by the existing `FamilyUnlinked` listener (wallet row first, then payout row, as always). A join takes `FOR SHARE` on the parent's and then the teen's user row before touching the link row, so it waits for a deletion in flight and then fails (422 `invalid_join_code` for a deleted parent, 401 for a deleted teen) instead of linking a dead account. A second `DELETE /me` blocks on the row lock, re-reads after the first commits, finds the user deleted and answers 401.
+
 ### Task state → optimistic (version column)
 
 Two parents (or a double-tap) approving the same task concurrently should not both succeed. Rather than hold a row lock, detect the conflict:

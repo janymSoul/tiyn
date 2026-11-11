@@ -18,6 +18,7 @@ Actors: **Parent**, **Teen**, **System** (scheduler, event listeners, push).
 | UC-10 | Recurring tasks and deadlines (system-driven) | PAR-02 | MVP |
 | UC-11 | A missed task costs money | PAR-04 | Medium |
 | UC-12 | Teen sets a savings goal | TEN-04 | Medium |
+| UC-13 | User deletes their account | privacy | MVP |
 
 XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting to `TaskApproved`.
 
@@ -199,6 +200,18 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 **Flow.** Teen creates a goal (name, target), locks part of their available balance into it, sees a progress bar (`savedAmount` of `targetAmount`). The money stays in the total balance but is excluded from *available*. The teen can unlock part of it or close the goal, which releases everything saved. A lock cannot take the goal past its target (`exceeds_target`). Goals are visible to the teen only.
 
 **Support needed.** ledger: `savings_goals`; locking funds is a ledger entry (available → locked), not a separate balance. The amount saved in a goal is derived from the entries referencing it. Locked funds are excluded from *available*, so they cannot be requested as a payout until unlocked.
+
+---
+
+## UC-13 User deletes their account
+
+**Flow.** A signed-in parent or teen calls `DELETE /me`. Identity locks the user, refuses while an open payout involves them (`account_has_open_payout`), unlinks every active link like `DELETE /links/{teenId}` (so the other side's tasks are cancelled, series closed, payouts cancelled and the other side notified), anonymises the account (name `Deleted user`, identity key replaced by a tombstone, join code released) and publishes `AccountDeleted`. Notification then removes the user's device tokens. The token stops working at once; signing in again with the same Google account starts a new, empty account.
+
+**Alternates.** Already deleted → 401. Open payout → 409 until the teen cancels it or the parent fulfils or declines it. A remaining balance does not block: it is forfeited and frozen, and the ledger history stays (anonymised) for the former counterpart. Two simultaneous deletes → one 204, the other 401.
+
+**Support needed.** identity: `users.deleted_at`, `User.delete`, `FamilyExit`, `OpenPayoutCheck` (implemented by ledger), `platform.security.DeletedAccounts`. notification: `AccountDeletedListener`.
+
+**Open.** A grace period (undo window) and a hard-purge job for anonymised rows and a deleted teen's proofs are follow-ups, as is the data export a user would want before deleting.
 
 ---
 

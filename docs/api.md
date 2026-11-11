@@ -13,7 +13,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 |---|---|---|
 | 400 | `invalid_body` | unreadable or malformed JSON |
 | 400 | `invalid_request` | missing parameter or part, malformed path value |
-| 401 | `unauthenticated` | missing, expired or invalid token |
+| 401 | `unauthenticated` | missing, expired or invalid token, or the token's account was deleted |
 | 403 | `forbidden` | wrong role, or not your resource |
 | 404 | `not_found` | unknown route or resource |
 | 405 / 415 | `method_not_allowed` / `unsupported_media_type` | |
@@ -78,7 +78,35 @@ Errors: 401 `invalid_identity` (bad or wrong-audience token), 422 `role_required
 
 ### `GET /me`
 
-Returns the same `user` object. 401 `unauthenticated` if the user no longer exists.
+Returns the same `user` object. 401 `unauthenticated` if the user no longer exists or was deleted.
+
+### `DELETE /me` (parent or teen)
+
+Delete the caller's own account. No body; `204`. **Irreversible**: there is no grace period and no undo. Export what you need first.
+
+The account is **anonymised, not erased**, because the other family's records (tasks a parent created, payouts, ledger history) refer to the user id and the ledger is append-only. Everything that identifies the person goes in one transaction:
+
+| Removed or replaced | Kept |
+|---|---|
+| display name becomes `Deleted user` | the user id and the role (so other records still point at "someone") |
+| the Google subject is replaced by a tombstone, so the same Google account can sign up again as a brand-new user | tasks, proofs, payouts and ledger entries that reference the id (see below) |
+| the parent's join code is released and nothing can use it again | |
+| every active family link is removed, exactly as `DELETE /links/{teenId}` would do for each one | |
+| push device tokens (asynchronously, within seconds) | |
+
+Effects, as with unlinking: the other side's open tasks for the pair are cancelled and recurring series closed, and the other side is notified of the unlink. Everything asynchronous is delivered at least once and idempotent.
+
+The access token stops working immediately: any request with it, including a second `DELETE /me`, is 401 `unauthenticated`. Signing in again with the same Google account creates a new, empty account with a new id and, for a parent, a new join code. Nothing from the old account comes back.
+
+Preconditions: the call is refused with 409 `account_has_open_payout` while the caller is a teen with an open (`REQUESTED`) payout, or a parent who has an open payout addressed to them. Resolve it first (the teen cancels, or the parent fulfils or declines). Nothing else blocks deletion:
+- a **non-zero virtual balance is forfeited**: the wallet and its history stay in the database but nobody can reach them, and nothing is paid out;
+- active tasks and series do not block; they are cancelled or closed through the unlink events.
+
+What the former counterpart still sees: payouts of a deleted teen remain in the parent's `GET /payouts` (by id; the payout carries no name), and a deleted parent's payouts remain in the teen's. The deleted person no longer appears in `GET /family` and cannot be linked again.
+
+Not removed yet (follow-up): a deleted teen's submitted proofs (text and stored images) stay in storage until a purge job exists, and are no longer reachable through the API because the link is gone. There is also no hard-purge job for the anonymised rows.
+
+Errors: 401 `unauthenticated` (already deleted or unknown), 409 `account_has_open_payout`.
 
 ### `POST /links/join` (teen)
 
@@ -289,5 +317,5 @@ These are facts about the current API, listed so they are decided on purpose and
 2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
 3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
 4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
-5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
+5. **No profile edit or data export.** The latter matters for the Kazakhstan personal-data law. Account deletion exists (`DELETE /me`) but is immediate and irreversible: there is no grace period yet.
 6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
