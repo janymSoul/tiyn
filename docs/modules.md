@@ -32,6 +32,7 @@ We apply Domain-Driven Design pragmatically: strategic DDD everywhere (bounded c
 | Context | Aggregate (root) | Contains | Invariants it protects | Concurrency |
 |---|---|---|---|---|
 | identity | `User` | join code | one Google subject, one user; a parent has one join code | unique constraints |
+| identity | `JoinRequest` | request id, parent id, teen id, state | a request moves from `PENDING` to exactly one of `APPROVED`, `DECLINED` or `WITHDRAWN`; only its parent decides and only its teen withdraws; repeating the decision already taken is a no-op, any other decision on a closed request is refused | state check plus a unique partial index on pending `(teen, parent)` |
 | identity | `FamilyLink` | parent id, teen id, removed flag | a parent and a teen are linked at most once; a link joins a `PARENT` to a `TEEN`; first link, relink and no-op are decided inside the aggregate, which also records its own events | primary key |
 | task | `Task` | proofs | legal state transitions; tasks in a milestone are one-time and for the same teen | version column |
 | task | `TaskSeries` | recurrence rule | one occurrence per period | unique `(series, date)` |
@@ -48,6 +49,7 @@ The wallet aggregate is deliberately large: "available funds = balance − locke
 |---|---|
 | Parent / Teen | The two roles. A parent funds and approves; a teen earns. |
 | Join code | A parent's permanent code a teen enters to link to that parent. |
+| Join request | A teen's pending ask to link to a parent who requires approval; the parent approves or declines it, the teen may withdraw it. |
 | Link | The relation between one parent and one teen. |
 | Task | A piece of work with a reward and a deadline. |
 | Milestone | A task of kind milestone; larger goal with its own proof and reward. A task may belong to one. |
@@ -76,7 +78,7 @@ The wallet aggregate is deliberately large: "available funds = balance − locke
 
 **Session token.** After a successful sign-in the backend issues its own JWT: HS256, signed with `JWT_SECRET` (at least 32 bytes), issuer `tiyn`, subject = user id, a `role` claim, valid for `JWT_TTL` (default 7 days). Verification pins the algorithm, requires an expiry, the issuer and a known role, so `alg: none` and other-algorithm tokens are rejected. There is no refresh token: when it expires the client signs in with Google again. The token only proves identity; every parent-to-teen action still checks `areLinked` in the database. Tokens are issued by `platform.security.AccessTokenIssuer` and verified in `platform.security.SecurityConfig` with the same key, so the claim format (`iss`, `sub`, `role`, `iat`, `exp`) lives in one place. `users.idp_sub` holds the identity provider's subject and is provider-neutral. Moving to an identity provider such as Keycloak later changes `GoogleVerifier`, the issuer, the claim converter and the sign-in route; no other module notices, because they only see `Principal(userId, role)`.
 
-**Linking.** Every parent has a permanent **join code** (6 characters, PRD PAR-01) stored on their user row. It uses an alphabet without look-alike characters (no `0/O`, `1/I`) and is generated with a retry on collision. A teen who has signed in enters the parent's code and identity creates the `family_links` row immediately and publishes `FamilyLinked`; entering a code a second time is a no-op. Codes are matched case-insensitively and ignoring surrounding spaces. One code can link any number of children, and a teen can enter a second parent's code. The parent can remove a link later. Code attempts are limited per teen account (5 attempts per 15 minutes, counted in `identity.join_attempts`; further attempts answer 429 `join_rate_limited`, even with a correct code) and failures never reveal whether a code exists. Accepted risk: the code is permanent and reusable, so anyone who learns it can link to that parent. Parent confirmation of each join (a pending-request step) is deliberately deferred; it would add an identity-owned `join_requests` table without changing other modules.
+**Linking.** Every parent has a permanent **join code** (6 characters, PRD PAR-01) stored on their user row. It uses an alphabet without look-alike characters (no `0/O`, `1/I`) and is generated with a retry on collision. A teen who has signed in enters the parent's code and identity creates the `family_links` row immediately and publishes `FamilyLinked`; entering a code a second time is a no-op. Codes are matched case-insensitively and ignoring surrounding spaces. One code can link any number of children, and a teen can enter a second parent's code. The parent can remove a link later. Code attempts are limited per teen account (5 attempts per 15 minutes, counted in `identity.join_attempts`; further attempts answer 429 `join_rate_limited`, even with a correct code) and failures never reveal whether a code exists. The code is permanent and reusable, so anyone who learns it can link to that parent. A parent who wants to vet each join turns on **join approval** (`users.join_approval_required`, default off, changed with `PUT /me/join-approval`). With it on, a teen who enters the code and is not yet linked to that parent gets a **join request** (`identity.join_requests`) instead of a link: `JoinRequest` is a small FSM (`PENDING` → `APPROVED` | `DECLINED` | `WITHDRAWN`) that records `JoinRequested`. The teen asking again while a request is pending gets the same request back (unique partial index on pending `(teen_id, parent_id)`). Approving locks the request row, then the link row, creates the link exactly as an immediate join does (`FamilyLink.link()`, so `FamilyLinked` is published once) and closes the request in one transaction; replaying an approval finds the request already `APPROVED` and does not touch the link, so it cannot re-link a teen the parent removed later. With approval off the behaviour is unchanged: the link is created at once. The setting is read from the parent loaded by the code lookup, so a join racing the toggle is decided by whichever value it saw; either outcome is valid and a pending request stays decidable after approval is switched off.
 
 **Offers (sync interface):**
 ```java
@@ -91,6 +93,7 @@ Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.
 **Concurrency.** Registration, join-code allocation and linking can race. Every unique-rule violation (same Google subject, same join code, same link) is reported by the store as one `ConflictException`, and the service retries the whole transaction up to five times; if it still conflicts the caller gets 409 `conflict`. The recovery is the same in all three cases (the retry finds the winner's row, or draws a fresh code), so nothing depends on Postgres-generated constraint names. The transaction is opened per attempt with a `TransactionTemplate`, because a unique violation aborts the Postgres transaction and a retry needs a fresh one.
 
 **Publishes:**
+- `JoinRequested(requestId, parentId, teenId)` (a teen asked a parent who requires approval; the notification module tells the parent).
 - `FamilyLinked(parentId, teenId, generation)` (lets other modules react to a new link, e.g. seed a wallet). Consumers dedupe on `(parentId, teenId, generation)`.
 - `FamilyUnlinked(parentId, teenId, generation)` (the task module cancels the teen's open tasks for that parent). The generation is the one of the link being removed, and the event type already separates it from `FamilyLinked`.
 
@@ -101,14 +104,19 @@ Both are published in the transaction that locks the link row, so changes to one
 | Route | Auth | Purpose | Errors |
 |---|---|---|---|
 | `POST /auth/google` `{idToken, role?, displayName?}` | none | Sign in or register; returns `{token, user}` | 401 `invalid_identity`, 422 `invalid_role` / `invalid_display_name` |
-| `GET /me` | bearer | The caller's account | 401 `unauthenticated` |
-| `POST /links/join` `{code}` | teen | Link to the parent who owns the code; returns `{parent: {id, displayName}}` | 403 `forbidden`, 422 `invalid_join_code` (unknown and malformed codes look the same), 429 `join_rate_limited` |
+| `GET /me` | bearer | The caller's account (parents also see `joinApproval`) | 401 `unauthenticated` |
+| `PUT /me/join-approval` `{required}` | parent | Require or waive parent approval of joins; returns the account | 403 `forbidden`, 422 `validation_failed` |
+| `POST /links/join` `{code}` | teen | Link to the parent who owns the code and answer `200 {parent: {id, displayName}}`; if that parent requires approval and the teen is not linked, create (or return the pending) join request and answer `202 {requestId, status, parent}` | 403 `forbidden`, 422 `invalid_join_code` (unknown and malformed codes look the same), 429 `join_rate_limited` |
+| `GET /links/requests` | parent | The caller's pending join requests, newest first, paginated: `{items: [{id, teenId, teenDisplayName, createdAt}]}` | 403 `forbidden` |
+| `POST /links/requests/{id}/approve` | parent | Link the teen and close the request; replay returns the same result | 403 `forbidden`, 404 `not_found`, 409 `invalid_transition` |
+| `POST /links/requests/{id}/decline` | parent | Close the request without a link | 403 `forbidden`, 404 `not_found`, 409 `invalid_transition` |
+| `DELETE /links/requests/{id}` | teen | Withdraw the caller's pending request; repeating it is harmless (204) | 403 `forbidden`, 404 `not_found`, 409 `invalid_transition` |
 | `GET /family` | bearer | The caller's active links: a parent's teens or a teen's parents, as `{members: [{id, role, displayName}]}` | 401 `unauthenticated` |
 | `DELETE /links/{teenId}` | parent | Remove the link to a teen; repeating it is harmless (204) | 403 `forbidden`, 404 `not_found`, 400 `invalid_teen_id` |
 
 **Configuration:** `JWT_SECRET`, `JWT_TTL`, `GOOGLE_CLIENT_IDS` (see `.env.example`).
 
-**Owns:** `users` (including the parents' `join_code`), `family_links`. There is no `families` table: a family is simply the set of links between parents and teens, so a teen can have two parents without a new concept.
+**Owns:** `users` (including the parents' `join_code` and `join_approval_required`), `family_links`, `join_requests`, `join_attempts`. There is no `families` table: a family is simply the set of links between parents and teens, so a teen can have two parents without a new concept.
 
 ---
 
@@ -303,6 +311,7 @@ Called by the task module on submission and review.
 | `TaskAssigned`, `TaskApproved`, `TaskRejected`, `TaskRedoRequested`, `TaskCancelled`, `TaskExpired`, `PenaltyApplied`, `PayoutFulfilled` | teen |
 | `TaskSubmitted`, `PayoutRequested` (high priority) | parent |
 | `PayoutCancelled` | parent when `TEEN_CANCELLED`; otherwise the teen (`DECLINED`, `EXPIRED`, `UNLINKED`) |
+| `JoinRequested` | parent |
 | `FamilyLinked` | both sides |
 | `FamilyUnlinked` | teen |
 

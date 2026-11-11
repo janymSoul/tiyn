@@ -21,14 +21,14 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 | 422 | `validation_failed` | bean validation failure |
 | 500 | `internal_error` | unexpected; retry is safe only for idempotent calls |
 
-- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
+- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join`, `POST /links/requests/{id}/approve`, `POST /links/requests/{id}/decline` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
 - **Eventual consistency:** a rewarded approval and an expired penalty reach the wallet through events, usually within seconds. After `approve`, the balance may lag; re-read it instead of assuming.
 - **Roles:** `PARENT` and `TEEN`. A teen may be linked to several parents; a parent to several teens. A parent only sees and acts on tasks they created for linked teens.
 - **Lists that grow are paginated** with an opaque cursor, always newest first; see [Pagination](#pagination). `GET /family` and `GET /tasks/{id}/proofs` stay plain because the domain keeps them small.
 
 ## Pagination
 
-`GET /tasks`, `GET /payouts`, `GET /goals` and `GET /task-series` are paginated. Anything that grows with time is, and so will the wallet history be. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list.
+`GET /tasks`, `GET /payouts`, `GET /goals`, `GET /task-series` and `GET /links/requests` are paginated. Anything that grows with time is, and so will the wallet history be. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list.
 
 **Request.** Two optional query parameters:
 - `limit`: items per page, default 50. Below 1, above 100 or not a number is 400 `invalid_request`.
@@ -48,6 +48,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 | `GET /payouts` | `requested_at`, then `id` | `state` |
 | `GET /goals` | `created_at`, then `id` | none |
 | `GET /task-series` | `created_at`, then `id` | `teenId`, `active` |
+| `GET /links/requests` | `created_at`, then `id` | none (pending requests only) |
 
 **Cursor.** Treat it as an opaque string: do not parse, build or store it. It identifies the last item you received and the filters of that request. Pages are stable while rows are added: new items appear at the top on the next refresh from the first page and never shift or duplicate the page you are on. Changing a filter means starting again without a cursor. A cursor that is malformed, from an unknown format version, or used with different filters than it was issued for is 422 `invalid_cursor`; drop it and restart from the first page. A cursor never exposes other users' data: every page is scoped to the caller.
 
@@ -70,15 +71,24 @@ Client flow: call without `role`. On `422 role_required` (the account is new and
 
 Response `200`:
 ```json
-{ "token": "<our jwt>", "user": { "id": "…", "role": "PARENT", "displayName": "Aigerim", "joinCode": "SXVPUR" } }
+{ "token": "<our jwt>", "user": { "id": "…", "role": "PARENT", "displayName": "Aigerim", "joinCode": "SXVPUR", "joinApproval": false } }
 ```
-`joinCode` appears only for parents (six characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). One Google account is one user with one role.
+`joinCode` and `joinApproval` appear only for parents. `joinCode` is six characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`. `joinApproval` is `false` until the parent turns on [approval of joins](#put-mejoin-approval-parent). One Google account is one user with one role.
 
 Errors: 401 `invalid_identity` (bad or wrong-audience token), 422 `role_required` (new account, no `role`), 422 `invalid_role`, 422 `invalid_display_name`, 409 `conflict`, 503 `identity_provider_unavailable`.
 
 ### `GET /me`
 
 Returns the same `user` object. 401 `unauthenticated` if the user no longer exists.
+
+### `PUT /me/join-approval` (parent)
+
+Choose whether a teen who enters this parent's join code is linked at once or has to be approved first. The default is `false`: the teen is linked immediately, exactly as before.
+
+Request `{ "required": true }`. Response `200`: the updated `user` object. Repeating the call is harmless.
+Errors: 403 `forbidden` (caller is a teen), 422 `validation_failed` (`required` missing or not a boolean).
+
+Turning it off does not touch requests that are already pending: the parent can still approve or decline them. Turning it on does not touch existing links.
 
 ### `POST /links/join` (teen)
 
@@ -87,6 +97,39 @@ Link the teen to a parent by the parent's code. Case and surrounding spaces are 
 Request `{ "code": "SXVPUR" }`. Response `200`: `{ "parent": { "id": "…", "displayName": "Aigerim" } }`. Keep the parent `id`: payouts are addressed to it.
 Every call counts as an attempt per caller: after 5 attempts within 15 minutes the caller gets 429 `join_rate_limited` (even for a correct code) until the 15-minute window from the first attempt elapses. A successful join resets the counter. The counter is stored in Postgres, so it holds across replicas; it is per account, not per IP.
 Errors: 422 `invalid_join_code`, 403 `forbidden` (caller is not a teen), 429 `join_rate_limited`, 409 `conflict`.
+
+**When the parent requires approval** (`joinApproval` is `true`) and the teen is not already linked to that parent, nothing is linked. A join request is created and the call answers `202`:
+```json
+{ "requestId": "…", "status": "PENDING", "parent": { "id": "…", "displayName": "Aigerim" } }
+```
+The parent is told by push (`JOIN_REQUESTED`, with `requestId` in `data`) and decides with the endpoints below. Asking again while a request is pending returns the same `requestId` with `202` and sends no second push. A teen who is already linked gets the usual `200` no-op. The rate limit and the generic `invalid_join_code` apply exactly as above; a code that resolves to a request resets the attempt counter like a successful join. When the parent approves, both sides get the usual `FamilyLinked` welcome push and the link appears in `GET /family`. Keep the `requestId` if the app wants to offer "withdraw": there is no endpoint that lists a teen's own requests.
+
+### `GET /links/requests` (parent)
+
+The pending join requests addressed to the caller, newest first, [paginated](#pagination).
+```json
+{ "items": [ { "id": "…", "teenId": "…", "teenDisplayName": "Dana", "createdAt": "2026-11-10T10:00:00Z" } ] }
+```
+Approved, declined and withdrawn requests are not listed. Errors: 403 `forbidden` (caller is a teen), 422 `invalid_cursor`, 400 `invalid_request`.
+
+### `POST /links/requests/{id}/approve` (parent)
+
+Links the teen to the caller exactly as an immediate join does (including the `FamilyLinked` event and its pushes) and closes the request as `APPROVED`. Response `200`:
+```json
+{ "requestId": "…", "status": "APPROVED", "teen": { "id": "…", "displayName": "Dana" } }
+```
+Repeating it returns the same response and changes nothing, even if the parent unlinked the teen in between: an approval never re-links on replay. If the teen already joined directly (approval was turned off meanwhile), the link is not duplicated.
+Errors: 403 `forbidden` (not the parent the request is addressed to, or caller is a teen), 404 `not_found`, 409 `invalid_transition` (the request was already declined or withdrawn), 409 `conflict`, 400 `invalid_request` (malformed id).
+
+### `POST /links/requests/{id}/decline` (parent)
+
+Closes the request as `DECLINED`; no link is made. Response `200` with `"status": "DECLINED"` in the same shape as approve. Repeating it is harmless. The teen is not notified and may ask again.
+Errors: as approve; 409 `invalid_transition` when the request was already approved or withdrawn.
+
+### `DELETE /links/requests/{id}` (teen)
+
+Withdraws the caller's own pending request. `204`; repeating it is harmless.
+Errors: 403 `forbidden` (not the requesting teen), 404 `not_found`, 409 `invalid_transition` (the parent already approved or declined it), 400 `invalid_request`.
 
 ### `GET /family`
 
@@ -291,3 +334,4 @@ These are facts about the current API, listed so they are decided on purpose and
 4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
 5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
 6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
+7. **A teen cannot list their own join requests,** and a declined request sends no push. The app keeps the `requestId` from the `202`, or the teen asks again.
