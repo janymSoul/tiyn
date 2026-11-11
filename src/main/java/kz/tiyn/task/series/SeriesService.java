@@ -3,6 +3,7 @@ package kz.tiyn.task.series;
 import java.time.Clock;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import kz.tiyn.identity.FamilyDirectory;
 import kz.tiyn.platform.idempotency.IdempotencyContext;
 import kz.tiyn.platform.idempotency.IdempotencyKeys;
@@ -11,7 +12,9 @@ import kz.tiyn.platform.paging.Page;
 import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.platform.security.Role;
+import kz.tiyn.platform.tx.ConflictRetry;
 import kz.tiyn.task.series.dto.CreateSeriesRequest;
+import kz.tiyn.task.series.dto.UpdateSeriesRequest;
 import kz.tiyn.task.tasks.TaskAssignment;
 import kz.tiyn.task.tasks.error.TaskError;
 import kz.tiyn.task.tasks.error.TaskException;
@@ -98,11 +101,51 @@ class SeriesService {
                 .orElseThrow(() -> new TaskException(TaskError.NOT_FOUND));
     }
 
+    TaskSeries update(Principal caller, UUID id, UpdateSeriesRequest request) {
+        requireParent(caller);
+        return retry(() -> tx.execute(status -> updateOnce(caller, id, request)));
+    }
+
     void close(Principal caller, UUID id) {
         requireParent(caller);
+        retry(() -> tx.execute(status -> closeOnce(caller, id)));
+    }
+
+    private TaskSeries updateOnce(Principal caller, UUID id, UpdateSeriesRequest request) {
+        TaskSeries found = series.find(id).orElseThrow(() -> new TaskException(TaskError.NOT_FOUND));
+        if (!family.areLinked(caller.userId(), found.teenId())) {
+            throw new TaskException(TaskError.FORBIDDEN);
+        }
+        var changes = new SeriesChanges(
+                request.title(),
+                request.description(),
+                request.rewardAmount(),
+                request.penaltyAmount(),
+                request.dueTime(),
+                request.timezone());
+        found.amend(caller.userId(), changes);
+        if (changes.touchesTemplate()) {
+            assignment.validateTemplate(
+                    found.title(), found.description(), found.rewardAmount(), found.penaltyAmount(), found.currency());
+        }
+        if (Boolean.FALSE.equals(request.active())) {
+            found.pause(caller.userId());
+        } else if (Boolean.TRUE.equals(request.active())) {
+            found.resume(caller.userId());
+        }
+        series.saveVersioned(found);
+        return found;
+    }
+
+    private TaskSeries closeOnce(Principal caller, UUID id) {
         TaskSeries found = series.find(id).orElseThrow(() -> new TaskException(TaskError.NOT_FOUND));
         found.close(caller.userId());
-        series.saveActive(found);
+        series.saveVersioned(found);
+        return found;
+    }
+
+    private static <T> T retry(Supplier<T> work) {
+        return ConflictRetry.run(work, () -> new TaskException(TaskError.CONCURRENT_MODIFICATION));
     }
 
     void closeAfterUnlink(UUID parentId, UUID teenId) {

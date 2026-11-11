@@ -7,11 +7,13 @@ import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.security.Principal;
 import kz.tiyn.task.series.dto.CreateSeriesRequest;
 import kz.tiyn.task.series.dto.SeriesResponse;
+import kz.tiyn.task.series.dto.UpdateSeriesRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -51,6 +53,14 @@ class SeriesController {
         return toResponse(service.get(caller, id));
     }
 
+    @PatchMapping("/task-series/{id}")
+    SeriesResponse update(
+            @AuthenticationPrincipal Principal caller,
+            @PathVariable UUID id,
+            @RequestBody UpdateSeriesRequest request) {
+        return toResponse(service.update(caller, id, request));
+    }
+
     @DeleteMapping("/task-series/{id}")
     ResponseEntity<Void> close(@AuthenticationPrincipal Principal caller, @PathVariable UUID id) {
         service.close(caller, id);
@@ -70,6 +80,7 @@ class SeriesController {
                 s.zone().getId(),
                 s.dueTime(),
                 s.startsOn(),
-                s.isActive());
+                s.isActive(),
+                s.isClosed());
     }
 }
