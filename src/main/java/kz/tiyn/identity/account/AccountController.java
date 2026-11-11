@@ -40,4 +40,10 @@ class AccountController {
             @AuthenticationPrincipal Principal principal, @RequestBody UpdateProfileRequest request) {
         return UserResponse.from(service.updateProfile(principal.userId(), request.displayName()));
     }
+
+    @PostMapping("/me/join-code/regenerate")
+    @NaturallyIdempotent
+    UserResponse regenerateJoinCode(@AuthenticationPrincipal Principal principal) {
+        return UserResponse.from(service.regenerateJoinCode(principal.userId()));
+    }
 }

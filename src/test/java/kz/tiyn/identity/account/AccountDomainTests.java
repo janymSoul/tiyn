@@ -92,4 +92,27 @@ class AccountDomainTests {
         }
         assertThat(user.displayName()).isEqualTo("Old");
     }
+
+    @Test
+    void aParentSwapsToTheNewCodeAndKeepsEverythingElse() {
+        UUID id = UUID.randomUUID();
+        User parent = User.register(id, "s", Role.PARENT, "Aigul", new JoinCode("ABCDEF"));
+
+        User rotated = parent.withJoinCode(new JoinCode("GHJKLM"));
+
+        assertThat(rotated.joinCode()).isEqualTo("GHJKLM");
+        assertThat(rotated.id()).isEqualTo(id);
+        assertThat(rotated.role()).isEqualTo(Role.PARENT);
+        assertThat(rotated.displayName()).isEqualTo("Aigul");
+        assertThat(parent.joinCode()).isEqualTo("ABCDEF");
+    }
+
+    @Test
+    void aTeenCannotGetAJoinCode() {
+        User teen = User.register(UUID.randomUUID(), "s", Role.TEEN, "Dana", null);
+
+        assertThatThrownBy(() -> teen.withJoinCode(new JoinCode("ABCDEF")))
+                .isInstanceOfSatisfying(
+                        IdentityException.class, e -> assertThat(e.error()).isEqualTo(IdentityError.FORBIDDEN));
+    }
 }

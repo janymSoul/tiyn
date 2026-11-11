@@ -50,14 +50,19 @@ class AccountService implements AccountDirectory {
 
     User updateProfile(UUID userId, String displayName) {
         return tx.execute(status -> {
-            User user = users.findByIdForUpdate(userId)
-                    .orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
+            User user =
+                    users.findForUpdate(userId).orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
             if (displayName != null) {
                 user.rename(displayName);
                 users.updateDisplayName(user);
             }
             return user;
         });
+    }
+
+    User regenerateJoinCode(UUID userId) {
+        return ConflictRetry.run(
+                () -> regenerateJoinCodeOnce(userId), () -> new IdentityException(IdentityError.CONFLICT));
     }
 
     private GoogleIdentity verify(String idToken) {
@@ -94,6 +99,16 @@ class AccountService implements AccountDirectory {
             User user = User.register(UUID.randomUUID(), identity.subject(), role, name, code);
             users.insert(user);
             return user;
+        });
+    }
+
+    private User regenerateJoinCodeOnce(UUID userId) {
+        return tx.execute(status -> {
+            User user =
+                    users.findForUpdate(userId).orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
+            User rotated = user.withJoinCode(JoinCode.generate(random));
+            users.updateJoinCode(rotated);
+            return rotated;
         });
     }
 

@@ -2,6 +2,8 @@ package kz.tiyn.identity.account;
 
 import java.util.Objects;
 import java.util.UUID;
+import kz.tiyn.identity.account.error.IdentityError;
+import kz.tiyn.identity.account.error.IdentityException;
 import kz.tiyn.platform.security.Role;
 
 public final class User {
@@ -24,6 +26,13 @@ public final class User {
         String name = DisplayName.parse(displayName).value();
         String code = role == Role.PARENT ? joinCode.value() : null;
         return new User(id, idpSub, role, code, name);
+    }
+
+    User withJoinCode(JoinCode newCode) {
+        if (role != Role.PARENT) {
+            throw new IdentityException(IdentityError.FORBIDDEN);
+        }
+        return new User(id, idpSub, role, newCode.value(), displayName);
     }
 
     public static User restore(UUID id, String idpSub, Role role, String joinCode, String displayName) {
