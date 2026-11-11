@@ -28,7 +28,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 
 ## Pagination
 
-`GET /tasks`, `GET /payouts`, `GET /goals` and `GET /task-series` are paginated. Anything that grows with time is, and so will the wallet history be. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list.
+`GET /tasks`, `GET /payouts`, `GET /goals`, `GET /task-series` and `GET /wallet/entries` are paginated. Anything that grows with time is. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list. `GET /parent/dashboard` lists the parent's teens, a handful, each with a preview capped at 10 review items.
 
 **Request.** Two optional query parameters:
 - `limit`: items per page, default 50. Below 1, above 100 or not a number is 400 `invalid_request`.
@@ -158,12 +158,12 @@ Only an `ASSIGNED` task before its deadline can be submitted. Errors: 409 `deadl
 
 Errors: 409 `invalid_transition`, 409 `concurrent_modification` (retry), 422 `invalid_note`, 422 `invalid_deadline`, 403 `forbidden`.
 
-### `GET /tasks/{id}/proofs` (parent) → `ProofResponse[]`
+### `GET /tasks/{id}/proofs` (parent or the teen who owns the task) → `ProofResponse[]`
 
 ```json
 [ { "attemptNo": 1, "imageUrl": "https://s3-staging.tiyn.dev/tiyn-proofs/proofs/…?X-Amz-…", "text": null, "createdAt": "…" } ]
 ```
-One entry per submission attempt. `imageUrl` is a presigned URL that stops working after `S3_VIEW_URL_TTL` (default 10 minutes); fetch it right away and do not store it. Teens cannot read proofs (403).
+One entry per submission attempt. `imageUrl` is a presigned URL that stops working after `S3_VIEW_URL_TTL` (default 10 minutes); fetch it right away and do not store it. The task's parent (still linked to the teen) and the assigned teen can read; any other caller gets 403 `forbidden` and an unknown task is 404 `not_found`, as for `GET /tasks/{id}`. A task with no submissions returns `[]`.
 
 ## Recurring tasks
 
@@ -206,6 +206,19 @@ Stops new occurrences; existing tasks stay. 404 `not_found`.
 { "balanceAmount": 150000, "lockedAmount": 50000, "availableAmount": 100000, "currency": "KZT" }
 ```
 Parents get 403 `forbidden`.
+
+### `GET /wallet/entries`
+
+The wallet history: why the balance changed, newest first by creation time, paginated (see [Pagination](#pagination)). Teen: their own entries. Parent: `?teenId=<uuid>` is required and the teen must be linked to the caller right now.
+```json
+{ "items": [ { "id": "…", "kind": "TASK_REWARD", "amount": 50000, "currency": "KZT",
+               "createdAt": "…", "taskId": "…" } ], "nextCursor": "…" }
+```
+- `kind`: `TASK_REWARD`, `PENALTY`, `PAYOUT`, `GOAL_LOCK` or `GOAL_UNLOCK`.
+- `amount` is the signed effect on `availableAmount`: positive for a reward and a goal unlock, negative for a penalty, a payout and a goal lock. A goal lock or unlock moves money between available and locked, so the balance itself does not change; `kind` tells the two apart.
+- Exactly one related id is present when the entry has one: `taskId` (reward, penalty), `payoutId` (payout) or `goalId` (goal lock and unlock). Otherwise the field is omitted.
+- Payout requests that are still open are not entries; the debit appears when the parent fulfils.
+- Errors: 403 `forbidden` (a teen naming another teen, a parent naming an unlinked teen), 422 `teen_required` (parent without `teenId`), 400 `invalid_request` (bad `limit` or `teenId`), 422 `invalid_cursor`.
 
 ### Savings goals
 
@@ -259,6 +272,29 @@ One call for the home screen:
 ```
 `pendingAmount` is the sum of rewards of tasks awaiting a parent's decision. `milestoneId` is the id of the milestone a task belongs to, or `null`; the client can use it to group tasks under their milestone. `chores` and `milestones` hold open work plus recently decided tasks (window `DASHBOARD_RECENT_WINDOW`, default 7 days, at most `DASHBOARD_MAX_TASKS` = 50 tasks). `goals` lists active goals. `openPayout` is omitted when there is none.
 
+## Parent home screen
+
+### `GET /parent/dashboard` (parent only; teens get 403)
+
+One call for the parent's home screen, covering every linked teen:
+```json
+{
+  "totalPendingReviews": 3,
+  "totalOpenPayouts": 1,
+  "teens": [
+    {
+      "id": "…",
+      "displayName": "Dana",
+      "balance": { "balanceAmount": 0, "lockedAmount": 0, "availableAmount": 0, "currency": "KZT" },
+      "pendingReviewCount": 12,
+      "pendingReviews": [ { "id": "…", "title": "…", "rewardAmount": 0, "currency": "KZT", "submittedAt": "…" } ],
+      "openPayout": { "id": "…", "amount": 0, "currency": "KZT", "requestedAt": "…" }
+    }
+  ]
+}
+```
+`teens` holds the teens linked to the caller, ordered by display name; a parent with none gets an empty list. It is not paginated: a parent is linked to a handful of teens. `pendingReviews` are the caller's own tasks in state `SUBMITTED` for that teen, newest `submittedAt` first, and at most 10 per teen (`DASHBOARD_REVIEW_PREVIEW`); `pendingReviewCount` is the true number, so a client shows "12 waiting" and opens `GET /tasks?state=SUBMITTED&teenId=…` for the rest. `openPayout` is the teen's open request addressed to the caller and is omitted when there is none. `totalPendingReviews` and `totalOpenPayouts` sum across all teens (counts, not capped by the preview). A teen removed with `DELETE /links/{teenId}` disappears from the response at once.
+
 ## Push notifications
 
 ### `PUT /devices` → `204`
@@ -285,9 +321,7 @@ Each event is sent at most once per recipient, even if the server redelivers it.
 
 These are facts about the current API, listed so they are decided on purpose and not found in the app:
 
-1. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
-2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
-3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
-4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
-5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
-6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
+1. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
+2. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
+3. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
+4. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.

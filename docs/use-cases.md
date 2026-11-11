@@ -100,6 +100,8 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 **Alternates.** Concurrent approve (two parents, double-tap) → optimistic version check; the loser gets a concurrent-modification conflict (409). Parent not linked → 403. Replayed command → no-op success.
 
+**As built.** The parent's home screen is one call, `GET /parent/dashboard` (parent only): for every linked teen it returns the balance, the number of proofs waiting for review with a preview of the 10 newest, and the open payout request addressed to that parent, plus totals across teens. See `docs/modules.md` (Dashboard).
+
 **Support needed.** The canonical flow in `docs/transactions.md`. The task transaction writes task tables and publishes the event only; the credit happens in the ledger's own transaction.
 
 **Notes.**
@@ -188,7 +190,7 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 - Only a missed deadline counts: `ASSIGNED` past its deadline becomes `EXPIRED`. Submitted, rejected, cancelled (including after an unlink) and approved tasks cost nothing.
 - One penalty per task at most (key `PENALTY-TASK-{taskId}`), so a redelivered event does nothing.
 - The balance may go negative. A debt blocks payout requests and goal locks until rewards pay it down; releasing a goal still works.
-- The teen sees the penalty on the task (`penaltyAmount`) before the deadline. A teen-visible history of deductions is not built yet.
+- The teen sees the penalty on the task (`penaltyAmount`) before the deadline. Penalties also appear in the wallet history (`GET /wallet/entries`, kind `PENALTY`, with the task id), visible to the teen and to linked parents.
 
 **Support needed.** The expiry ticker (UC-10), the ledger's `TaskExpired` listener, the compensating `PENALTY` journal entry.
 

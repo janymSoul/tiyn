@@ -23,6 +23,8 @@ jobs:
           java-version: "21"
           cache: maven
       - name: Verify
+        env:
+          JAVA_TOOL_OPTIONS: -Dapi.version=1.44
         run: ./mvnw -B verify
       - name: Upload coverage report
         if: always()
