@@ -19,14 +19,14 @@ class IdentityExceptionHandler {
 
     private static HttpStatus statusOf(IdentityException e) {
         return switch (e.error()) {
-            case INVALID_IDENTITY, UNAUTHENTICATED -> HttpStatus.UNAUTHORIZED;
+            case INVALID_IDENTITY, INVALID_REFRESH_TOKEN, UNAUTHENTICATED -> HttpStatus.UNAUTHORIZED;
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
             case NOT_FOUND -> HttpStatus.NOT_FOUND;
             case ROLE_REQUIRED, INVALID_ROLE, INVALID_DISPLAY_NAME, INVALID_JOIN_CODE -> HttpStatus
                     .UNPROCESSABLE_ENTITY;
             case INVALID_TEEN_ID -> HttpStatus.BAD_REQUEST;
             case JOIN_RATE_LIMITED -> HttpStatus.TOO_MANY_REQUESTS;
-            case CONFLICT -> HttpStatus.CONFLICT;
+            case CONFLICT, INVALID_TRANSITION, ACCOUNT_HAS_OPEN_PAYOUT -> HttpStatus.CONFLICT;
             case IDENTITY_PROVIDER_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
         };
     }

@@ -2,6 +2,7 @@ package kz.tiyn.ledger.wallet.error;
 
 public enum LedgerError {
     FORBIDDEN,
+    TEEN_REQUIRED,
     NOT_FOUND,
     INVALID_AMOUNT,
     UNSUPPORTED_CURRENCY,
@@ -15,7 +16,9 @@ public enum LedgerError {
     INVALID_NAME,
     EXCEEDS_TARGET,
     INSUFFICIENT_GOAL_FUNDS,
-    GOAL_CLOSED;
+    GOAL_CLOSED,
+    INVALID_KIND,
+    INVALID_REASON;
 
     public String code() {
         return name().toLowerCase();

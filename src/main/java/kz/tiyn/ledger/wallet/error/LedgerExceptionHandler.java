@@ -26,11 +26,14 @@ class LedgerExceptionHandler {
                     AMOUNT_TOO_SMALL,
                     INSUFFICIENT_FUNDS,
                     PARENT_REQUIRED,
+                    TEEN_REQUIRED,
                     INVALID_IDEMPOTENCY_KEY,
                     INVALID_FILTER,
                     INVALID_NAME,
                     EXCEEDS_TARGET,
-                    INSUFFICIENT_GOAL_FUNDS -> HttpStatus.UNPROCESSABLE_ENTITY;
+                    INSUFFICIENT_GOAL_FUNDS,
+                    INVALID_KIND,
+                    INVALID_REASON -> HttpStatus.UNPROCESSABLE_ENTITY;
             case PAYOUT_ALREADY_OPEN, INVALID_TRANSITION, GOAL_CLOSED -> HttpStatus.CONFLICT;
         };
     }

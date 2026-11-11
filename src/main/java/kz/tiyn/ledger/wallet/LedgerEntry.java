@@ -10,7 +10,25 @@ record LedgerEntry(
         long balanceDelta,
         long lockedDelta,
         UUID refId,
-        String idempotencyKey) {
+        String idempotencyKey,
+        String note,
+        UUID actorId) {
+
+    LedgerEntry(
+            UUID id,
+            UUID teenId,
+            String currency,
+            EntryKind kind,
+            long balanceDelta,
+            long lockedDelta,
+            UUID refId,
+            String idempotencyKey) {
+        this(id, teenId, currency, kind, balanceDelta, lockedDelta, refId, idempotencyKey, null, null);
+    }
+
+    static String adjustmentKey(UUID parentId, String key) {
+        return "ADJUSTMENT:" + parentId + ":" + key;
+    }
 
     static String rewardKey(UUID taskId) {
         return "REWARD-TASK-" + taskId;

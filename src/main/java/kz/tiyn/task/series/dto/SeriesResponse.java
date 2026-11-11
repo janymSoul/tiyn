@@ -16,4 +16,5 @@ public record SeriesResponse(
         String timezone,
         LocalTime dueTime,
         LocalDate startsOn,
-        boolean active) {}
+        boolean active,
+        boolean closed) {}

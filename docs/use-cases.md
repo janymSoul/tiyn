@@ -18,6 +18,8 @@ Actors: **Parent**, **Teen**, **System** (scheduler, event listeners, push).
 | UC-10 | Recurring tasks and deadlines (system-driven) | PAR-02 | MVP |
 | UC-11 | A missed task costs money | PAR-04 | Medium |
 | UC-12 | Teen sets a savings goal | TEN-04 | Medium |
+| UC-13 | User deletes their account | privacy | MVP |
+| UC-14 | Parent adds a manual bonus or penalty (proposed) | none | Proposed |
 
 XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting to `TaskApproved`.
 
@@ -26,22 +28,22 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 ## UC-01 Sign in and link a teen to a family
 
 **Flow.**
-1. Parent signs in with Google without a role; if the account is new, identity answers `role_required` and creates nothing, and the app asks for the role and signs in again with the same token and `PARENT`; identity verifies the Google ID token and issues the app JWT (first sign-in creates the account and its permanent join code). An account has exactly one role.
+1. Parent signs in with Google without a role; if the account is new, identity answers `role_required` and creates nothing, and the app asks for the role and signs in again with the same token and `PARENT`; identity verifies the Google ID token and issues the app JWT (first sign-in creates the account and its join code, permanent until the parent regenerates it). An account has exactly one role.
 2. Parent shares their join code with the teen (shown in the app; sent in a messenger, SMS, or told in person).
 3. Teen signs in with Google (first sign-in creates the teen account) and enters the code.
-4. Identity finds the parent by code and creates the `family_links` row.
+4. Identity finds the parent by code and creates the `family_links` row. If the parent turned on join approval (`PUT /me/join-approval`, off by default) and the teen is not yet linked to them, identity creates a pending join request instead, publishes `JoinRequested` (the parent gets a push) and answers `202`; the parent approves or declines it, and approval creates the link as in this step.
 5. `FamilyLinked(parentId, teenId, generation)` is published. The API for these steps is in `docs/modules.md` ("HTTP API").
 
-**Alternates.** Unknown code → generic "invalid code". Repeated failures → 429 `join_rate_limited` after 5 attempts per account within 15 minutes (counter in `identity.join_attempts`, reset by a successful join). Teen already linked to this parent → no-op. A teen entering a second parent's code → links to that parent too. Parent removes a link later → teen's tasks are cancelled, wallet history is kept.
+**Alternates.** Unknown code → generic "invalid code". Repeated failures → 429 `join_rate_limited` after 5 attempts per account within 15 minutes (counter in `identity.join_attempts`, reset by a successful join). Teen already linked to this parent → no-op (also when approval is on). Teen asks again while a request is pending → the same request. Teen withdraws a pending request, or the parent declines it → no link, and the teen may ask again. A teen entering a second parent's code → links to that parent too. Parent removes a link later → teen's tasks are cancelled, wallet history is kept. Parent regenerates the code → the old code is rejected like an unknown one, existing links and pending join requests stay.
 
 **Support needed.**
-- identity: Google ID token verification, `users.join_code` (permanent, unique, no look-alike characters; join attempts are limited per account by `identity.join_attempts`), `FamilyDirectory.areLinked`.
+- identity: Google ID token verification, `users.join_code` (unique, kept until the parent regenerates it, no look-alike characters; join attempts are limited per account by `identity.join_attempts`), `FamilyDirectory.areLinked`, `users.join_approval_required` and `identity.join_requests` for opt-in parent approval.
 - ledger consumes the event → creates the teen's wallet (idempotent: the wallet key is `(teen_id, currency)`). notification consumes it → welcome push.
 
 **Open.**
 - **Age and consent.** Teens are 11–17. Confirm whether under-14s can hold a Google account in Kazakhstan, and what parental consent the data-protection law requires. Likely needs an ADR.
 - **Apple.** Not in MVP: Google only. The provider-agnostic identity design allows adding Sign in with Apple later. Revisit if iOS App Store review requires it.
-- **Parent confirmation of a join.** Deferred. The join code is permanent and reusable, so anyone who learns it can link to that parent. The accepted risk is low for a family app; if it grows, add a pending-request step (identity-owned `join_requests`).
+- **Parent confirmation of a join.** Opt-in, per parent, off by default so existing clients keep working. The join code is reusable until the parent regenerates it, so without approval anyone who learns it can link to that parent; a parent who wants control turns approval on. Not done yet: a teen cannot list their own requests, and a declined request sends no push.
 
 ---
 
@@ -100,6 +102,8 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 **Alternates.** Concurrent approve (two parents, double-tap) → optimistic version check; the loser gets a concurrent-modification conflict (409). Parent not linked → 403. Replayed command → no-op success.
 
+**As built.** The parent's home screen is one call, `GET /parent/dashboard` (parent only): for every linked teen it returns the balance, the number of proofs waiting for review with a preview of the 10 newest, and the open payout request addressed to that parent, plus totals across teens. See `docs/modules.md` (Dashboard).
+
 **Support needed.** The canonical flow in `docs/transactions.md`. The task transaction writes task tables and publishes the event only; the credit happens in the ledger's own transaction.
 
 **Notes.**
@@ -112,7 +116,7 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 **Flow.** Parent cancels a task in `ASSIGNED` or `SUBMITTED` (e.g. created by mistake, or the plan changed). FSM → `CANCELLED`, `TaskCancelled` → teen is notified. For a recurring series, the parent chooses "this occurrence" or "this and all future" (the series is closed, so no further occurrences are created). Cancelling a milestone also cancels its open tasks, each notifying the teen.
 
-**Alternates.** Already `APPROVED`/`REJECTED`/`EXPIRED` → an invalid-transition error (409). Cancelling an approved task does not claw back money, and there is no manual penalty to do it (UC-11 covers only missed tasks).
+**Alternates.** Already `APPROVED`/`REJECTED`/`EXPIRED` → an invalid-transition error (409). Cancelling an approved task does not claw back money, and UC-11 covers only missed tasks; the proposed UC-13 would let the parent take the money back by hand.
 
 ---
 
@@ -175,20 +179,21 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 - The `Ticker` interface and scheduler described in `docs/modules.md`: one scheduled task per ticker with its own ShedLock lock inside the API pods, every minute unless a ticker sets its own interval. Events are not part of the ticker; the Modulith registry delivers them.
 - Period boundaries in the series' own timezone (`task_series.timezone`, stored UTC); Kazakhstan has a single zone now, but it is stored per series.
 - A missed occurrence expires, and costs the series' penalty if it has one (UC-11). No backfill: a tick creates only the current day's occurrence (in the series' timezone, and only while its due time is still ahead), so days the system missed are never created later.
-- Closing a series, or removing the family link, stops further occurrences.
+- Closing a series, or removing the family link, stops further occurrences. Closing is permanent.
+- A parent can edit a series (title, description, reward, penalty, due time, timezone) or pause and resume it (`PATCH /task-series/{id}`). Edits and pauses apply to future occurrences only: tasks already created are never touched, and an occurrence that already exists for today keeps its old values. Resuming does not backfill: the next tick creates only the current day's occurrence, and only while its due time is still ahead. A closed series cannot be edited, paused or resumed (409).
 - Tick cadence of about one minute is enough; expiry precision beyond that is not needed.
 
 ---
 
 ## UC-11 A missed task costs money
 
-**Flow.** When creating a task or a recurring series, the parent can set an optional penalty (0 or empty means none). If the teen lets the task expire, the ledger debits the penalty automatically and publishes `PenaltyApplied`; the teen is notified. There is no free-form manual penalty.
+**Flow.** When creating a task or a recurring series, the parent can set an optional penalty (0 or empty means none). If the teen lets the task expire, the ledger debits the penalty automatically and publishes `PenaltyApplied`; the teen is notified. A free-form manual bonus or penalty is the proposed UC-13.
 
 **Rules.**
 - Only a missed deadline counts: `ASSIGNED` past its deadline becomes `EXPIRED`. Submitted, rejected, cancelled (including after an unlink) and approved tasks cost nothing.
 - One penalty per task at most (key `PENALTY-TASK-{taskId}`), so a redelivered event does nothing.
 - The balance may go negative. A debt blocks payout requests and goal locks until rewards pay it down; releasing a goal still works.
-- The teen sees the penalty on the task (`penaltyAmount`) before the deadline. A teen-visible history of deductions is not built yet.
+- The teen sees the penalty on the task (`penaltyAmount`) before the deadline. Penalties also appear in the wallet history (`GET /wallet/entries`, kind `PENALTY`, with the task id), visible to the teen and to linked parents.
 
 **Support needed.** The expiry ticker (UC-10), the ledger's `TaskExpired` listener, the compensating `PENALTY` journal entry.
 
@@ -202,6 +207,33 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 
 ---
 
+## UC-13 User deletes their account
+
+**Flow.** A signed-in parent or teen calls `DELETE /me`. Identity locks the user, refuses while an open payout involves them (`account_has_open_payout`), unlinks every active link like `DELETE /links/{teenId}` (so the other side's tasks are cancelled, series closed, payouts cancelled and the other side notified), anonymises the account (name `Deleted user`, identity key replaced by a tombstone, join code released) and publishes `AccountDeleted`. Notification then removes the user's device tokens. The token stops working at once; signing in again with the same Google account starts a new, empty account.
+
+**Alternates.** Already deleted → 401. Open payout → 409 until the teen cancels it or the parent fulfils or declines it. A remaining balance does not block: it is forfeited and frozen, and the ledger history stays (anonymised) for the former counterpart. Two simultaneous deletes → one 204, the other 401.
+
+**Support needed.** identity: `users.deleted_at`, `User.delete`, `FamilyExit`, `OpenPayoutCheck` (implemented by ledger), `platform.security.DeletedAccounts`. notification: `AccountDeletedListener`.
+
+**Open.** A grace period (undo window) and a hard-purge job for anonymised rows and a deleted teen's proofs are follow-ups, as is the data export a user would want before deleting.
+## UC-14 Parent adds a manual bonus or penalty (proposed)
+
+> **Proposed, not a documented requirement.** It comes from the maintainers' review. `UC-05` (task rewards) and `UC-11` (automatic missed-task penalties) are the only money movements the requirements describe.
+
+**Flow.** A linked parent calls `POST /teens/{teenId}/adjustments` with a kind (`BONUS` or `PENALTY`), a positive amount and a reason of 1 to 140 characters. The ledger, in one transaction, locks the teen's wallet, re-checks the link, appends a `MANUAL_BONUS` or `MANUAL_PENALTY` entry that records the parent and the reason, and publishes `BalanceAdjusted`; notification pushes the teen.
+
+**Rules.**
+- Parent only, and only for a teen linked to them at that moment.
+- A penalty behaves like UC-11: the balance may go negative and a debt blocks payout requests and goal locks.
+- Entries are append-only. There is no edit or delete; a mistake is corrected by the opposite adjustment.
+- The amount has the same ceiling as a task reward. A required `Idempotency-Key` makes a retry return the first entry.
+- The reason is stored on the entry and shown in the wallet history (`GET /wallet/entries`) together with the parent who made it; it also appears in the teen's data export.
+- The parent's account can be deleted later without touching the entry: the actor id stays and points to the anonymised user.
+
+**Support needed.** `Wallet.adjust`, the `Adjustment` value object, ledger kinds `MANUAL_BONUS` and `MANUAL_PENALTY` (migration V17), the `BalanceAdjusted` event and its notification copy.
+
+---
+
 ## Cross-cutting support (applies to every use case)
 
 | Concern | What it means here |
@@ -210,7 +242,7 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 | Idempotency | Every command carries a key; consumers dedupe on the event key (`docs/transactions.md`). Keys come from IDs, never timestamps. |
 | Audit | Ledger entries append-only; approvals, payouts, and penalties record actor and timestamp (SYS-01). |
 | Notifications | RU/KK copy rendered in notification from the event and the device's locale; no text in domain logic. |
-| Privacy | No PII in logs, events, or cache keys; proofs are private objects with metadata stripped. Data (database and object storage) is hosted in Kazakhstan. |
+| Privacy | No PII in logs, events, or cache keys; proofs are private objects with metadata stripped. Data (database and object storage) is hosted in Kazakhstan. Every user can download their own data with `GET /me/export` (`docs/api.md`, Privacy). |
 | Testing | FSM transitions as unit tests; UC-04, UC-05, UC-08, UC-09, UC-10 as functional tests against Postgres, including concurrent approve, concurrent payout requests, and a tick running twice. |
 
 ## Decisions still open

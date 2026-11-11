@@ -3,6 +3,7 @@ package kz.tiyn.notification.push;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,6 +27,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.modulith.events.IncompleteEventPublications;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -130,6 +132,29 @@ class NotificationFlowTests {
     }
 
     @Test
+    void aJoinRequestTellsTheParentAndOnlyTheParent() throws Exception {
+        Unjoined unjoined = fx.unjoinedFamily();
+        Family f = unjoined.family();
+        String parent = device(f.parent(), "kk");
+        String teen = device(f.teen(), "ru");
+        mvc.perform(put("/me/join-approval")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", f.parent().bearer())
+                        .content("{\"required\":true}"))
+                .andExpect(status().isOk());
+
+        fx.send(
+                        "/links/join",
+                        "{\"code\":\"" + unjoined.joinCode() + "\"}",
+                        f.teen().bearer())
+                .andExpect(status().isAccepted());
+
+        var push = awaitPush(parent, "JOIN_REQUESTED");
+        assertThat(push.push().data()).containsKey("requestId");
+        assertNoPush(teen, "JOIN_REQUESTED");
+    }
+
+    @Test
     void theTaskLifecycleNotifiesTheRightSide() throws Exception {
         Family f = fx.linkedFamily();
         String teen = device(f.teen(), "ru");
@@ -219,6 +244,55 @@ class NotificationFlowTests {
 
         awaitPush(teen, "TASK_EXPIRED");
         assertNoPush(teen, "PENALTY_APPLIED");
+    }
+
+    @Test
+    void aManualBonusAndAManualPenaltyTellTheTeenInTheirLanguageAndNotTheParent() throws Exception {
+        Family f = fx.linkedFamily();
+        String teenRu = device(f.teen(), "ru");
+        String teenKk = device(f.teen(), "kk");
+        String parent = device(f.parent(), "ru");
+
+        fx.send(
+                        "/teens/" + f.teen().id() + "/adjustments",
+                        "{\"kind\":\"BONUS\",\"amount\":25000,\"reason\":\"Great grades\"}",
+                        f.parent().bearer(),
+                        "Idempotency-Key",
+                        "n1")
+                .andExpect(status().isCreated());
+        fx.send(
+                        "/teens/" + f.teen().id() + "/adjustments",
+                        "{\"kind\":\"PENALTY\",\"amount\":10000,\"reason\":\"Late home\"}",
+                        f.parent().bearer(),
+                        "Idempotency-Key",
+                        "n2")
+                .andExpect(status().isCreated());
+
+        var bonus = awaitPush(teenRu, "BONUS_RECEIVED");
+        assertThat(bonus.push().body()).contains("250");
+        assertThat(bonus.push().data()).containsKey("entryId");
+        assertThat(awaitPush(teenRu, "MANUAL_PENALTY_APPLIED").push().body()).contains("100");
+        assertThat(awaitPush(teenKk, "BONUS_RECEIVED").push().title())
+                .isNotEqualTo(bonus.push().title());
+        awaitPush(teenKk, "MANUAL_PENALTY_APPLIED");
+        assertNoPush(parent, "BONUS_RECEIVED");
+        assertNoPush(parent, "MANUAL_PENALTY_APPLIED");
+    }
+
+    @Test
+    void aReplayedAdjustmentPushesOnce() throws Exception {
+        Family f = fx.linkedFamily();
+        String teen = device(f.teen(), "ru");
+        String body = "{\"kind\":\"BONUS\",\"amount\":25000,\"reason\":\"Great grades\"}";
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            fx.send("/teens/" + f.teen().id() + "/adjustments", body, f.parent().bearer(), "Idempotency-Key", "same")
+                    .andExpect(status().isCreated());
+        }
+
+        awaitPush(teen, "BONUS_RECEIVED");
+        assertNoPush(teen, "MANUAL_PENALTY_APPLIED");
+        assertThat(sender.sentTo(teen, "BONUS_RECEIVED")).hasSize(1);
     }
 
     @Test
