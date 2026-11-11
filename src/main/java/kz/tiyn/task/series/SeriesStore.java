@@ -10,6 +10,7 @@ import kz.tiyn.platform.paging.Cursor;
 import kz.tiyn.platform.paging.Page;
 import kz.tiyn.platform.paging.PageRequest;
 import kz.tiyn.platform.time.Instants;
+import kz.tiyn.platform.tx.ConflictException;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
@@ -79,17 +80,30 @@ class SeriesStore {
     void closeAllFor(UUID parentId, UUID teenId) {
         dsl.update(TASK_SERIES)
                 .set(TASK_SERIES.ACTIVE, false)
+                .set(TASK_SERIES.CLOSED, true)
+                .set(TASK_SERIES.VERSION, TASK_SERIES.VERSION.plus(1))
                 .where(TASK_SERIES.PARENT_ID.eq(parentId))
                 .and(TASK_SERIES.TEEN_ID.eq(teenId))
-                .and(TASK_SERIES.ACTIVE.isTrue())
+                .and(TASK_SERIES.CLOSED.isFalse())
                 .execute();
     }
 
-    void saveActive(TaskSeries series) {
-        dsl.update(TASK_SERIES)
+    void saveVersioned(TaskSeries series) {
+        int updated = dsl.update(TASK_SERIES)
+                .set(TASK_SERIES.TITLE, series.title())
+                .set(TASK_SERIES.DESCRIPTION, series.description())
+                .set(TASK_SERIES.REWARD_AMOUNT, series.rewardAmount())
+                .set(TASK_SERIES.PENALTY_AMOUNT, series.penaltyAmount())
+                .set(TASK_SERIES.TIMEZONE, series.zone().getId())
+                .set(TASK_SERIES.DUE_TIME, series.dueTime())
                 .set(TASK_SERIES.ACTIVE, series.isActive())
-                .where(TASK_SERIES.ID.eq(series.id()))
+                .set(TASK_SERIES.CLOSED, series.isClosed())
+                .set(TASK_SERIES.VERSION, series.version() + 1)
+                .where(TASK_SERIES.ID.eq(series.id()).and(TASK_SERIES.VERSION.eq(series.version())))
                 .execute();
+        if (updated == 0) {
+            throw new ConflictException(new IllegalStateException("stale series " + series.id()));
+        }
     }
 
     private static TaskSeries toSeries(TaskSeriesRecord r) {
@@ -106,6 +120,8 @@ class SeriesStore {
                 r.getTimezone(),
                 r.getDueTime(),
                 r.getStartsOn(),
-                r.getActive());
+                r.getActive(),
+                r.getClosed(),
+                r.getVersion());
     }
 }

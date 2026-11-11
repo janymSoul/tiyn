@@ -24,7 +24,7 @@ class UserStore {
         return dsl.selectFrom(USERS).where(USERS.ID.eq(id)).fetchOptional().map(UserStore::toUser);
     }
 
-    Optional<User> findByIdForUpdate(UUID id) {
+    Optional<User> findForUpdate(UUID id) {
         return dsl.selectFrom(USERS)
                 .where(USERS.ID.eq(id))
                 .forUpdate()
@@ -65,6 +65,24 @@ class UserStore {
                 .set(USERS.JOIN_APPROVAL_REQUIRED, user.joinApprovalRequired())
                 .where(USERS.ID.eq(user.id()))
                 .execute();
+    }
+
+    void updateDisplayName(User user) {
+        dsl.update(USERS)
+                .set(USERS.DISPLAY_NAME, user.displayName())
+                .where(USERS.ID.eq(user.id()))
+                .execute();
+    }
+
+    void updateJoinCode(User user) {
+        try {
+            dsl.update(USERS)
+                    .set(USERS.JOIN_CODE, user.joinCode())
+                    .where(USERS.ID.eq(user.id()))
+                    .execute();
+        } catch (DuplicateKeyException e) {
+            throw new ConflictException(e);
+        }
     }
 
     private static User toUser(UsersRecord r) {
