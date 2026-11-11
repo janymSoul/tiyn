@@ -167,7 +167,7 @@ Used by the dashboard module to show "Pending" funds (TEN-01). Pending is task-o
 | `POST /tasks/{id}/submit` | teen | multipart `file` or JSON `{text}`; `Idempotency-Key` required |
 | `POST /tasks/{id}/approve`, `/reject`, `/request-redo` | parent | review; reject and redo take `{note?}`, redo also `{deadlineAt?}` |
 | `POST /tasks/{id}/cancel` | parent | cancel; a milestone cancels its open tasks |
-| `GET /tasks/{id}/proofs` | parent | proofs with presigned view URLs |
+| `GET /tasks/{id}/proofs` | parent or owning teen | proofs with presigned view URLs |
 | `POST /task-series` | parent | create a daily or weekly series (`recurrence`, `dueTime`, optional `timezone`, `startsOn`); `Idempotency-Key` required |
 | `GET /task-series` | parent | keyset page of the series the caller created, newest first; optional `teenId` (must be linked, else 403) and `active` |
 | `GET /task-series/{id}` | parent | one series; someone else's series is 404 |

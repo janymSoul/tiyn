@@ -158,12 +158,12 @@ Only an `ASSIGNED` task before its deadline can be submitted. Errors: 409 `deadl
 
 Errors: 409 `invalid_transition`, 409 `concurrent_modification` (retry), 422 `invalid_note`, 422 `invalid_deadline`, 403 `forbidden`.
 
-### `GET /tasks/{id}/proofs` (parent) → `ProofResponse[]`
+### `GET /tasks/{id}/proofs` (parent or the teen who owns the task) → `ProofResponse[]`
 
 ```json
 [ { "attemptNo": 1, "imageUrl": "https://s3-staging.tiyn.dev/tiyn-proofs/proofs/…?X-Amz-…", "text": null, "createdAt": "…" } ]
 ```
-One entry per submission attempt. `imageUrl` is a presigned URL that stops working after `S3_VIEW_URL_TTL` (default 10 minutes); fetch it right away and do not store it. Teens cannot read proofs (403).
+One entry per submission attempt. `imageUrl` is a presigned URL that stops working after `S3_VIEW_URL_TTL` (default 10 minutes); fetch it right away and do not store it. The task's parent (still linked to the teen) and the assigned teen can read; any other caller gets 403 `forbidden` and an unknown task is 404 `not_found`, as for `GET /tasks/{id}`. A task with no submissions returns `[]`.
 
 ## Recurring tasks
 
@@ -286,7 +286,7 @@ Each event is sent at most once per recipient, even if the server redelivers it.
 These are facts about the current API, listed so they are decided on purpose and not found in the app:
 
 1. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
-2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
+2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed.
 3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
 4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
 5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
