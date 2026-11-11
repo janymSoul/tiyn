@@ -21,14 +21,14 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 | 422 | `validation_failed` | bean validation failure |
 | 500 | `internal_error` | unexpected; retry is safe only for idempotent calls |
 
-- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
+- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join`, `POST /me/join-code/regenerate` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it) and repeating a regenerate issues yet another code (see its section).
 - **Eventual consistency:** a rewarded approval and an expired penalty reach the wallet through events, usually within seconds. After `approve`, the balance may lag; re-read it instead of assuming.
 - **Roles:** `PARENT` and `TEEN`. A teen may be linked to several parents; a parent to several teens. A parent only sees and acts on tasks they created for linked teens.
 - **Lists that grow are paginated** with an opaque cursor, always newest first; see [Pagination](#pagination). `GET /family` and `GET /tasks/{id}/proofs` stay plain because the domain keeps them small.
 
 ## Pagination
 
-`GET /tasks`, `GET /payouts`, `GET /goals` and `GET /task-series` are paginated. Anything that grows with time is, and so will the wallet history be. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list.
+`GET /tasks`, `GET /payouts`, `GET /goals`, `GET /task-series` and `GET /wallet/entries` are paginated. Anything that grows with time is. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list. `GET /parent/dashboard` lists the parent's teens, a handful, each with a preview capped at 10 review items.
 
 **Request.** Two optional query parameters:
 - `limit`: items per page, default 50. Below 1, above 100 or not a number is 400 `invalid_request`.
@@ -66,19 +66,45 @@ Request:
 - `role`: **optional**; required only when the account doesn't exist yet. `PARENT` or `TEEN`, upper-case, **only used the first time** an account signs in. An existing account keeps its role and name, and the fields are ignored.
 
 Client flow: call without `role`. On `422 role_required` (the account is new and nothing was created), ask the user for their role and call again with the same `idToken` and the `role`.
-- `displayName`: optional, at most 100 characters; falls back to the Google profile name.
+- `displayName`: optional, at most 100 characters; falls back to the Google profile name. Normalised like `PATCH /me` (below) before it is stored.
 
 Response `200`:
 ```json
 { "token": "<our jwt>", "user": { "id": "…", "role": "PARENT", "displayName": "Aigerim", "joinCode": "SXVPUR" } }
 ```
-`joinCode` appears only for parents (six characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). One Google account is one user with one role.
+`joinCode` appears only for parents (six characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`) and changes only when the parent calls `POST /me/join-code/regenerate`. One Google account is one user with one role.
 
 Errors: 401 `invalid_identity` (bad or wrong-audience token), 422 `role_required` (new account, no `role`), 422 `invalid_role`, 422 `invalid_display_name`, 409 `conflict`, 503 `identity_provider_unavailable`.
 
 ### `GET /me`
 
 Returns the same `user` object. 401 `unauthenticated` if the user no longer exists.
+
+### `PATCH /me` (parent or teen)
+
+Edit the caller's profile. Partial update: a field that is absent (or `null`) stays as it is, so `{}` is a harmless no-op that returns the current profile.
+
+Request:
+```json
+{ "displayName": "Aigerim" }
+```
+- `displayName`: the only editable field. The name is shown to the people the caller is linked to (`GET /family`, `POST /links/join`), so it is normalised before it is stored, the same way as at sign-in: control characters, invisible format characters (zero-width characters, byte-order mark) and Unicode bidi override, embedding and isolate characters are removed, every run of whitespace becomes one space, and the ends are trimmed. The result must be 1–100 characters; the length is checked after normalising. The response carries the stored value, which can differ from what was sent. Names stored before this rule are not rewritten.
+- `role`, `joinCode`, the Google subject and `id` cannot be changed. Sending them, or any other field, is 400 `invalid_body`. There is no email field (none is stored). The push-notification language is a property of the device, not the account: change it with `PUT /devices`.
+
+Response `200`: the same `user` object as `GET /me`.
+
+Repeating the call with the same body gives the same result, so it needs no `Idempotency-Key`. Two simultaneous edits are serialised on the user row; the last one to commit wins.
+
+Errors: 400 `invalid_body` (malformed JSON or an unknown field), 401 `unauthenticated` (no token, or the user no longer exists), 422 `invalid_display_name` (blank or empty after normalising, or longer than 100 characters).
+
+### `POST /me/join-code/regenerate` (parent)
+
+Issues a new join code for the caller and invalidates the old one immediately. Use it when the code has leaked or was shared too widely.
+
+No request body. Response `200`: the same `user` object as `GET /me`, carrying the new `joinCode`.
+The old code then behaves like any unknown code on `POST /links/join` (422 `invalid_join_code`). Existing family links are untouched: linked teens stay linked and no event is published. A teen who has not joined yet needs the new code.
+Needs no `Idempotency-Key`, but repeating a call rotates the code again; each response carries the code that was valid when it was produced, and `GET /me` always returns the current one. After a lost response, read `GET /me` instead of retrying. Two simultaneous calls leave exactly one valid code (the later commit wins).
+Errors: 401 `unauthenticated`, 403 `forbidden` (caller is not a parent), 409 `conflict` (the random draw collided with another parent's code five times in a row; try again).
 
 ### `POST /links/join` (teen)
 
@@ -158,12 +184,12 @@ Only an `ASSIGNED` task before its deadline can be submitted. Errors: 409 `deadl
 
 Errors: 409 `invalid_transition`, 409 `concurrent_modification` (retry), 422 `invalid_note`, 422 `invalid_deadline`, 403 `forbidden`.
 
-### `GET /tasks/{id}/proofs` (parent) → `ProofResponse[]`
+### `GET /tasks/{id}/proofs` (parent or the teen who owns the task) → `ProofResponse[]`
 
 ```json
 [ { "attemptNo": 1, "imageUrl": "https://s3-staging.tiyn.dev/tiyn-proofs/proofs/…?X-Amz-…", "text": null, "createdAt": "…" } ]
 ```
-One entry per submission attempt. `imageUrl` is a presigned URL that stops working after `S3_VIEW_URL_TTL` (default 10 minutes); fetch it right away and do not store it. Teens cannot read proofs (403).
+One entry per submission attempt. `imageUrl` is a presigned URL that stops working after `S3_VIEW_URL_TTL` (default 10 minutes); fetch it right away and do not store it. The task's parent (still linked to the teen) and the assigned teen can read; any other caller gets 403 `forbidden` and an unknown task is 404 `not_found`, as for `GET /tasks/{id}`. A task with no submissions returns `[]`.
 
 ## Recurring tasks
 
@@ -223,6 +249,19 @@ Closes the series for good: stops new occurrences, existing tasks stay, and it c
 ```
 Parents get 403 `forbidden`.
 
+### `GET /wallet/entries`
+
+The wallet history: why the balance changed, newest first by creation time, paginated (see [Pagination](#pagination)). Teen: their own entries. Parent: `?teenId=<uuid>` is required and the teen must be linked to the caller right now.
+```json
+{ "items": [ { "id": "…", "kind": "TASK_REWARD", "amount": 50000, "currency": "KZT",
+               "createdAt": "…", "taskId": "…" } ], "nextCursor": "…" }
+```
+- `kind`: `TASK_REWARD`, `PENALTY`, `PAYOUT`, `GOAL_LOCK` or `GOAL_UNLOCK`.
+- `amount` is the signed effect on `availableAmount`: positive for a reward and a goal unlock, negative for a penalty, a payout and a goal lock. A goal lock or unlock moves money between available and locked, so the balance itself does not change; `kind` tells the two apart.
+- Exactly one related id is present when the entry has one: `taskId` (reward, penalty), `payoutId` (payout) or `goalId` (goal lock and unlock). Otherwise the field is omitted.
+- Payout requests that are still open are not entries; the debit appears when the parent fulfils.
+- Errors: 403 `forbidden` (a teen naming another teen, a parent naming an unlinked teen), 422 `teen_required` (parent without `teenId`), 400 `invalid_request` (bad `limit` or `teenId`), 422 `invalid_cursor`.
+
 ### Savings goals
 
 `GoalResponse`: `{ id, name, targetAmount, savedAmount, currency, state }` with `state` `ACTIVE` or `CLOSED`. Saving into a goal moves money from available to locked; it does not leave the wallet.
@@ -275,6 +314,29 @@ One call for the home screen:
 ```
 `pendingAmount` is the sum of rewards of tasks awaiting a parent's decision. `milestoneId` is the id of the milestone a task belongs to, or `null`; the client can use it to group tasks under their milestone. `chores` and `milestones` hold open work plus recently decided tasks (window `DASHBOARD_RECENT_WINDOW`, default 7 days, at most `DASHBOARD_MAX_TASKS` = 50 tasks). `goals` lists active goals. `openPayout` is omitted when there is none.
 
+## Parent home screen
+
+### `GET /parent/dashboard` (parent only; teens get 403)
+
+One call for the parent's home screen, covering every linked teen:
+```json
+{
+  "totalPendingReviews": 3,
+  "totalOpenPayouts": 1,
+  "teens": [
+    {
+      "id": "…",
+      "displayName": "Dana",
+      "balance": { "balanceAmount": 0, "lockedAmount": 0, "availableAmount": 0, "currency": "KZT" },
+      "pendingReviewCount": 12,
+      "pendingReviews": [ { "id": "…", "title": "…", "rewardAmount": 0, "currency": "KZT", "submittedAt": "…" } ],
+      "openPayout": { "id": "…", "amount": 0, "currency": "KZT", "requestedAt": "…" }
+    }
+  ]
+}
+```
+`teens` holds the teens linked to the caller, ordered by display name; a parent with none gets an empty list. It is not paginated: a parent is linked to a handful of teens. `pendingReviews` are the caller's own tasks in state `SUBMITTED` for that teen, newest `submittedAt` first, and at most 10 per teen (`DASHBOARD_REVIEW_PREVIEW`); `pendingReviewCount` is the true number, so a client shows "12 waiting" and opens `GET /tasks?state=SUBMITTED&teenId=…` for the rest. `openPayout` is the teen's open request addressed to the caller and is omitted when there is none. `totalPendingReviews` and `totalOpenPayouts` sum across all teens (counts, not capped by the preview). A teen removed with `DELETE /links/{teenId}` disappears from the response at once.
+
 ## Push notifications
 
 ### `PUT /devices` → `204`
@@ -301,9 +363,7 @@ Each event is sent at most once per recipient, even if the server redelivers it.
 
 These are facts about the current API, listed so they are decided on purpose and not found in the app:
 
-1. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
-2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
-3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
-4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
-5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
-6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
+1. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
+2. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
+3. **No account deletion or data export.** The last matters for the Kazakhstan personal-data law. The profile has one editable field, `displayName` (`PATCH /me`); there is no avatar and no email.
+4. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.

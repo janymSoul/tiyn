@@ -24,6 +24,14 @@ class UserStore {
         return dsl.selectFrom(USERS).where(USERS.ID.eq(id)).fetchOptional().map(UserStore::toUser);
     }
 
+    Optional<User> findForUpdate(UUID id) {
+        return dsl.selectFrom(USERS)
+                .where(USERS.ID.eq(id))
+                .forUpdate()
+                .fetchOptional()
+                .map(UserStore::toUser);
+    }
+
     Optional<User> findByIdpSub(String idpSub) {
         return dsl.selectFrom(USERS)
                 .where(USERS.IDP_SUB.eq(idpSub))
@@ -46,6 +54,24 @@ class UserStore {
                     .set(USERS.ROLE, user.role().name())
                     .set(USERS.JOIN_CODE, user.joinCode())
                     .set(USERS.DISPLAY_NAME, user.displayName())
+                    .execute();
+        } catch (DuplicateKeyException e) {
+            throw new ConflictException(e);
+        }
+    }
+
+    void updateDisplayName(User user) {
+        dsl.update(USERS)
+                .set(USERS.DISPLAY_NAME, user.displayName())
+                .where(USERS.ID.eq(user.id()))
+                .execute();
+    }
+
+    void updateJoinCode(User user) {
+        try {
+            dsl.update(USERS)
+                    .set(USERS.JOIN_CODE, user.joinCode())
+                    .where(USERS.ID.eq(user.id()))
                     .execute();
         } catch (DuplicateKeyException e) {
             throw new ConflictException(e);
