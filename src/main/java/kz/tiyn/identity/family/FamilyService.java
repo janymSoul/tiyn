@@ -1,6 +1,7 @@
 package kz.tiyn.identity.family;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import kz.tiyn.identity.account.AccountDirectory;
@@ -13,7 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-class FamilyService {
+class FamilyService implements FamilyExit {
 
     private final AccountDirectory accounts;
     private final LinkStore links;
@@ -67,8 +68,20 @@ class FamilyService {
         ConflictRetry.run(() -> unlinkOnce(parentId, teenId), conflict());
     }
 
+    @Override
+    public void unlinkAll(User user) {
+        Instant now = clock.instant();
+        links.findActiveForUpdate(user.id(), user.role()).forEach(link -> {
+            link.unlink(now);
+            links.save(link);
+        });
+    }
+
     private Void linkOnce(User parent, User teen) {
         return tx.execute(status -> {
+            accounts.shareActiveUser(parent.id())
+                    .orElseThrow(() -> new IdentityException(IdentityError.INVALID_JOIN_CODE));
+            accounts.shareActiveUser(teen.id()).orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
             FamilyLink link =
                     links.findForUpdate(parent.id(), teen.id()).orElseGet(() -> FamilyLink.between(parent, teen));
             link.link();

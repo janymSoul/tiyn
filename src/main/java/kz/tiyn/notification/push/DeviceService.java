@@ -35,6 +35,10 @@ class DeviceService {
         }
     }
 
+    void unregisterAll(UUID userId) {
+        devices.deleteAllOf(userId);
+    }
+
     private static Platform parsePlatform(String raw) {
         try {
             return Platform.valueOf(raw == null ? "" : raw.trim().toUpperCase(Locale.ROOT));

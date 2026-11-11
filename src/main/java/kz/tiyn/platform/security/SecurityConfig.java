@@ -37,6 +37,9 @@ class SecurityConfig {
     private static final OAuth2Error INVALID_CLAIMS =
             new OAuth2Error("invalid_token", "subject or role claim is invalid", null);
 
+    private static final OAuth2Error DELETED_ACCOUNT =
+            new OAuth2Error("invalid_token", "the account no longer exists", null);
+
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper json) throws Exception {
         AuthenticationEntryPoint unauthenticated =
@@ -59,7 +62,7 @@ class SecurityConfig {
     }
 
     @Bean
-    JwtDecoder jwtDecoder(JwtProperties properties) {
+    JwtDecoder jwtDecoder(JwtProperties properties, DeletedAccounts deletedAccounts) {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(properties.signingKey())
                 .macAlgorithm(MacAlgorithm.HS256)
                 .build();
@@ -67,7 +70,8 @@ class SecurityConfig {
                 new JwtTimestampValidator(),
                 new JwtIssuerValidator(JwtProperties.ISSUER),
                 requiredExpiry(),
-                subjectAndRole()));
+                subjectAndRole(),
+                accountNotDeleted(deletedAccounts)));
         return decoder;
     }
 
@@ -99,6 +103,22 @@ class SecurityConfig {
                 return OAuth2TokenValidatorResult.success();
             } catch (IllegalArgumentException e) {
                 return OAuth2TokenValidatorResult.failure(INVALID_CLAIMS);
+            }
+        };
+    }
+
+    private OAuth2TokenValidator<Jwt> accountNotDeleted(DeletedAccounts deletedAccounts) {
+        return jwt -> {
+            String subject = jwt.getSubject();
+            if (subject == null) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            try {
+                return deletedAccounts.isDeleted(UUID.fromString(subject))
+                        ? OAuth2TokenValidatorResult.failure(DELETED_ACCOUNT)
+                        : OAuth2TokenValidatorResult.success();
+            } catch (IllegalArgumentException e) {
+                return OAuth2TokenValidatorResult.success();
             }
         };
     }

@@ -1,6 +1,7 @@
 package kz.tiyn.identity.account;
 
 import java.security.SecureRandom;
+import java.time.Clock;
 import java.util.Optional;
 import java.util.UUID;
 import kz.tiyn.identity.account.dto.SignInResult;
@@ -24,18 +25,21 @@ class AccountService implements AccountDirectory {
     private final UserStore users;
     private final TransactionTemplate tx;
     private final SecureRandom random;
+    private final Clock clock;
 
     AccountService(
             GoogleVerifier google,
             AccessTokenIssuer tokens,
             UserStore users,
             TransactionTemplate tx,
-            SecureRandom random) {
+            SecureRandom random,
+            Clock clock) {
         this.google = google;
         this.tokens = tokens;
         this.users = users;
         this.tx = tx;
         this.random = random;
+        this.clock = clock;
     }
 
     SignInResult signIn(String idToken, String role, String displayName) {
@@ -68,6 +72,22 @@ class AccountService implements AccountDirectory {
         JoinCode code = JoinCode.parse(rawCode);
         return users.findByJoinCode(code.value())
                 .orElseThrow(() -> new IdentityException(IdentityError.INVALID_JOIN_CODE));
+    }
+
+    @Override
+    public Optional<User> lockActiveUser(UUID userId) {
+        return users.findActiveForUpdate(userId);
+    }
+
+    @Override
+    public Optional<User> shareActiveUser(UUID userId) {
+        return users.findActiveForShare(userId);
+    }
+
+    @Override
+    public void delete(User user) {
+        user.delete(clock.instant());
+        users.save(user);
     }
 
     private User signInOnce(GoogleIdentity identity, String roleInput, String displayNameInput) {

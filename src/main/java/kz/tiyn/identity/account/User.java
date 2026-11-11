@@ -1,20 +1,28 @@
 package kz.tiyn.identity.account;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import kz.tiyn.identity.AccountDeleted;
 import kz.tiyn.identity.account.error.IdentityError;
 import kz.tiyn.identity.account.error.IdentityException;
+import kz.tiyn.platform.event.EventLog;
 import kz.tiyn.platform.security.Role;
 
 public final class User {
 
     static final int MAX_DISPLAY_NAME = 100;
+    static final String DELETED_DISPLAY_NAME = "Deleted user";
+    static final String TOMBSTONE_PREFIX = "deleted:";
 
     private final UUID id;
-    private final String idpSub;
     private final Role role;
-    private final String joinCode;
-    private final String displayName;
+    private final EventLog events = new EventLog();
+    private String idpSub;
+    private String joinCode;
+    private String displayName;
+    private Instant deletedAt;
 
     private User(UUID id, String idpSub, Role role, String joinCode, String displayName) {
         this.id = id;
@@ -35,6 +43,29 @@ public final class User {
 
     public static User restore(UUID id, String idpSub, Role role, String joinCode, String displayName) {
         return new User(id, idpSub, role, joinCode, displayName);
+    }
+
+    void delete(Instant now) {
+        if (deletedAt != null) {
+            return;
+        }
+        idpSub = TOMBSTONE_PREFIX + id;
+        joinCode = null;
+        displayName = DELETED_DISPLAY_NAME;
+        deletedAt = now;
+        events.record(new AccountDeleted(id, role));
+    }
+
+    List<Object> pullEvents() {
+        return events.drain();
+    }
+
+    boolean isDeleted() {
+        return deletedAt != null;
+    }
+
+    Instant deletedAt() {
+        return deletedAt;
     }
 
     public UUID id() {

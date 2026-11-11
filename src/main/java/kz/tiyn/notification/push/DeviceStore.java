@@ -49,6 +49,10 @@ class DeviceStore {
                 .execute();
     }
 
+    void deleteAllOf(UUID userId) {
+        dsl.deleteFrom(DEVICE_TOKENS).where(DEVICE_TOKENS.USER_ID.eq(userId)).execute();
+    }
+
     void deleteToken(String token) {
         dsl.deleteFrom(DEVICE_TOKENS).where(DEVICE_TOKENS.TOKEN.eq(token)).execute();
     }
