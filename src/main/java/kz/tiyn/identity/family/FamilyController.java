@@ -5,7 +5,8 @@ import kz.tiyn.identity.account.User;
 import kz.tiyn.identity.account.error.IdentityError;
 import kz.tiyn.identity.account.error.IdentityException;
 import kz.tiyn.identity.family.dto.FamilyResponse;
-import kz.tiyn.identity.family.dto.JoinRequest;
+import kz.tiyn.identity.family.dto.JoinCodeRequest;
+import kz.tiyn.identity.family.dto.JoinPendingResponse;
 import kz.tiyn.identity.family.dto.JoinResponse;
 import kz.tiyn.platform.idempotency.NaturallyIdempotent;
 import kz.tiyn.platform.paging.BoundedList;
@@ -30,9 +31,17 @@ class FamilyController {
 
     @PostMapping("/links/join")
     @NaturallyIdempotent
-    JoinResponse join(@AuthenticationPrincipal Principal principal, @RequestBody JoinRequest request) {
-        User parent = service.join(principal.userId(), request.code());
-        return new JoinResponse(new JoinResponse.Parent(parent.id(), parent.displayName()));
+    ResponseEntity<?> join(@AuthenticationPrincipal Principal principal, @RequestBody JoinCodeRequest request) {
+        return switch (service.join(principal.userId(), request.code())) {
+            case JoinOutcome.Linked linked -> ResponseEntity.ok(new JoinResponse(parentOf(linked.parent())));
+            case JoinOutcome.Pending pending -> ResponseEntity.accepted()
+                    .body(new JoinPendingResponse(
+                            pending.requestId(), JoinRequestState.PENDING.name(), parentOf(pending.parent())));
+        };
+    }
+
+    private static JoinResponse.Parent parentOf(User parent) {
+        return new JoinResponse.Parent(parent.id(), parent.displayName());
     }
 
     @GetMapping("/family")

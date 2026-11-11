@@ -48,6 +48,20 @@ class AccountService implements AccountDirectory {
         return new SignInResult(tokens.issue(user.id(), user.role()), user);
     }
 
+    User changeJoinApproval(UUID userId, boolean required) {
+        return tx.execute(status -> {
+            User user = users.findByIdForUpdate(userId)
+                    .orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
+            if (required) {
+                user.requireApprovalOfJoins();
+            } else {
+                user.allowDirectJoins();
+            }
+            users.saveJoinApproval(user);
+            return user;
+        });
+    }
+
     private GoogleIdentity verify(String idToken) {
         try {
             return google.verify(idToken);

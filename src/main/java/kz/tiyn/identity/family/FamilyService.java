@@ -18,6 +18,7 @@ class FamilyService {
     private final AccountDirectory accounts;
     private final LinkStore links;
     private final JoinAttemptStore joinAttempts;
+    private final JoinRequestStore joinRequests;
     private final TransactionTemplate tx;
     private final Clock clock;
 
@@ -25,22 +26,38 @@ class FamilyService {
             AccountDirectory accounts,
             LinkStore links,
             JoinAttemptStore joinAttempts,
+            JoinRequestStore joinRequests,
             TransactionTemplate tx,
             Clock clock) {
         this.accounts = accounts;
         this.links = links;
         this.joinAttempts = joinAttempts;
+        this.joinRequests = joinRequests;
         this.tx = tx;
         this.clock = clock;
     }
 
-    User join(UUID teenId, String rawCode) {
+    JoinOutcome join(UUID teenId, String rawCode) {
         User teen = accounts.requireUser(teenId);
         registerJoinAttempt(teenId);
         User parent = accounts.requireParentByJoinCode(rawCode);
-        ConflictRetry.run(() -> linkOnce(parent, teen), conflict());
+        JoinOutcome outcome = needsApproval(parent, teen) ? requestApproval(parent, teen) : link(parent, teen);
         clearJoinAttempts(teenId);
-        return parent;
+        return outcome;
+    }
+
+    private boolean needsApproval(User parent, User teen) {
+        return parent.joinApprovalRequired() && !links.existsActive(parent.id(), teen.id());
+    }
+
+    private JoinOutcome link(User parent, User teen) {
+        ConflictRetry.run(() -> linkOnce(parent, teen), conflict());
+        return new JoinOutcome.Linked(parent);
+    }
+
+    private JoinOutcome requestApproval(User parent, User teen) {
+        JoinRequest request = ConflictRetry.run(() -> requestOnce(parent, teen), conflict());
+        return new JoinOutcome.Pending(request.id(), parent);
     }
 
     private void registerJoinAttempt(UUID teenId) {
@@ -75,6 +92,15 @@ class FamilyService {
             links.save(link);
             return null;
         });
+    }
+
+    private JoinRequest requestOnce(User parent, User teen) {
+        return tx.execute(
+                status -> joinRequests.findPending(parent.id(), teen.id()).orElseGet(() -> {
+                    JoinRequest request = JoinRequest.submit(UUID.randomUUID(), parent, teen);
+                    joinRequests.insert(request);
+                    return request;
+                }));
     }
 
     private Void unlinkOnce(UUID parentId, UUID teenId) {

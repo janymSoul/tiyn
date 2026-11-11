@@ -58,4 +58,31 @@ class AccountDomainTests {
                             .isEqualTo(IdentityError.INVALID_DISPLAY_NAME));
         }
     }
+
+    @Test
+    void aParentCanRequireAndWaiveApprovalOfJoinsAndStartsWithoutIt() {
+        var parent = User.register(UUID.randomUUID(), "s1", Role.PARENT, "Aigul", new JoinCode("ABCDEF"));
+        assertThat(parent.joinApprovalRequired()).isFalse();
+
+        parent.requireApprovalOfJoins();
+        assertThat(parent.joinApprovalRequired()).isTrue();
+        parent.requireApprovalOfJoins();
+        assertThat(parent.joinApprovalRequired()).isTrue();
+
+        parent.allowDirectJoins();
+        assertThat(parent.joinApprovalRequired()).isFalse();
+    }
+
+    @Test
+    void aTeenCannotChangeJoinApproval() {
+        var teen = User.register(UUID.randomUUID(), "s2", Role.TEEN, "Dana", null);
+
+        assertThatThrownBy(teen::requireApprovalOfJoins)
+                .isInstanceOfSatisfying(
+                        IdentityException.class, e -> assertThat(e.error()).isEqualTo(IdentityError.FORBIDDEN));
+        assertThatThrownBy(teen::allowDirectJoins)
+                .isInstanceOfSatisfying(
+                        IdentityException.class, e -> assertThat(e.error()).isEqualTo(IdentityError.FORBIDDEN));
+        assertThat(teen.joinApprovalRequired()).isFalse();
+    }
 }

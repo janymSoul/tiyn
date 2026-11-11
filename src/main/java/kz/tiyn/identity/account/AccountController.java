@@ -1,5 +1,7 @@
 package kz.tiyn.identity.account;
 
+import jakarta.validation.Valid;
+import kz.tiyn.identity.account.dto.JoinApprovalRequest;
 import kz.tiyn.identity.account.dto.SignInRequest;
 import kz.tiyn.identity.account.dto.SignInResponse;
 import kz.tiyn.identity.account.dto.SignInResult;
@@ -9,6 +11,7 @@ import kz.tiyn.platform.security.Principal;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -31,5 +34,11 @@ class AccountController {
     @GetMapping("/me")
     UserResponse me(@AuthenticationPrincipal Principal principal) {
         return UserResponse.from(service.requireUser(principal.userId()));
+    }
+
+    @PutMapping("/me/join-approval")
+    UserResponse changeJoinApproval(
+            @AuthenticationPrincipal Principal principal, @Valid @RequestBody JoinApprovalRequest request) {
+        return UserResponse.from(service.changeJoinApproval(principal.userId(), request.required()));
     }
 }
