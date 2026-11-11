@@ -94,7 +94,7 @@ class GoalStore {
                         new GoalView(toGoal(r.into(SAVINGS_GOALS)), r.get(saved).longValueExact()));
     }
 
-    private static Field<BigDecimal> savedAmount() {
+    static Field<BigDecimal> savedAmount() {
         return DSL.field(DSL.select(DSL.coalesce(DSL.sum(LEDGER_ENTRIES.LOCKED_DELTA), BigDecimal.ZERO))
                 .from(LEDGER_ENTRIES)
                 .where(LEDGER_ENTRIES.REF_ID.eq(SAVINGS_GOALS.ID)));

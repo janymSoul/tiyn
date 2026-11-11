@@ -88,6 +88,7 @@ class UserStore {
         dsl.update(USERS)
                 .set(USERS.IDP_SUB, user.idpSub())
                 .set(USERS.JOIN_CODE, user.joinCode())
+                .set(USERS.JOIN_APPROVAL_REQUIRED, user.joinApprovalRequired())
                 .set(USERS.DISPLAY_NAME, user.displayName())
                 .set(USERS.DELETED_AT, Instants.toUtc(user.deletedAt()))
                 .where(USERS.ID.eq(user.id()))
@@ -95,7 +96,38 @@ class UserStore {
         raised.forEach(events::publishEvent);
     }
 
+    void saveJoinApproval(User user) {
+        dsl.update(USERS)
+                .set(USERS.JOIN_APPROVAL_REQUIRED, user.joinApprovalRequired())
+                .where(USERS.ID.eq(user.id()))
+                .execute();
+    }
+
+    void updateDisplayName(User user) {
+        dsl.update(USERS)
+                .set(USERS.DISPLAY_NAME, user.displayName())
+                .where(USERS.ID.eq(user.id()))
+                .execute();
+    }
+
+    void updateJoinCode(User user) {
+        try {
+            dsl.update(USERS)
+                    .set(USERS.JOIN_CODE, user.joinCode())
+                    .where(USERS.ID.eq(user.id()))
+                    .execute();
+        } catch (DuplicateKeyException e) {
+            throw new ConflictException(e);
+        }
+    }
+
     private static User toUser(UsersRecord r) {
-        return User.restore(r.getId(), r.getIdpSub(), Role.valueOf(r.getRole()), r.getJoinCode(), r.getDisplayName());
+        return User.restore(
+                r.getId(),
+                r.getIdpSub(),
+                Role.valueOf(r.getRole()),
+                r.getJoinCode(),
+                r.getDisplayName(),
+                r.getJoinApprovalRequired());
     }
 }
