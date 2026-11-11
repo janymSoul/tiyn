@@ -177,14 +177,14 @@ Header `Idempotency-Key` required.
 ```
 - `recurrence`: `DAILY` or `WEEKLY` (weekly repeats on `startsOn`'s weekday). `timezone` defaults to `Asia/Almaty`. `dueTime` is required. `startsOn` defaults to today in that zone and cannot be earlier.
 - Each occurrence becomes an ordinary task, created by a ticker; the first is created immediately when due.
-- Response: `{ id, teenId, title, description, rewardAmount, penaltyAmount, currency, recurrence, timezone, dueTime, startsOn, active }`.
+- Response: `{ id, teenId, title, description, rewardAmount, penaltyAmount, currency, recurrence, timezone, dueTime, startsOn, active, closed }`.
 - Errors: 403 `forbidden`, 422 `teen_required`, `invalid_schedule`, plus the title and reward errors above.
 
 ### `GET /task-series` (parent) → page of `SeriesResponse`
 
 The series the caller created, newest first by creation time, paginated (see [Pagination](#pagination)). Each item has the shape `POST /task-series` returns.
 - `?teenId=<uuid>`: only that teen's series. The teen must be linked to the caller right now, otherwise 403 `forbidden`.
-- `?active=true|false`: only running or only stopped series. Anything else is 400 `invalid_request`.
+- `?active=true|false`: only running or only stopped (paused or closed) series. Anything else is 400 `invalid_request`.
 - `?limit=` and `?cursor=` as described under Pagination.
 
 Without `teenId` the list also contains stopped series of teens who were unlinked since. Teens get 403 `forbidden`. Each task a series created carries its `seriesId`.
@@ -193,9 +193,25 @@ Without `teenId` the list also contains stopped series of teens who were unlinke
 
 One series. 404 `not_found` when the id is unknown or belongs to another parent; teens get 403 `forbidden`.
 
+### `PATCH /task-series/{id}` (parent) → `200` `SeriesResponse`
+
+Edits a series or pauses and resumes it. No `Idempotency-Key`: every field is an absolute value, so repeating a call is safe.
+
+```json
+{ "title": "…", "description": "…", "rewardAmount": 60000, "penaltyAmount": 0,
+  "dueTime": "19:00:00", "timezone": "Asia/Almaty", "active": false }
+```
+- Every field is optional. An absent or `null` field is left unchanged; send `"description": ""` to clear the description. An empty body `{}` changes nothing and returns the series.
+- `active: false` pauses, `active: true` resumes. Pausing a paused series, or resuming a running one, is a no-op. A series can be edited and paused in one call.
+- Changes apply to **future occurrences only**. Tasks already created keep their values, including today's occurrence if the ticker has already created it. A paused series creates nothing. **Resuming does not backfill**: days skipped while paused stay skipped, and the next tick creates only the current day's occurrence, and only while its due time is still ahead.
+- `recurrence`, `startsOn`, `teenId` and `currency` cannot be changed; sending them is 400 `invalid_body`. To change them, close the series and create a new one.
+- Values are validated exactly as on `POST /task-series`: the title, description, reward and penalty rules, and `invalid_schedule` for an unknown `timezone` (a blank one means the default `Asia/Almaty`). A rejected call changes nothing. A pause-only call skips the content rules, so a series can always be paused.
+- `SeriesResponse` now also carries `closed` (`true` after `DELETE` or an unlink). A paused series is `active: false, closed: false`.
+- Errors: 400 `invalid_body` (unreadable body, unknown field, bad time), 403 `forbidden` (teen, another parent's series, or a parent no longer linked to the teen), 404 `not_found`, 409 `invalid_transition` (the series is closed), 409 `concurrent_modification` (lost a race five times in a row; reload and retry), 422 `invalid_schedule`, `invalid_title`, `invalid_reward`, `invalid_penalty`.
+
 ### `DELETE /task-series/{id}` (parent) → `204`
 
-Stops new occurrences; existing tasks stay. 404 `not_found`.
+Closes the series for good: stops new occurrences, existing tasks stay, and it cannot be resumed or edited afterwards. Repeatable. 404 `not_found`, 403 `forbidden` for another parent's series.
 
 ## Wallet (teen)
 
