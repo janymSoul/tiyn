@@ -424,6 +424,8 @@ Teen:
   "consistency": "Each section is read in its own read-only snapshot; sections are not one global snapshot.",
   "profile": { "id": "…", "role": "TEEN", "displayName": "Dana", "createdAt": "…" },
   "familyLinks": [ { "id": "…", "displayName": "Aigul", "linkedAt": "…", "removedAt": null } ],
+  "joinRequests": [ { "id": "…", "parentId": "…", "parentDisplayName": "Aigul", "state": "PENDING",
+                      "createdAt": "…", "decidedAt": null } ],
   "tasks": [ {
     "id": "…", "parentId": "…", "teenId": "…", "milestoneId": null, "seriesId": null, "occurrenceDate": null,
     "kind": "TASK", "title": "…", "description": "…", "rewardAmount": 100000, "penaltyAmount": 0, "currency": "KZT",
@@ -442,12 +444,13 @@ Teen:
 }
 ```
 
-Parent: `profile` (with `joinCode`), `familyLinks`, `tasks` (the tasks they created, without `proofs`: a proof is the teen's data), `taskSeries` (`id`, `teenId`, `kind`, `title`, `description`, `rewardAmount`, `penaltyAmount`, `currency`, `recurrence`, `timezone`, `dueTime`, `startsOn`, `active`, `createdAt`) and `payouts` addressed to them. A parent has no wallet, ledger entries or goals, so those keys are absent. A user with no data gets the same shape with empty arrays (a teen's `wallet` reads as zeros, like `GET /balance`).
+Parent: `profile` (with `joinCode` and `joinApproval`, the setting of [approval of joins](#put-mejoin-approval-parent)), `familyLinks`, `joinRequests` (the requests addressed to them: `id`, `teenId`, `teenDisplayName`, `state`, `createdAt`, `decidedAt`), `tasks` (the tasks they created, without `proofs`: a proof is the teen's data), `taskSeries` (`id`, `teenId`, `kind`, `title`, `description`, `rewardAmount`, `penaltyAmount`, `currency`, `recurrence`, `timezone`, `dueTime`, `startsOn`, `active`, `createdAt`) and `payouts` addressed to them. A parent has no wallet, ledger entries or goals, so those keys are absent. A user with no data gets the same shape with empty arrays (a teen's `wallet` reads as zeros, like `GET /balance`).
 
 What is in it and what is deliberately not:
 - `familyLinks` lists every link ever made, including removed ones (`removedAt` set). The other person appears only as `id` and `displayName`.
+- `joinRequests` lists every join request the caller made (teen: `parentId`, `parentDisplayName`) or received (parent: `teenId`, `teenDisplayName`), pending and decided (`APPROVED`, `DECLINED`, `WITHDRAWN`), newest first. The other person appears only as id and display name; `decidedAt` is omitted while the request is pending. `joinApproval` is in the parent's `profile` and absent for a teen.
 - A proof with an image carries `hasImage` and `imageUrl`, a short-lived presigned URL (`S3_VIEW_URL_TTL`, default 10 minutes, valid for anyone who holds it). The image bytes and the storage object key are not in the document; download the image from the URL right away or export again after the window.
-- Never included: the Google subject (`idp_sub`), session tokens or any JWT data, device push tokens, join-attempt counters, idempotency keys, and any other user's data beyond the counterpart's `id` and `displayName`. No email is stored, so none is exported. Join requests, parent settings and refresh tokens do not exist in this API yet; when they are added their module extends its own slice of this document and keeps secrets out.
+- Never included: the Google subject (`idp_sub`), session tokens or any JWT data, device push tokens, refresh tokens (their hashes, session families and expiry), join-attempt counters, idempotency keys, and any other user's data beyond the counterpart's `id` and `displayName`. No email is stored, so none is exported. A module that stores more personal data extends its own slice of this document and keeps secrets out.
 
 Errors: 401 `unauthenticated`, 429 `export_rate_limited`.
 

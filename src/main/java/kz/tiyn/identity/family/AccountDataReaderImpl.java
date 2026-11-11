@@ -1,12 +1,14 @@
 package kz.tiyn.identity.family;
 
 import static kz.tiyn.platform.jooq.identity.Tables.FAMILY_LINKS;
+import static kz.tiyn.platform.jooq.identity.Tables.JOIN_REQUESTS;
 import static kz.tiyn.platform.jooq.identity.Tables.USERS;
 
 import java.util.List;
 import java.util.UUID;
 import kz.tiyn.identity.AccountDataReader;
 import kz.tiyn.identity.family.dto.FamilyLinkExport;
+import kz.tiyn.identity.family.dto.JoinRequestExport;
 import kz.tiyn.identity.family.dto.ProfileExport;
 import kz.tiyn.platform.export.ExportProperties;
 import kz.tiyn.platform.export.ExportWriter;
@@ -35,11 +37,19 @@ class AccountDataReaderImpl implements AccountDataReader {
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public void writeTo(UUID userId, Role role, ExportWriter out) {
         out.field("profile", profile(userId));
-        out.array("familyLinks", items -> scanLinks(Side.of(userId, role), items));
+        Side side = Side.of(userId, role);
+        out.array("familyLinks", items -> scanLinks(side, items));
+        out.array("joinRequests", items -> scanJoinRequests(userId, role, items));
     }
 
     private ProfileExport profile(UUID userId) {
-        return dsl.select(USERS.ID, USERS.ROLE, USERS.DISPLAY_NAME, USERS.CREATED_AT, USERS.JOIN_CODE)
+        return dsl.select(
+                        USERS.ID,
+                        USERS.ROLE,
+                        USERS.DISPLAY_NAME,
+                        USERS.CREATED_AT,
+                        USERS.JOIN_CODE,
+                        USERS.JOIN_APPROVAL_REQUIRED)
                 .from(USERS)
                 .where(USERS.ID.eq(userId))
                 .fetchOptional(r -> new ProfileExport(
@@ -47,7 +57,8 @@ class AccountDataReaderImpl implements AccountDataReader {
                         r.get(USERS.ROLE),
                         r.get(USERS.DISPLAY_NAME),
                         Instants.fromUtc(r.get(USERS.CREATED_AT)),
-                        r.get(USERS.JOIN_CODE)))
+                        r.get(USERS.JOIN_CODE),
+                        Role.PARENT.name().equals(r.get(USERS.ROLE)) ? r.get(USERS.JOIN_APPROVAL_REQUIRED) : null))
                 .orElse(null);
     }
 
@@ -73,6 +84,43 @@ class AccountDataReaderImpl implements AccountDataReader {
                 r.get(USERS.DISPLAY_NAME),
                 Instants.fromUtc(r.get(FAMILY_LINKS.CREATED_AT)),
                 Instants.fromUtc(r.get(FAMILY_LINKS.REMOVED_AT))));
+    }
+
+    private void scanJoinRequests(UUID userId, Role role, ExportWriter.Items items) {
+        scan.scan(
+                (after, limit) -> joinRequestsAfter(userId, role, after, limit),
+                request -> new Position(request.createdAt(), request.id()),
+                page -> page.forEach(items::add));
+    }
+
+    private List<JoinRequestExport> joinRequestsAfter(UUID userId, Role role, Position after, int limit) {
+        boolean parent = role == Role.PARENT;
+        var self = parent ? JOIN_REQUESTS.PARENT_ID : JOIN_REQUESTS.TEEN_ID;
+        var other = parent ? JOIN_REQUESTS.TEEN_ID : JOIN_REQUESTS.PARENT_ID;
+        var ordered = dsl.select(
+                        JOIN_REQUESTS.ID,
+                        USERS.ID,
+                        USERS.DISPLAY_NAME,
+                        JOIN_REQUESTS.STATE,
+                        JOIN_REQUESTS.CREATED_AT,
+                        JOIN_REQUESTS.DECIDED_AT)
+                .from(JOIN_REQUESTS)
+                .join(USERS)
+                .on(USERS.ID.eq(other))
+                .where(self.eq(userId))
+                .orderBy(JOIN_REQUESTS.CREATED_AT.desc(), JOIN_REQUESTS.ID.desc());
+        var seeked = after == null
+                ? ordered.limit(limit)
+                : ordered.seek(Instants.toUtc(after.sortKey()), after.id()).limit(limit);
+        return seeked.fetch(r -> new JoinRequestExport(
+                r.get(JOIN_REQUESTS.ID),
+                parent ? null : r.get(USERS.ID),
+                parent ? null : r.get(USERS.DISPLAY_NAME),
+                parent ? r.get(USERS.ID) : null,
+                parent ? r.get(USERS.DISPLAY_NAME) : null,
+                r.get(JOIN_REQUESTS.STATE),
+                Instants.fromUtc(r.get(JOIN_REQUESTS.CREATED_AT)),
+                Instants.fromUtc(r.get(JOIN_REQUESTS.DECIDED_AT))));
     }
 
     private record Side(UUID userId, Field<UUID> self, Field<UUID> other) {

@@ -50,7 +50,14 @@ class PersonalDataExportTests {
             "attempts",
             "windowStartedAt",
             "password",
-            "secret");
+            "secret",
+            "tokenHash",
+            "refreshTokens",
+            "familyId",
+            "usedAt",
+            "revokedAt",
+            "expiresAt",
+            "joinAttempts");
 
     private record Export(String raw, JsonNode root, MockHttpServletResponse response) {}
 
@@ -96,6 +103,10 @@ class PersonalDataExportTests {
 
     private void assertNoSecrets(Export export) {
         assertThat(fieldNames(export.root())).doesNotContainAnyElementsOf(FORBIDDEN_KEYS);
+        assertThat(fieldNames(export.root()))
+                .noneMatch(name -> name.toLowerCase().contains("token")
+                        || name.toLowerCase().contains("hash")
+                        || name.toLowerCase().contains("attempts"));
         assertThat(export.raw()).doesNotContain("Bearer ").doesNotContain("sub-");
     }
 
