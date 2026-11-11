@@ -174,6 +174,7 @@ class ProfileEditTests {
     @Test
     void aTokenOfAUserThatNoLongerExistsIsUnauthenticated() throws Exception {
         JsonNode teen = signIn("TEEN", "Dana");
+        jdbc.update("DELETE FROM identity.refresh_tokens WHERE user_id = ?", id(teen));
         jdbc.update("DELETE FROM identity.users WHERE id = ?", id(teen));
 
         patch("{\"displayName\":\"Ghost\"}", bearer(teen))

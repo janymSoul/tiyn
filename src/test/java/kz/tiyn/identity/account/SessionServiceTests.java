@@ -37,7 +37,7 @@ class SessionServiceTests {
     private final JwtProperties properties =
             new JwtProperties("0123456789abcdef0123456789abcdef", Duration.ofHours(1), REFRESH_TTL);
     private final SecureRandom random = new SecureRandom();
-    private final User user = User.restore(UUID.randomUUID(), "sub", Role.TEEN, null, "Dana");
+    private final User user = User.restore(UUID.randomUUID(), "sub", Role.TEEN, null, "Dana", false);
 
     private SessionService serviceAt(Instant now) {
         when(tx.execute(any()))
