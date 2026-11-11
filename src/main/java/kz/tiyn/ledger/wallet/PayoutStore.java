@@ -108,6 +108,12 @@ class PayoutStore {
                 .where(PAYOUTS.TEEN_ID.eq(teenId).and(PAYOUTS.STATE.eq(PayoutState.REQUESTED.name()))));
     }
 
+    boolean hasOpenAddressedTo(UUID parentId) {
+        return dsl.fetchExists(dsl.selectOne()
+                .from(PAYOUTS)
+                .where(PAYOUTS.PARENT_ID.eq(parentId).and(PAYOUTS.STATE.eq(PayoutState.REQUESTED.name()))));
+    }
+
     Optional<Payout> findOpenForTeen(UUID teenId) {
         return dsl.selectFrom(PAYOUTS)
                 .where(PAYOUTS.TEEN_ID.eq(teenId))

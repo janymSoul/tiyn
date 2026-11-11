@@ -37,6 +37,9 @@ class SecurityConfig {
     private static final OAuth2Error INVALID_CLAIMS =
             new OAuth2Error("invalid_token", "subject or role claim is invalid", null);
 
+    private static final OAuth2Error DELETED_ACCOUNT =
+            new OAuth2Error("invalid_token", "the account no longer exists", null);
+
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper json) throws Exception {
         AuthenticationEntryPoint unauthenticated =
@@ -44,12 +47,13 @@ class SecurityConfig {
         AccessDeniedHandler forbidden = (req, res, e) -> write(json, res, HttpStatus.FORBIDDEN, "forbidden");
         return http.csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(a -> a.requestMatchers(HttpMethod.POST, "/auth/google")
-                        .permitAll()
-                        .requestMatchers("/actuator/health/**")
-                        .permitAll()
-                        .anyRequest()
-                        .authenticated())
+                .authorizeHttpRequests(
+                        a -> a.requestMatchers(HttpMethod.POST, "/auth/google", "/auth/refresh", "/auth/logout")
+                                .permitAll()
+                                .requestMatchers("/actuator/health/**")
+                                .permitAll()
+                                .anyRequest()
+                                .authenticated())
                 .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(principalConverter()))
                         .authenticationEntryPoint(unauthenticated)
                         .accessDeniedHandler(forbidden))
@@ -59,7 +63,7 @@ class SecurityConfig {
     }
 
     @Bean
-    JwtDecoder jwtDecoder(JwtProperties properties) {
+    JwtDecoder jwtDecoder(JwtProperties properties, DeletedAccounts deletedAccounts) {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(properties.signingKey())
                 .macAlgorithm(MacAlgorithm.HS256)
                 .build();
@@ -67,7 +71,8 @@ class SecurityConfig {
                 new JwtTimestampValidator(),
                 new JwtIssuerValidator(JwtProperties.ISSUER),
                 requiredExpiry(),
-                subjectAndRole()));
+                subjectAndRole(),
+                accountNotDeleted(deletedAccounts)));
         return decoder;
     }
 
@@ -99,6 +104,22 @@ class SecurityConfig {
                 return OAuth2TokenValidatorResult.success();
             } catch (IllegalArgumentException e) {
                 return OAuth2TokenValidatorResult.failure(INVALID_CLAIMS);
+            }
+        };
+    }
+
+    private OAuth2TokenValidator<Jwt> accountNotDeleted(DeletedAccounts deletedAccounts) {
+        return jwt -> {
+            String subject = jwt.getSubject();
+            if (subject == null) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            try {
+                return deletedAccounts.isDeleted(UUID.fromString(subject))
+                        ? OAuth2TokenValidatorResult.failure(DELETED_ACCOUNT)
+                        : OAuth2TokenValidatorResult.success();
+            } catch (IllegalArgumentException e) {
+                return OAuth2TokenValidatorResult.success();
             }
         };
     }

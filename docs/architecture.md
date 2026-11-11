@@ -51,6 +51,7 @@ kz.tiyn.identity/
   FamilyDirectory.java       # public API for other modules
   FamilyLinked.java          # public event
   FamilyUnlinked.java        # public event
+  JoinRequested.java         # public event
   account/                   # feature: users, sign-in, join codes
     AccountService, UserStore, User, JoinCode, AccountController, AccountConfig
                              #   logic classes stay together, package-private (User is public)
@@ -59,7 +60,8 @@ kz.tiyn.identity/
     error/                   #   IdentityError, IdentityException, IdentityExceptionHandler
   family/                    # feature: parent-teen links
     FamilyLink, LinkStore, FamilyService, FamilyController, FamilyDirectoryImpl
-    dto/                     #   JoinRequest, JoinResponse
+    JoinRequest, JoinRequestStore, JoinRequestService, JoinRequestController
+    dto/                     #   JoinCodeRequest, JoinResponse, JoinPendingResponse
   google/                    # anti-corruption layer for an external system
     GoogleVerifier           #   public interface; JwksGoogleVerifier is package-private
 ```
@@ -68,7 +70,7 @@ kz.tiyn.identity/
 
 A module with a single feature may keep everything in its root package, with only the API types `public`. Introduce feature packages when a module grows two or more aggregates with their own endpoints. Dependencies between features of one module are not checked by Modulith, so keep them acyclic by review.
 
-`kz.tiyn.platform` is the shared kernel, declared an **open** module: JSON error mapping, JWT verification and issuing, `Principal`/`Role`, the ticker scheduler, the `Clock`. It owns no business data and must never depend on a business module.
+`kz.tiyn.platform` is the shared kernel, declared an **open** module: JSON error mapping, JWT verification and issuing, `Principal`/`Role`, the ticker scheduler, the `Clock`. It owns no business data and must never depend on a business module. The composing modules `dashboard` and `privacy` own no tables either; they only call the read contracts other modules publish in their root packages.
 
 ## Technology choices
 
@@ -81,7 +83,7 @@ A module with a single feature may keep everything in its root package, with onl
 | Migrations | Flyway | One ordered history (`V1`…`Vn`) under `src/main/resources/db/migration`, one Postgres schema per module. The same files drive jOOQ code generation. |
 | Events | Spring application events + Modulith event publication registry (JDBC) | Events are persisted in the publishing transaction and delivered to `@ApplicationModuleListener`s asynchronously, at-least-once. |
 | Validation | Bean Validation at the edge where a generic error is enough; domain factories for rules with a specific error code | Domain invariants are re-checked in the aggregate. |
-| Auth | Spring Security resource server, HS256 JWT | Verification in platform; issuing by `AccessTokenIssuer`; Google ID tokens verified with Spring's `NimbusJwtDecoder` against Google's JWKS. |
+| Auth | Spring Security resource server, HS256 JWT | Verification in platform; issuing by `AccessTokenIssuer`; opaque single-use refresh tokens (hash only in `identity.refresh_tokens`) rotate the session; Google ID tokens verified with Spring's `NimbusJwtDecoder` against Google's JWKS. |
 | Object storage | AWS SDK v2 (S3) | Backend stores proof images (validated, EXIF-stripped) and issues pre-signed GET URLs for review. |
 | Push | Firebase Admin SDK (FCM) | Notification module only; APNs bridged by FCM. |
 | Scheduling | Spring `SchedulingConfigurer` + ShedLock (JDBC) | One fixed-delay task and one lock per ticker, so one replica runs each ticker per interval; see `docs/modules.md`, "Time-driven work". |

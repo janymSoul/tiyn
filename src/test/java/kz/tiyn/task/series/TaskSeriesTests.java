@@ -112,4 +112,115 @@ class TaskSeriesTests {
                             TaskException.class, e -> assertThat(e.error()).isEqualTo(TaskError.INVALID_SCHEDULE));
         }
     }
+
+    private static void assertFails(Runnable action, TaskError expected) {
+        assertThatThrownBy(action::run).isInstanceOfSatisfying(TaskException.class, e -> assertThat(e.error())
+                .isEqualTo(expected));
+    }
+
+    @Test
+    void aPausedSeriesCreatesNothingAndResumingDoesNotBackfillMissedDays() {
+        TaskSeries daily = series("DAILY", START);
+
+        daily.pause(PARENT);
+        daily.pause(PARENT);
+        assertThat(daily.isActive()).isFalse();
+        assertThat(daily.isClosed()).isFalse();
+        assertThat(daily.dueOccurrence(at(START.plusDays(1), "09:00"))).isEmpty();
+
+        daily.resume(PARENT);
+        daily.resume(PARENT);
+        assertThat(daily.isActive()).isTrue();
+        assertThat(daily.dueOccurrence(at(START.plusDays(4), "09:00"))
+                        .orElseThrow()
+                        .date())
+                .isEqualTo(START.plusDays(4));
+    }
+
+    @Test
+    void aClosedSeriesCanNeitherBeResumedPausedNorAmended() {
+        TaskSeries daily = series("DAILY", START);
+        daily.close(PARENT);
+
+        assertThat(daily.isClosed()).isTrue();
+        assertFails(() -> daily.resume(PARENT), TaskError.INVALID_TRANSITION);
+        assertFails(() -> daily.pause(PARENT), TaskError.INVALID_TRANSITION);
+        assertFails(
+                () -> daily.amend(PARENT, new SeriesChanges("New", null, null, null, null, null)),
+                TaskError.INVALID_TRANSITION);
+        assertThat(daily.isActive()).isFalse();
+    }
+
+    @Test
+    void onlyTheOwnerCanPauseResumeOrAmend() {
+        TaskSeries daily = series("DAILY", START);
+        UUID stranger = UUID.randomUUID();
+
+        assertFails(() -> daily.pause(stranger), TaskError.FORBIDDEN);
+        assertFails(() -> daily.resume(stranger), TaskError.FORBIDDEN);
+        assertFails(
+                () -> daily.amend(stranger, new SeriesChanges("New", null, null, null, null, null)),
+                TaskError.FORBIDDEN);
+        assertThat(daily.title()).isEqualTo("Walk dog");
+    }
+
+    @Test
+    void amendingChangesOnlyTheGivenFieldsAndShapesFutureOccurrences() {
+        TaskSeries daily = series("DAILY", START);
+
+        daily.amend(PARENT, new SeriesChanges(" Feed cat ", null, 250L, null, LocalTime.of(20, 30), null));
+
+        var occurrence = daily.dueOccurrence(at(START.plusDays(1), "09:00")).orElseThrow();
+        assertThat(occurrence.title()).isEqualTo("Feed cat");
+        assertThat(occurrence.rewardAmount()).isEqualTo(250);
+        assertThat(occurrence.penaltyAmount()).isZero();
+        assertThat(occurrence.deadlineAt()).isEqualTo(at(START.plusDays(1), "20:30"));
+        assertThat(daily.recurrence()).isEqualTo(Recurrence.DAILY);
+        assertThat(daily.startsOn()).isEqualTo(START);
+    }
+
+    @Test
+    void anEmptyAmendmentChangesNothing() {
+        TaskSeries daily = series("DAILY", START);
+
+        daily.amend(PARENT, new SeriesChanges(null, null, null, null, null, null));
+
+        assertThat(daily.title()).isEqualTo("Walk dog");
+        assertThat(daily.dueTime()).isEqualTo(LocalTime.of(18, 0));
+        assertThat(daily.zone()).isEqualTo(ALMATY);
+    }
+
+    @Test
+    void changingTheTimezoneMovesTheDeadlineAndRejectsUnknownZonesWithoutPartialChange() {
+        TaskSeries daily = series("DAILY", START);
+
+        assertFails(
+                () -> daily.amend(PARENT, new SeriesChanges("Changed", null, null, null, null, "Mars/Base")),
+                TaskError.INVALID_SCHEDULE);
+        assertThat(daily.title()).isEqualTo("Walk dog");
+
+        daily.amend(PARENT, new SeriesChanges(null, null, null, null, null, "Asia/Tashkent"));
+
+        assertThat(daily.zone()).isEqualTo(ZoneId.of("Asia/Tashkent"));
+    }
+
+    @Test
+    void aBlankTimezoneFallsBackToTheDefaultLikeCreation() {
+        TaskSeries daily = series("DAILY", START);
+        daily.amend(PARENT, new SeriesChanges(null, null, null, null, null, "Asia/Tashkent"));
+
+        daily.amend(PARENT, new SeriesChanges(null, null, null, null, null, " "));
+
+        assertThat(daily.zone()).isEqualTo(ALMATY);
+    }
+
+    @Test
+    void anEmptyDescriptionClearsIt() {
+        var draft = new NewSeries(TEEN, "Walk dog", "Twice", 100, 0, "KZT", "DAILY", null, LocalTime.of(18, 0), START);
+        TaskSeries withDescription = TaskSeries.create(UUID.randomUUID(), PARENT, draft, at(START, "08:00"));
+
+        withDescription.amend(PARENT, new SeriesChanges(null, "", null, null, null, null));
+
+        assertThat(withDescription.description()).isEmpty();
+    }
 }

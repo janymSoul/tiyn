@@ -32,6 +32,7 @@ We apply Domain-Driven Design pragmatically: strategic DDD everywhere (bounded c
 | Context | Aggregate (root) | Contains | Invariants it protects | Concurrency |
 |---|---|---|---|---|
 | identity | `User` | join code | one Google subject, one user; a parent has one join code | unique constraints |
+| identity | `JoinRequest` | request id, parent id, teen id, state | a request moves from `PENDING` to exactly one of `APPROVED`, `DECLINED` or `WITHDRAWN`; only its parent decides and only its teen withdraws; repeating the decision already taken is a no-op, any other decision on a closed request is refused | state check plus a unique partial index on pending `(teen, parent)` |
 | identity | `FamilyLink` | parent id, teen id, removed flag | a parent and a teen are linked at most once; a link joins a `PARENT` to a `TEEN`; first link, relink and no-op are decided inside the aggregate, which also records its own events | primary key |
 | task | `Task` | proofs | legal state transitions; tasks in a milestone are one-time and for the same teen | version column |
 | task | `TaskSeries` | recurrence rule | one occurrence per period | unique `(series, date)` |
@@ -47,7 +48,8 @@ The wallet aggregate is deliberately large: "available funds = balance − locke
 | Term | Meaning |
 |---|---|
 | Parent / Teen | The two roles. A parent funds and approves; a teen earns. |
-| Join code | A parent's permanent code a teen enters to link to that parent. |
+| Join code | A parent's code a teen enters to link to that parent. It stays the same until the parent regenerates it. |
+| Join request | A teen's pending ask to link to a parent who requires approval; the parent approves or declines it, the teen may withdraw it. |
 | Link | The relation between one parent and one teen. |
 | Task | A piece of work with a reward and a deadline. |
 | Milestone | A task of kind milestone; larger goal with its own proof and reward. A task may belong to one. |
@@ -74,41 +76,66 @@ The wallet aggregate is deliberately large: "available funds = balance − locke
 
 **Authentication.** Sign-in with Google. The client obtains a Google ID token and sends it to the backend; identity verifies it and issues the app's own JWT. Google is only the proof of identity, so the provider can be swapped or extended (e.g. Apple) without touching other modules. Parents and teens both register by signing in; the role (`PARENT` or `TEEN`) is chosen at first sign-in and an account has exactly one role for life. Signing in again ignores any role in the request and returns the existing account. `GoogleVerifier` is the anti-corruption layer: the real implementation validates the ID token with Spring Security's `NimbusJwtDecoder` against Google's published keys (issuer, expiry and an audience from `GOOGLE_CLIENT_IDS`, one per platform), and tests use a fake. A malformed or invalid token is 401 `invalid_identity`; an unreachable key set is 503 `identity_provider_unavailable`, logged, so an outage is not mistaken for a bad credential. The application refuses to start when `GOOGLE_CLIENT_IDS` is empty. No email is stored; the display name comes from the request or the Google profile.
 
-**Session token.** After a successful sign-in the backend issues its own JWT: HS256, signed with `JWT_SECRET` (at least 32 bytes), issuer `tiyn`, subject = user id, a `role` claim, valid for `JWT_TTL` (default 7 days). Verification pins the algorithm, requires an expiry, the issuer and a known role, so `alg: none` and other-algorithm tokens are rejected. There is no refresh token: when it expires the client signs in with Google again. The token only proves identity; every parent-to-teen action still checks `areLinked` in the database. Tokens are issued by `platform.security.AccessTokenIssuer` and verified in `platform.security.SecurityConfig` with the same key, so the claim format (`iss`, `sub`, `role`, `iat`, `exp`) lives in one place. `users.idp_sub` holds the identity provider's subject and is provider-neutral. Moving to an identity provider such as Keycloak later changes `GoogleVerifier`, the issuer, the claim converter and the sign-in route; no other module notices, because they only see `Principal(userId, role)`.
+**Profile edit.** `User` has one user-editable field, the display name, changed only through `User.rename`; role, join code and the provider subject have no mutator. The name is shown to linked family members, so the value object `DisplayName` is the single place that normalises it for both registration and `PATCH /me`: it removes control, format (zero-width, byte-order mark) and bidi override/isolate characters and lone surrogates, turns every whitespace run into one space, trims, and then checks the 1–100 length. `AccountService.updateProfile` is one transaction that loads the user row `FOR UPDATE`, renames and updates it; the lock serialises concurrent edits (the `users` table has no version column, and a rename is a plain overwrite where the last commit wins). No event is published: no other module stores the name, and identity serves it live in `GET /family` and the join response. The notification language is not part of the account: it lives with the device in `PUT /devices`.
 
-**Linking.** Every parent has a permanent **join code** (6 characters, PRD PAR-01) stored on their user row. It uses an alphabet without look-alike characters (no `0/O`, `1/I`) and is generated with a retry on collision. A teen who has signed in enters the parent's code and identity creates the `family_links` row immediately and publishes `FamilyLinked`; entering a code a second time is a no-op. Codes are matched case-insensitively and ignoring surrounding spaces. One code can link any number of children, and a teen can enter a second parent's code. The parent can remove a link later. Code attempts are limited per teen account (5 attempts per 15 minutes, counted in `identity.join_attempts`; further attempts answer 429 `join_rate_limited`, even with a correct code) and failures never reveal whether a code exists. Accepted risk: the code is permanent and reusable, so anyone who learns it can link to that parent. Parent confirmation of each join (a pending-request step) is deliberately deferred; it would add an identity-owned `join_requests` table without changing other modules.
+**Session token.** After a successful sign-in the backend issues its own JWT: HS256, signed with `JWT_SECRET` (at least 32 bytes), issuer `tiyn`, subject = user id, a `role` claim, valid for `JWT_TTL` (default 7 days). Verification pins the algorithm, requires an expiry, the issuer and a known role, so `alg: none` and other-algorithm tokens are rejected. The token only proves identity; every parent-to-teen action still checks `areLinked` in the database. Tokens are issued by `platform.security.AccessTokenIssuer` and verified in `platform.security.SecurityConfig` with the same key, so the claim format (`iss`, `sub`, `role`, `iat`, `exp`) lives in one place. `users.idp_sub` holds the identity provider's subject and is provider-neutral. Moving to an identity provider such as Keycloak later changes `GoogleVerifier`, the issuer, the claim converter and the sign-in route; no other module notices, because they only see `Principal(userId, role)`.
+
+**Linking.** Every parent has a **join code** (6 characters, PRD PAR-01) stored on their user row. It uses an alphabet without look-alike characters (no `0/O`, `1/I`) and is generated with a retry on collision. It stays the same until the parent regenerates it (`POST /me/join-code/regenerate`): the service locks the parent's row, draws a new code with the same generator and writes it in one transaction, so the old code is unknown from the commit on and the family links are not touched. Join requests already pending are keyed by the parent, not by the code, so they survive a regenerate and stay decidable. A teen who has signed in enters the parent's code and identity creates the `family_links` row immediately and publishes `FamilyLinked`; entering a code a second time is a no-op. Codes are matched case-insensitively and ignoring surrounding spaces. One code can link any number of children, and a teen can enter a second parent's code. The parent can remove a link later. Code attempts are limited per teen account (5 attempts per 15 minutes, counted in `identity.join_attempts`; further attempts answer 429 `join_rate_limited`, even with a correct code) and failures never reveal whether a code exists. The code is reusable until the parent regenerates it, so anyone who learns it can link to that parent in the meantime. A parent who wants to vet each join turns on **join approval** (`users.join_approval_required`, default off, changed with `PUT /me/join-approval`). With it on, a teen who enters the code and is not yet linked to that parent gets a **join request** (`identity.join_requests`) instead of a link: `JoinRequest` is a small FSM (`PENDING` → `APPROVED` | `DECLINED` | `WITHDRAWN`) that records `JoinRequested`. The teen asking again while a request is pending gets the same request back (unique partial index on pending `(teen_id, parent_id)`). Approving locks the request row, then the link row, creates the link exactly as an immediate join does (`FamilyLink.link()`, so `FamilyLinked` is published once) and closes the request in one transaction; replaying an approval finds the request already `APPROVED` and does not touch the link, so it cannot re-link a teen the parent removed later. With approval off the behaviour is unchanged: the link is created at once. The setting is read from the parent loaded by the code lookup, so a join racing the toggle is decided by whichever value it saw; either outcome is valid and a pending request stays decidable after approval is switched off.
 
 **Offers (sync interface):**
 ```java
 public interface FamilyDirectory {
 
     boolean areLinked(UUID parentId, UUID teenId);
+
+    Set<UUID> linkedTeenIds(UUID parentId);
+
+    List<LinkedTeen> linkedTeens(UUID parentId);
 }
 ```
 Links are soft-deleted (`removed_at`). `areLinked` and every other lookup must ignore removed links; re-linking a removed pair clears `removed_at` on the existing row and increments its `generation`, which is part of the event key so that a relink produces a new event.
 Other modules depend on `FamilyDirectory` to authorize parent→teen actions (e.g. the task module checks a parent may approve a given teen's task). `linkedTeenIds(parentId)` returns the parent's active links so a paged list can apply the link check inside its own SQL query instead of filtering a page afterwards. Token verification is not part of identity's API: the `platform` module verifies bearer tokens and hands controllers a `Principal(userId, role)`.
 
-**Concurrency.** Registration, join-code allocation and linking can race. Every unique-rule violation (same Google subject, same join code, same link) is reported by the store as one `ConflictException`, and the service retries the whole transaction up to five times; if it still conflicts the caller gets 409 `conflict`. The recovery is the same in all three cases (the retry finds the winner's row, or draws a fresh code), so nothing depends on Postgres-generated constraint names. The transaction is opened per attempt with a `TransactionTemplate`, because a unique violation aborts the Postgres transaction and a retry needs a fresh one.
+**Account deletion.** `DELETE /me` anonymises the user in one transaction (`User.delete`, a pure transition): the display name becomes `Deleted user`, `idp_sub` becomes the tombstone `deleted:{userId}` (so the same Google account registers again as a new user and the unique key holds), the join code is cleared and `users.deleted_at` is set. The row is kept because other modules reference the id and the ledger is append-only. The service locks the user row `FOR UPDATE`, asks the ledger whether an open payout blocks deletion (409 `account_has_open_payout`; a teen's own open payout, or an open payout addressed to a parent), settles the user's pending join requests through the aggregate transitions (a deleted teen's become `WITHDRAWN`, those addressed to a deleted parent become `DECLINED`; decided requests stay as history) and removes the user's `join_attempts` row, unlinks every active link through the same `FamilyLink.unlink` transition as `DELETE /links/{teenId}` (one `FamilyUnlinked` each, so tasks, series and payouts are cleaned up by the existing listeners), deletes every refresh token of the user so no session can be refreshed, and finally publishes `AccountDeleted`. The `join_approval_required` flag is reset together with the join code, which makes a deleted parent's code dead (422 `invalid_join_code`). Deleted users are invisible: `findById`, `findByIdpSub`, the join-code lookup, refresh rotation and `GET /family` filter on `deleted_at IS NULL`, and `platform.security.DeletedAccounts` (implemented by identity) makes the JWT decoder reject the token of a deleted account with 401 on every endpoint, at the cost of one primary-key lookup per authenticated request. Joining takes `FOR SHARE` on both user rows, so a join cannot link a user whose deletion is in flight. Remaining balance is forfeited and stays in the ledger unreachable.
+
+**Concurrency.** Registration, join-code allocation and regeneration, and linking can race. Concurrent regenerations by one parent queue on the user row lock, so the last commit wins and exactly one code stays valid. Every unique-rule violation (same Google subject, same join code, same link) is reported by the store as one `ConflictException`, and the service retries the whole transaction up to five times; if it still conflicts the caller gets 409 `conflict`. The recovery is the same in all three cases (the retry finds the winner's row, or draws a fresh code), so nothing depends on Postgres-generated constraint names. The transaction is opened per attempt with a `TransactionTemplate`, because a unique violation aborts the Postgres transaction and a retry needs a fresh one.
 
 **Publishes:**
+- `JoinRequested(requestId, parentId, teenId)` (a teen asked a parent who requires approval; the notification module tells the parent).
 - `FamilyLinked(parentId, teenId, generation)` (lets other modules react to a new link, e.g. seed a wallet). Consumers dedupe on `(parentId, teenId, generation)`.
 - `FamilyUnlinked(parentId, teenId, generation)` (the task module cancels the teen's open tasks for that parent). The generation is the one of the link being removed, and the event type already separates it from `FamilyLinked`.
 
-Both are published in the transaction that locks the link row, so changes to one pair are serialised. Modulith delivers events asynchronously and does not order them across listeners, so consumers must be state-based: they look at the current link, not at the order of events. `generation` is what lets a relink after an unlink count as a new fact.
+- `AccountDeleted(userId, role)` (the user was anonymised; notification removes the user's device tokens). Carries no name or other personal data. Consumers are idempotent by nature (delete where user id).
+
+`FamilyLinked` and `FamilyUnlinked` are published in the transaction that locks the link row, so changes to one pair are serialised. Modulith delivers events asynchronously and does not order them across listeners, so consumers must be state-based: they look at the current link, not at the order of events. `generation` is what lets a relink after an unlink count as a new fact.
 
 **HTTP API.** Errors are `{"error": "<code>"}`; bodies are size-limited and reject unknown fields.
 
 | Route | Auth | Purpose | Errors |
 |---|---|---|---|
-| `POST /auth/google` `{idToken, role?, displayName?}` | none | Sign in or register; returns `{token, user}` | 401 `invalid_identity`, 422 `invalid_role` / `invalid_display_name` |
-| `GET /me` | bearer | The caller's account | 401 `unauthenticated` |
-| `POST /links/join` `{code}` | teen | Link to the parent who owns the code; returns `{parent: {id, displayName}}` | 403 `forbidden`, 422 `invalid_join_code` (unknown and malformed codes look the same), 429 `join_rate_limited` |
+| `POST /auth/google` `{idToken, role?, displayName?}` | none | Sign in or register; returns `{token, user, refreshToken}` | 401 `invalid_identity`, 422 `invalid_role` / `invalid_display_name` |
+| `POST /auth/refresh` `{refreshToken}` | none | Rotate the refresh token; returns `{token, user, refreshToken}` | 401 `invalid_refresh_token` (every failure alike) |
+| `POST /auth/logout` `{refreshToken}` | none | Revoke the token's whole session; always 204 | none |
+| `GET /me` | bearer | The caller's account (parents also see `joinApproval`) | 401 `unauthenticated` |
+| `PATCH /me` `{displayName?}` | bearer | Rename the caller; absent field = unchanged; returns the same `user` object as `GET /me` | 400 `invalid_body` (unknown or immutable field), 401 `unauthenticated`, 422 `invalid_display_name` |
+| `POST /me/join-code/regenerate` | parent | Replace the caller's join code with a new one; the old code stops working at once, links and pending join requests are untouched; returns the `user` object | 401 `unauthenticated`, 403 `forbidden`, 409 `conflict` |
+| `PUT /me/join-approval` `{required}` | parent | Require or waive parent approval of joins; returns the account | 403 `forbidden`, 422 `validation_failed` |
+| `POST /links/join` `{code}` | teen | Link to the parent who owns the code and answer `200 {parent: {id, displayName}}`; if that parent requires approval and the teen is not linked, create (or return the pending) join request and answer `202 {requestId, status, parent}` | 403 `forbidden`, 422 `invalid_join_code` (unknown and malformed codes look the same), 429 `join_rate_limited` |
+| `GET /links/requests` | parent | The caller's pending join requests, newest first, paginated: `{items: [{id, teenId, teenDisplayName, createdAt}]}` | 403 `forbidden` |
+| `POST /links/requests/{id}/approve` | parent | Link the teen and close the request; replay returns the same result | 403 `forbidden`, 404 `not_found`, 409 `invalid_transition` |
+| `POST /links/requests/{id}/decline` | parent | Close the request without a link | 403 `forbidden`, 404 `not_found`, 409 `invalid_transition` |
+| `DELETE /links/requests/{id}` | teen | Withdraw the caller's pending request; repeating it is harmless (204) | 403 `forbidden`, 404 `not_found`, 409 `invalid_transition` |
 | `GET /family` | bearer | The caller's active links: a parent's teens or a teen's parents, as `{members: [{id, role, displayName}]}` | 401 `unauthenticated` |
 | `DELETE /links/{teenId}` | parent | Remove the link to a teen; repeating it is harmless (204) | 403 `forbidden`, 404 `not_found`, 400 `invalid_teen_id` |
+| `DELETE /me` | bearer | Anonymise the caller's account and remove their links (204, irreversible) | 401 `unauthenticated` (already deleted), 409 `account_has_open_payout` |
 
-**Configuration:** `JWT_SECRET`, `JWT_TTL`, `GOOGLE_CLIENT_IDS` (see `.env.example`).
+**Refresh tokens.** Sign-in also issues a refresh token: 32 bytes from the shared `SecureRandom`, URL-safe Base64, returned once and stored only as a SHA-256 hash in `identity.refresh_tokens` (`token_hash` unique). Tokens form a family (one per sign-in); each refresh marks the presented token used and issues the next one in the same family, so a token is single use. `POST /auth/refresh` re-reads the account, so the new access token carries the role stored now. Rotation is one transaction: `markUsed` is a conditional `UPDATE ... WHERE used_at IS NULL AND revoked_at IS NULL`, so of two concurrent refreshes exactly one wins and the loser sees a used token. Presenting a used token revokes the family (the revocation commits, then the caller gets 401), which is also what ends the session of whoever stole it. Every failure (unknown, blank, expired, revoked, used) is the same 401 `invalid_refresh_token`. `POST /auth/logout` revokes the family of any token it recognises and always answers 204. `RefreshTokenPurgeTicker` deletes rows past `expires_at` hourly. Nothing outside identity sees these classes: the endpoints sit in `AccountController`, the logic in the package-private `SessionService`.
 
-**Owns:** `users` (including the parents' `join_code`), `family_links`. There is no `families` table: a family is simply the set of links between parents and teens, so a teen can have two parents without a new concept.
+**Also offers** (sync, owned by identity and implemented by ledger so that identity never depends on ledger): `OpenPayoutCheck.hasOpenPayout(userId, role)`, the account-deletion precondition.
+
+**Configuration:** `JWT_SECRET`, `JWT_TTL`, `JWT_REFRESH_TTL` (default 30 days), `GOOGLE_CLIENT_IDS` (see `.env.example`).
+
+**Owns:** `users` (including the parents' `join_code`, `join_approval_required` and `deleted_at`), `family_links`, `join_requests`, `join_attempts`, `refresh_tokens`. There is no `families` table: a family is simply the set of links between parents and teens, so a teen can have two parents without a new concept.
 
 ---
 
@@ -134,7 +161,7 @@ A milestone is a task with `kind = MILESTONE`: same FSM, same review flow, diffe
 ```
 There is no `DRAFT`: a task is created directly in `ASSIGNED`. Guards live in the domain: `submit` only from `ASSIGNED`; `approve`/`reject`/`request_redo` only from `SUBMITTED`; `expire` only from `ASSIGNED` (a task submitted before its deadline stays approvable however slow the review); `cancel` from `ASSIGNED` or `SUBMITTED`. Invalid transitions raise `TaskException(INVALID_TRANSITION)` (HTTP 409). Errors are defined out of existence where a retry is natural: repeating the same decision (`approve`, `reject`) or `cancel` by the same parent is a no-op, and `expire` silently does nothing unless the task is `ASSIGNED` and past its deadline, so a tick racing a submit or cancel is harmless. `request-redo` accepts an optional new `deadlineAt`; it is required once the old deadline has passed, must be in the future, and may not exceed the milestone's deadline.
 
-**Recurrence: one row per occurrence.** A recurring task (daily/weekly) is a *series*; each period is its own `tasks` row with `series_id` and `occurrence_date` and a `UNIQUE (series_id, occurrence_date)` constraint. Terminal states never "re-arm" — the next period is a new row. This keeps history, makes the reward key (`REWARD-TASK-{taskID}`) naturally unique per occurrence, and makes materialising the next occurrence idempotent. Period boundaries are computed in the series' own timezone (`task_series.timezone`) and stored in UTC. A missed occurrence expires; it carries no automatic penalty (penalties are manual, PAR-04). **No backfill:** each tick materialises only *today's* occurrence (the date in the series' timezone), and only while its due time is still in the future, so a day the system missed simply never exists. Creating a series materialises today's occurrence in the same transaction. The `series` feature depends on `tasks` through the public `TaskAssignment` interface and the `Occurrence` record; the reverse dependency does not exist. Series tasks cannot belong to a milestone.
+**Recurrence: one row per occurrence.** A recurring task (daily/weekly) is a *series*; each period is its own `tasks` row with `series_id` and `occurrence_date` and a `UNIQUE (series_id, occurrence_date)` constraint. Terminal states never "re-arm" — the next period is a new row. This keeps history, makes the reward key (`REWARD-TASK-{taskID}`) naturally unique per occurrence, and makes materialising the next occurrence idempotent. Period boundaries are computed in the series' own timezone (`task_series.timezone`) and stored in UTC. A missed occurrence expires; it carries no automatic penalty (penalties are manual, PAR-04). **No backfill:** each tick materialises only *today's* occurrence (the date in the series' timezone), and only while its due time is still in the future, so a day the system missed simply never exists. Creating a series materialises today's occurrence in the same transaction. The `series` feature depends on `tasks` through the public `TaskAssignment` interface and the `Occurrence` record; the reverse dependency does not exist. Series tasks cannot belong to a milestone. **Pause versus close:** `task_series.active` means "the ticker may materialise it"; `closed` marks a series that is over for good (`DELETE`, or the family was unlinked). A paused series is `active = false, closed = false` and can resume; a closed one cannot. `TaskSeries` exposes `amend`, `pause`, `resume` and `close`, each refusing a non-owner (403) and, except `close`, a closed series (409 `invalid_transition`). Series rows carry an optimistic `version`; every change goes through `SeriesStore.saveVersioned` inside `ConflictRetry`, so a concurrent PATCH, DELETE or unlink cannot silently overwrite or reopen another.
 
 **Proof submission.** The client sends the image (multipart) or text (JSON) in the submit request with a required `Idempotency-Key`. The task service passes image bytes to `media.Storage.put` first, outside any transaction, then runs one transaction that claims the key, applies the FSM transition, stores `task_proofs`, and publishes the event. The claim is scoped to the attempt (`taskId:attempt:key`), so a replay within one attempt is a no-op that returns the current task, while the same key after a redo starts a new attempt. Every `put` returns a fresh unique object key, so a replay can never overwrite the object a stored proof points to; the cost is an orphan blob after a failed or replayed submit, which a storage lifecycle rule should expire.
 
@@ -167,11 +194,12 @@ Used by the dashboard module to show "Pending" funds (TEN-01). Pending is task-o
 | `POST /tasks/{id}/submit` | teen | multipart `file` or JSON `{text}`; `Idempotency-Key` required |
 | `POST /tasks/{id}/approve`, `/reject`, `/request-redo` | parent | review; reject and redo take `{note?}`, redo also `{deadlineAt?}` |
 | `POST /tasks/{id}/cancel` | parent | cancel; a milestone cancels its open tasks |
-| `GET /tasks/{id}/proofs` | parent | proofs with presigned view URLs |
+| `GET /tasks/{id}/proofs` | parent or owning teen | proofs with presigned view URLs |
 | `POST /task-series` | parent | create a daily or weekly series (`recurrence`, `dueTime`, optional `timezone`, `startsOn`); `Idempotency-Key` required |
 | `GET /task-series` | parent | keyset page of the series the caller created, newest first; optional `teenId` (must be linked, else 403) and `active` |
 | `GET /task-series/{id}` | parent | one series; someone else's series is 404 |
-| `DELETE /task-series/{id}` | parent | close a series (repeatable) |
+| `PATCH /task-series/{id}` | parent | partial edit (`title`, `description`, `rewardAmount`, `penaltyAmount`, `dueTime`, `timezone`) and pause or resume (`active`); future occurrences only; a closed series is 409 `invalid_transition`; no key needed (absolute values, repeating is safe) |
+| `DELETE /task-series/{id}` | parent | close a series for good (repeatable) |
 
 Error codes: `not_found` 404, `forbidden` 403; `invalid_transition`, `deadline_passed`, `concurrent_modification` 409; `invalid_reward`, `invalid_deadline`, `invalid_title`, `invalid_note`, `invalid_milestone`, `invalid_kind`, `invalid_schedule`, `invalid_filter`, `unsupported_proof`, `invalid_idempotency_key`, `teen_required` 422. Rewards are capped by `tiyn.task.max-reward-amount` (default 10,000,000 minor units).
 
@@ -235,6 +263,8 @@ public interface BalanceReader {
 | `POST /payouts/{id}/cancel` | teen | `TEEN_CANCELLED` |
 
 Errors: `forbidden` 403, `not_found` 404, `invalid_amount` / `amount_too_small` / `insufficient_funds` / `parent_required` / `invalid_idempotency_key` / `invalid_filter` 422, `payout_already_open` / `invalid_transition` 409. Repeating the same cancellation is a no-op; resolving a payout another way is `invalid_transition`. The fulfil debit must fit `balance − locked` (funds locked in goals can never be paid out).
+
+**Wallet history API.** `GET /wallet/entries` is a keyset page over `ledger_entries` ordered by `(created_at DESC, id DESC)`, served by the existing `ledger_entries_teen_created_id_idx` (no migration). A teen reads their own; a parent must pass `teenId` of a currently linked teen (`FamilyDirectory.areLinked`), otherwise `forbidden`; a parent without `teenId` gets `teen_required` 422. `amount` is `balance_delta - locked_delta`, the effect on *available*; the related id is mapped from `ref_id` by kind (`taskId`, `payoutId`, `goalId`). Entries are append-only, so a page never changes under a cursor.
 
 **Savings goals API** (teen only; a parent gets `forbidden`; goals are private to the teen). A goal is a label on part of the wallet's money: locking moves nothing, it writes a `GOAL_LOCK` entry (`balance_delta = 0`, `locked_delta = +amount`) and raises `wallets.locked_amount`, which lowers *available*. The money stays in the total balance. A goal's `savedAmount` is derived: the sum of `locked_delta` over the entries whose `ref_id` is the goal, so the goals and the wallet's locked total cannot drift apart (a test asserts `locked_amount = sum of saved`).
 
@@ -303,6 +333,7 @@ Called by the task module on submission and review.
 | `TaskAssigned`, `TaskApproved`, `TaskRejected`, `TaskRedoRequested`, `TaskCancelled`, `TaskExpired`, `PenaltyApplied`, `PayoutFulfilled` | teen |
 | `TaskSubmitted`, `PayoutRequested` (high priority) | parent |
 | `PayoutCancelled` | parent when `TEEN_CANCELLED`; otherwise the teen (`DECLINED`, `EXPIRED`, `UNLINKED`) |
+| `JoinRequested` | parent |
 | `FamilyLinked` | both sides |
 | `FamilyUnlinked` | teen |
 
@@ -314,13 +345,15 @@ A missed task with a penalty sends the teen the deadline message with the deduct
 
 **Housekeeping.** `DeliveredPurgeTicker` deletes `delivered` rows older than `tiyn.notification.delivered-retention` (env `NOTIFICATION_DELIVERED_RETENTION`, default `P30D`). Stale device tokens are not purged yet.
 
+**Account deletion.** On `AccountDeleted` the module deletes every device token of that user (`AccountDeletedListener`; deleting by user id is idempotent), so no push is sent to a deleted account's phone after that. A push about the unlink itself may already have gone out.
+
 **Owns:** `device_tokens`, and the `delivered` table, keyed by event and recipient, which makes it idempotent.
 
 ---
 
 ## 6. Dashboard
 
-**Responsibility.** The teen's home screen in one call (UC-07, TEN-01, TEN-02). It owns no tables and publishes no events; it only composes read contracts of other modules, so the client makes one round trip instead of four (`/balance`, `/tasks`, `/goals`, `/payouts`).
+**Responsibility.** The teen's home screen in one call (UC-07, TEN-01, TEN-02), and the parent's (UC-05). It owns no tables and publishes no events; it only composes read contracts of other modules, so the client makes one round trip instead of four (`/balance`, `/tasks`, `/goals`, `/payouts`).
 
 **Endpoint.** `GET /dashboard` (teen only; a parent gets 403):
 ```json
@@ -337,7 +370,33 @@ A missed task with a penalty sends the teen the deadline message with the deduct
 
 **Which tasks.** Open work (`ASSIGNED`, `SUBMITTED`) ordered by deadline, then tasks decided in the last `tiyn.dashboard.recent-window` (env `DASHBOARD_RECENT_WINDOW`, default `P7D`) newest first, capped at `tiyn.dashboard.max-tasks` (env `DASHBOARD_MAX_TASKS`, default 50), so open work is never pushed out by history. "Decided" is `decided_at`, falling back to `updated_at` for tasks that have none (expired). Full history stays on `GET /tasks`.
 
+**Parent home screen.** `GET /parent/dashboard` (parent only; a teen gets 403) composes the same way for every teen linked to the caller: `identity.FamilyDirectory.linkedTeens` (id and display name, ordered by name), `ledger.WalletOverviewReader` (balance and open payout) and `task.ReviewQueueReader` (the caller's `SUBMITTED` tasks for that teen: the true count plus a preview of the newest `tiyn.dashboard.review-preview`, env `DASHBOARD_REVIEW_PREVIEW`, default 10). The response is `{ totalPendingReviews, totalOpenPayouts, teens: [{ id, displayName, balance, pendingReviewCount, pendingReviews, openPayout }] }`. `openPayout` is shown only when the request is addressed to the caller; an empty `teens` list is a normal answer. The handler is marked `@BoundedList` because a parent has a handful of teens. It reads each supplier once per teen, which stays small by the same bound, and each supplier answers in its own transaction, so the figures are not one snapshot. It owns no tables and adds no migration.
+
 **Contracts it consumes** (each owned by the supplier, in its root package): `ledger.WalletOverviewReader` (balance, active goals and the open payout, read in one read-only transaction so they are one snapshot; the open payout carries `expiresAt`, computed by the ledger from `payout-expiry`, so the dashboard never reads that config), `task.TaskBoardReader` (tasks plus milestone progress in two queries, no N+1), `task.PendingReader`. Pending and balance come from different modules, so for a moment after an approval a reward can show in neither; the UI must not promise "immediately credited".
+
+## 7. Privacy
+
+**Responsibility.** The user's right to take their data with them (`GET /me/export`; Kazakhstan personal-data law, and the users are minors). Like the dashboard it owns no tables and publishes no events; it only composes read contracts. It lives in its own module, not in `dashboard`: the dashboard is the teen's home screen, bounded by one role and one screen, while the export spans both roles and every module that stores personal data, and will grow with each new one.
+
+**Contracts it consumes** (each owned by the supplier, in its root package): `identity.AccountDataReader` (profile with the parent's `joinApproval`, family links, and the join requests the caller made or received), `task.TaskDataReader` (tasks with proofs for a teen; tasks and series for a parent), `ledger.WalletDataReader` (wallet, ledger entries, goals and payouts for a teen; payouts for a parent). All three have the same shape, `writeTo(userId, role, ExportWriter)`: the supplier decides what its slice holds for that role and writes it to `platform.export.ExportWriter` (`field`, `array`), a tiny streaming sink implemented over a Jackson `JsonGenerator`. The privacy module never sees a table, and the supplier never sees HTTP. A module that starts storing personal data adds its slice to its own reader, not to this module.
+
+**Streaming and memory.** A reader writes big collections (tasks, ledger entries, payouts, goals, family links, join requests) page by page with `platform.export.KeysetScan`: `ORDER BY created_at DESC, id DESC` with a keyset (`seek`) condition, `EXPORT_PAGE_SIZE` rows per query (default 500), each row written to the response and dropped. Proofs of a page of tasks are loaded with one `IN` query, not one query per task. Memory is bounded by one page, whatever the account holds. The controller writes to the servlet response on the request thread (a `void` handler taking `HttpServletResponse`) instead of returning a `StreamingResponseBody`: the async variant starts the writer on another thread while the security filters are still adding headers to the same response, which is a data race (it showed up as a flaky `ConcurrentModificationException` in MockMvc tests), and it brings its own async timeout to configure. The request thread is occupied for the length of the download either way.
+
+**Consistency.** Each reader is one `@Transactional(readOnly = true, isolation = REPEATABLE_READ)` method, so its slice is a true snapshot even though it is read in many pages. Slices of different modules are separate transactions and therefore not one global snapshot; the document states `generatedAt` and says so in `consistency`. Trade-off: a read transaction (and its pooled connection) stays open while the slice streams, so a slow client holds a connection for the length of its download. The rate limit and the server's connection timeout bound that; for a larger audience, spool to temporary storage first.
+
+**Abuse protection.** `ExportService.admit` calls `platform.idempotency.OncePerWindow.tryAcquire(userId, "privacy.export", EXPORT_MIN_INTERVAL)`: one atomic `INSERT … ON CONFLICT DO UPDATE … WHERE created_at <= now - window` on the existing `platform.idempotency_keys` table (no migration), so a user gets one export per window across all replicas. The window must stay shorter than `IDEMPOTENCY_TTL`, because the cleanup ticker deletes older rows. The check runs before the stream starts, so a refusal is a normal 429 `export_rate_limited`.
+
+**HTTP API.**
+
+| Route | Auth | Purpose | Errors |
+|---|---|---|---|
+| `GET /me/export` | bearer, any role | The caller's data as one downloadable JSON document | 401 `unauthenticated`, 429 `export_rate_limited` |
+
+**Never in the export:** `idp_sub`, tokens and JWT data, refresh tokens (hashes, families, expiry), device push tokens, join-attempt counters, idempotency keys, object keys, other users' data beyond a counterpart's `id` and `displayName`. The DTOs in each supplier's `dto/` package are explicit allow-lists (no row is serialised wholesale), and `PersonalDataExportTests` asserts that no such key (nor any field name containing token, hash or attempt) appears, and `JoinRequestExportTests` proves that a user who holds refresh tokens and join attempts gets neither their hashes nor their families in the raw body.
+
+**Config.** `tiyn.export.page-size` (`EXPORT_PAGE_SIZE`, default 500), `tiyn.export.min-interval` (`EXPORT_MIN_INTERVAL`, default `PT5M`; `PT0S` switches the limit off).
+
+**Owns:** nothing.
 
 ## Time-driven work
 
@@ -382,6 +441,11 @@ task.service ──▶ media.Storage
 dashboard ──▶ ledger.WalletOverviewReader
 dashboard ──▶ task.TaskBoardReader
 dashboard ──▶ task.PendingReader
+dashboard ──▶ task.ReviewQueueReader
+dashboard ──▶ identity.FamilyDirectory
+privacy ──▶ identity.AccountDataReader
+privacy ──▶ task.TaskDataReader
+privacy ──▶ ledger.WalletDataReader
 notification ──▶ (events of) task, ledger, identity; nothing depends on notification
 ```
 No cycles. All other relationships are event-driven (via Modulith events): task→ledger, task→notification, ledger→notification, identity→ledger, identity→notification.

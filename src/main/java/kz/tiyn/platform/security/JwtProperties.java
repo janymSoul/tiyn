@@ -11,14 +11,19 @@ import org.springframework.validation.annotation.Validated;
 
 @Validated
 @ConfigurationProperties("tiyn.jwt")
-public record JwtProperties(@NotBlank String secret, @NotNull Duration ttl) {
+public record JwtProperties(@NotBlank String secret, @NotNull Duration ttl, Duration refreshTtl) {
 
     public static final String ISSUER = "tiyn";
     private static final int MIN_SECRET_BYTES = 32;
+    private static final Duration DEFAULT_REFRESH_TTL = Duration.ofDays(30);
 
     public JwtProperties {
         if (secret != null && secret.getBytes(StandardCharsets.UTF_8).length < MIN_SECRET_BYTES) {
             throw new IllegalArgumentException("tiyn.jwt.secret must be at least " + MIN_SECRET_BYTES + " bytes");
+        }
+        refreshTtl = refreshTtl == null ? DEFAULT_REFRESH_TTL : refreshTtl;
+        if (refreshTtl.isZero() || refreshTtl.isNegative()) {
+            throw new IllegalArgumentException("tiyn.jwt.refresh-ttl must be positive");
         }
     }
 
