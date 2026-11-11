@@ -3,11 +3,13 @@ package kz.tiyn.identity.account;
 import kz.tiyn.identity.account.dto.SignInRequest;
 import kz.tiyn.identity.account.dto.SignInResponse;
 import kz.tiyn.identity.account.dto.SignInResult;
+import kz.tiyn.identity.account.dto.UpdateProfileRequest;
 import kz.tiyn.identity.account.dto.UserResponse;
 import kz.tiyn.platform.idempotency.NaturallyIdempotent;
 import kz.tiyn.platform.security.Principal;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,5 +33,11 @@ class AccountController {
     @GetMapping("/me")
     UserResponse me(@AuthenticationPrincipal Principal principal) {
         return UserResponse.from(service.requireUser(principal.userId()));
+    }
+
+    @PatchMapping("/me")
+    UserResponse updateProfile(
+            @AuthenticationPrincipal Principal principal, @RequestBody UpdateProfileRequest request) {
+        return UserResponse.from(service.updateProfile(principal.userId(), request.displayName()));
     }
 }

@@ -48,6 +48,18 @@ class AccountService implements AccountDirectory {
         return new SignInResult(tokens.issue(user.id(), user.role()), user);
     }
 
+    User updateProfile(UUID userId, String displayName) {
+        return tx.execute(status -> {
+            User user = users.findByIdForUpdate(userId)
+                    .orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
+            if (displayName != null) {
+                user.rename(displayName);
+                users.updateDisplayName(user);
+            }
+            return user;
+        });
+    }
+
     private GoogleIdentity verify(String idToken) {
         try {
             return google.verify(idToken);
