@@ -28,7 +28,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 
 ## Pagination
 
-`GET /tasks`, `GET /payouts`, `GET /goals` and `GET /task-series` are paginated. Anything that grows with time is, and so will the wallet history be. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list.
+`GET /tasks`, `GET /payouts`, `GET /goals` and `GET /task-series` are paginated. Anything that grows with time is, and so will the wallet history be. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list. `GET /me/export` streams complete collections inside one JSON document and is not paginated.
 
 **Request.** Two optional query parameters:
 - `limit`: items per page, default 50. Below 1, above 100 or not a number is 400 `invalid_request`.
@@ -259,6 +259,54 @@ One call for the home screen:
 ```
 `pendingAmount` is the sum of rewards of tasks awaiting a parent's decision. `milestoneId` is the id of the milestone a task belongs to, or `null`; the client can use it to group tasks under their milestone. `chores` and `milestones` hold open work plus recently decided tasks (window `DASHBOARD_RECENT_WINDOW`, default 7 days, at most `DASHBOARD_MAX_TASKS` = 50 tasks). `goals` lists active goals. `openPayout` is omitted when there is none.
 
+## Privacy
+
+### `GET /me/export` (any signed-in user)
+
+Everything the system holds about the caller that they may take with them, as one JSON document. The response is a download (`Content-Disposition: attachment; filename="tiyn-export-<yyyy-MM-dd>.json"`, the date is the UTC day of `generatedAt`) with `Cache-Control: no-store`, so a shared device or proxy keeps no copy. It is a read-only `GET`: no `Idempotency-Key`.
+
+**Rate limit.** One export per user per `EXPORT_MIN_INTERVAL` (default 5 minutes, counted from the last accepted request, kept in Postgres so it holds across replicas). A second request inside the window is 429 `export_rate_limited`; wait and retry. A request that was accepted but failed while streaming also uses up the window.
+
+**Streaming.** The body is written while it is read, page by page (`EXPORT_PAGE_SIZE`, default 500 rows), so memory does not grow with the amount of data and the first bytes arrive before the last row is read. Consequences for a client: the status is `200` as soon as the stream starts, so a failure in the middle shows up as a truncated, unparsable file, never as an error status; treat a file that does not parse as a failed export. A client that stops reading is cut off by the server's connection timeout.
+
+**Consistency.** Each section of the document is read in one read-only `REPEATABLE READ` transaction of the module that owns the data, so a section never shows a half-applied change. The sections are not one global snapshot: a payout confirmed between reading `ledgerEntries` and `payouts` can show up in one and not the other. The document says so itself in `consistency`.
+
+Timestamps are ISO-8601 UTC, money is `long` in minor units, fields that are null are omitted. Collections are ordered newest first (`createdAt`, `requestedAt` for payouts, then `id` descending) and complete.
+
+Teen:
+```json
+{
+  "generatedAt": "2026-11-11T10:15:30.123456Z",
+  "consistency": "Each section is read in its own read-only snapshot; sections are not one global snapshot.",
+  "profile": { "id": "…", "role": "TEEN", "displayName": "Dana", "createdAt": "…" },
+  "familyLinks": [ { "id": "…", "displayName": "Aigul", "linkedAt": "…", "removedAt": null } ],
+  "tasks": [ {
+    "id": "…", "parentId": "…", "teenId": "…", "milestoneId": null, "seriesId": null, "occurrenceDate": null,
+    "kind": "TASK", "title": "…", "description": "…", "rewardAmount": 100000, "penaltyAmount": 0, "currency": "KZT",
+    "state": "APPROVED", "deadlineAt": "…", "submittedAt": "…", "decidedAt": "…", "decidedBy": "…", "decisionNote": null,
+    "createdAt": "…",
+    "proofs": [ { "attemptNo": 1, "text": "done", "hasImage": false, "submittedAt": "…" },
+                { "attemptNo": 2, "hasImage": true, "imageUrl": "https://…?X-Amz-…", "submittedAt": "…" } ]
+  } ],
+  "wallet": { "balanceAmount": 100000, "lockedAmount": 40000, "currency": "KZT" },
+  "ledgerEntries": [ { "id": "…", "kind": "TASK_REWARD", "balanceDelta": 100000, "lockedDelta": 0, "currency": "KZT",
+                       "refId": "…", "note": null, "actorId": null, "createdAt": "…" } ],
+  "savingsGoals": [ { "id": "…", "name": "Headphones", "targetAmount": 900000, "savedAmount": 40000, "currency": "KZT",
+                      "state": "ACTIVE", "createdAt": "…" } ],
+  "payouts": [ { "id": "…", "teenId": "…", "parentId": "…", "amount": 30000, "currency": "KZT", "state": "REQUESTED",
+                 "requestedAt": "…", "resolvedAt": null, "resolvedBy": null, "cancelReason": null } ]
+}
+```
+
+Parent: `profile` (with `joinCode`), `familyLinks`, `tasks` (the tasks they created, without `proofs`: a proof is the teen's data), `taskSeries` (`id`, `teenId`, `kind`, `title`, `description`, `rewardAmount`, `penaltyAmount`, `currency`, `recurrence`, `timezone`, `dueTime`, `startsOn`, `active`, `createdAt`) and `payouts` addressed to them. A parent has no wallet, ledger entries or goals, so those keys are absent. A user with no data gets the same shape with empty arrays (a teen's `wallet` reads as zeros, like `GET /balance`).
+
+What is in it and what is deliberately not:
+- `familyLinks` lists every link ever made, including removed ones (`removedAt` set). The other person appears only as `id` and `displayName`.
+- A proof with an image carries `hasImage` and `imageUrl`, a short-lived presigned URL (`S3_VIEW_URL_TTL`, default 10 minutes, valid for anyone who holds it). The image bytes and the storage object key are not in the document; download the image from the URL right away or export again after the window.
+- Never included: the Google subject (`idp_sub`), session tokens or any JWT data, device push tokens, join-attempt counters, idempotency keys, and any other user's data beyond the counterpart's `id` and `displayName`. No email is stored, so none is exported. Join requests, parent settings and refresh tokens do not exist in this API yet; when they are added their module extends its own slice of this document and keeps secrets out.
+
+Errors: 401 `unauthenticated`, 429 `export_rate_limited`.
+
 ## Push notifications
 
 ### `PUT /devices` → `204`
@@ -289,5 +337,5 @@ These are facts about the current API, listed so they are decided on purpose and
 2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
 3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
 4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
-5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
+5. **No profile edit or account deletion.** Account deletion matters for the Kazakhstan personal-data law; data export exists (`GET /me/export`).
 6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.

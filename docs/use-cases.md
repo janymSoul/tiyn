@@ -210,7 +210,7 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 | Idempotency | Every command carries a key; consumers dedupe on the event key (`docs/transactions.md`). Keys come from IDs, never timestamps. |
 | Audit | Ledger entries append-only; approvals, payouts, and penalties record actor and timestamp (SYS-01). |
 | Notifications | RU/KK copy rendered in notification from the event and the device's locale; no text in domain logic. |
-| Privacy | No PII in logs, events, or cache keys; proofs are private objects with metadata stripped. Data (database and object storage) is hosted in Kazakhstan. |
+| Privacy | No PII in logs, events, or cache keys; proofs are private objects with metadata stripped. Data (database and object storage) is hosted in Kazakhstan. Every user can download their own data with `GET /me/export` (`docs/api.md`, Privacy). |
 | Testing | FSM transitions as unit tests; UC-04, UC-05, UC-08, UC-09, UC-10 as functional tests against Postgres, including concurrent approve, concurrent payout requests, and a tick running twice. |
 
 ## Decisions still open

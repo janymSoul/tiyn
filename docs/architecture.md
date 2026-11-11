@@ -68,7 +68,7 @@ kz.tiyn.identity/
 
 A module with a single feature may keep everything in its root package, with only the API types `public`. Introduce feature packages when a module grows two or more aggregates with their own endpoints. Dependencies between features of one module are not checked by Modulith, so keep them acyclic by review.
 
-`kz.tiyn.platform` is the shared kernel, declared an **open** module: JSON error mapping, JWT verification and issuing, `Principal`/`Role`, the ticker scheduler, the `Clock`. It owns no business data and must never depend on a business module.
+`kz.tiyn.platform` is the shared kernel, declared an **open** module: JSON error mapping, JWT verification and issuing, `Principal`/`Role`, the ticker scheduler, the `Clock`. It owns no business data and must never depend on a business module. The composing modules `dashboard` and `privacy` own no tables either; they only call the read contracts other modules publish in their root packages.
 
 ## Technology choices
 

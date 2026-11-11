@@ -339,6 +339,30 @@ A missed task with a penalty sends the teen the deadline message with the deduct
 
 **Contracts it consumes** (each owned by the supplier, in its root package): `ledger.WalletOverviewReader` (balance, active goals and the open payout, read in one read-only transaction so they are one snapshot; the open payout carries `expiresAt`, computed by the ledger from `payout-expiry`, so the dashboard never reads that config), `task.TaskBoardReader` (tasks plus milestone progress in two queries, no N+1), `task.PendingReader`. Pending and balance come from different modules, so for a moment after an approval a reward can show in neither; the UI must not promise "immediately credited".
 
+## 7. Privacy
+
+**Responsibility.** The user's right to take their data with them (`GET /me/export`; Kazakhstan personal-data law, and the users are minors). Like the dashboard it owns no tables and publishes no events; it only composes read contracts. It lives in its own module, not in `dashboard`: the dashboard is the teen's home screen, bounded by one role and one screen, while the export spans both roles and every module that stores personal data, and will grow with each new one.
+
+**Contracts it consumes** (each owned by the supplier, in its root package): `identity.AccountDataReader` (profile and family links), `task.TaskDataReader` (tasks with proofs for a teen; tasks and series for a parent), `ledger.WalletDataReader` (wallet, ledger entries, goals and payouts for a teen; payouts for a parent). All three have the same shape, `writeTo(userId, role, ExportWriter)`: the supplier decides what its slice holds for that role and writes it to `platform.export.ExportWriter` (`field`, `array`), a tiny streaming sink implemented over a Jackson `JsonGenerator`. The privacy module never sees a table, and the supplier never sees HTTP. A module that starts storing personal data adds its slice to its own reader, not to this module.
+
+**Streaming and memory.** A reader writes big collections (tasks, ledger entries, payouts, goals) page by page with `platform.export.KeysetScan`: `ORDER BY created_at DESC, id DESC` with a keyset (`seek`) condition, `EXPORT_PAGE_SIZE` rows per query (default 500), each row written to the response and dropped. Proofs of a page of tasks are loaded with one `IN` query, not one query per task. Memory is bounded by one page, whatever the account holds. The controller writes to the servlet response on the request thread (a `void` handler taking `HttpServletResponse`) instead of returning a `StreamingResponseBody`: the async variant starts the writer on another thread while the security filters are still adding headers to the same response, which is a data race (it showed up as a flaky `ConcurrentModificationException` in MockMvc tests), and it brings its own async timeout to configure. The request thread is occupied for the length of the download either way.
+
+**Consistency.** Each reader is one `@Transactional(readOnly = true, isolation = REPEATABLE_READ)` method, so its slice is a true snapshot even though it is read in many pages. Slices of different modules are separate transactions and therefore not one global snapshot; the document states `generatedAt` and says so in `consistency`. Trade-off: a read transaction (and its pooled connection) stays open while the slice streams, so a slow client holds a connection for the length of its download. The rate limit and the stream timeout bound that; for a larger audience, spool to temporary storage first.
+
+**Abuse protection.** `ExportService.admit` calls `platform.idempotency.OncePerWindow.tryAcquire(userId, "privacy.export", EXPORT_MIN_INTERVAL)`: one atomic `INSERT … ON CONFLICT DO UPDATE … WHERE created_at <= now - window` on the existing `platform.idempotency_keys` table (no migration), so a user gets one export per window across all replicas. The window must stay shorter than `IDEMPOTENCY_TTL`, because the cleanup ticker deletes older rows. The check runs before the stream starts, so a refusal is a normal 429 `export_rate_limited`.
+
+**HTTP API.**
+
+| Route | Auth | Purpose | Errors |
+|---|---|---|---|
+| `GET /me/export` | bearer, any role | The caller's data as one downloadable JSON document | 401 `unauthenticated`, 429 `export_rate_limited` |
+
+**Never in the export:** `idp_sub`, tokens and JWT data, device push tokens, join-attempt counters, idempotency keys, object keys, other users' data beyond a counterpart's `id` and `displayName`. The DTOs in each supplier's `dto/` package are explicit allow-lists (no row is serialised wholesale), and `PersonalDataExportTests` asserts that no such key appears.
+
+**Config.** `tiyn.export.page-size` (`EXPORT_PAGE_SIZE`, default 500), `tiyn.export.min-interval` (`EXPORT_MIN_INTERVAL`, default `PT5M`; `PT0S` switches the limit off).
+
+**Owns:** nothing.
+
 ## Time-driven work
 
 Some state changes happen because time passes, not because a request arrives: expiring overdue tasks, creating the next occurrence of a recurring task, and cancelling stale payout requests. No request wakes the process for these, so something must.
@@ -382,6 +406,9 @@ task.service ──▶ media.Storage
 dashboard ──▶ ledger.WalletOverviewReader
 dashboard ──▶ task.TaskBoardReader
 dashboard ──▶ task.PendingReader
+privacy ──▶ identity.AccountDataReader
+privacy ──▶ task.TaskDataReader
+privacy ──▶ ledger.WalletDataReader
 notification ──▶ (events of) task, ledger, identity; nothing depends on notification
 ```
 No cycles. All other relationships are event-driven (via Modulith events): task→ledger, task→notification, ledger→notification, identity→ledger, identity→notification.
