@@ -8,6 +8,7 @@ import java.util.UUID;
 import kz.tiyn.identity.account.error.IdentityError;
 import kz.tiyn.identity.account.error.IdentityException;
 import kz.tiyn.platform.security.Role;
+import kz.tiyn.support.Invisible;
 import org.junit.jupiter.api.Test;
 
 class AccountDomainTests {
@@ -57,5 +58,90 @@ class AccountDomainTests {
                     .isInstanceOfSatisfying(IdentityException.class, e -> assertThat(e.error())
                             .isEqualTo(IdentityError.INVALID_DISPLAY_NAME));
         }
+    }
+
+    @Test
+    void aParentCanRequireAndWaiveApprovalOfJoinsAndStartsWithoutIt() {
+        var parent = User.register(UUID.randomUUID(), "s1", Role.PARENT, "Aigul", new JoinCode("ABCDEF"));
+        assertThat(parent.joinApprovalRequired()).isFalse();
+
+        parent.requireApprovalOfJoins();
+        assertThat(parent.joinApprovalRequired()).isTrue();
+        parent.requireApprovalOfJoins();
+        assertThat(parent.joinApprovalRequired()).isTrue();
+
+        parent.allowDirectJoins();
+        assertThat(parent.joinApprovalRequired()).isFalse();
+    }
+
+    @Test
+    void aTeenCannotChangeJoinApproval() {
+        var teen = User.register(UUID.randomUUID(), "s2", Role.TEEN, "Dana", null);
+
+        assertThatThrownBy(teen::requireApprovalOfJoins)
+                .isInstanceOfSatisfying(
+                        IdentityException.class, e -> assertThat(e.error()).isEqualTo(IdentityError.FORBIDDEN));
+        assertThatThrownBy(teen::allowDirectJoins)
+                .isInstanceOfSatisfying(
+                        IdentityException.class, e -> assertThat(e.error()).isEqualTo(IdentityError.FORBIDDEN));
+        assertThat(teen.joinApprovalRequired()).isFalse();
+    }
+
+    @Test
+    void registrationNormalisesTheDisplayNameLikeRenaming() {
+        assertThat(User.register(UUID.randomUUID(), "s", Role.TEEN, " " + Invisible.RLO + "Da  na ", null)
+                        .displayName())
+                .isEqualTo("Da na");
+    }
+
+    @Test
+    void renameReplacesOnlyTheDisplayName() {
+        var id = UUID.randomUUID();
+        var user = User.restore(id, "sub", Role.PARENT, "ABCDEF", "Old", false);
+
+        user.rename("  New   Name ");
+
+        assertThat(user.displayName()).isEqualTo("New Name");
+        assertThat(user.id()).isEqualTo(id);
+        assertThat(user.role()).isEqualTo(Role.PARENT);
+        assertThat(user.joinCode()).isEqualTo("ABCDEF");
+        assertThat(user.idpSub()).isEqualTo("sub");
+    }
+
+    @Test
+    void renameRejectsAnInvalidNameAndKeepsTheOldOne() {
+        var user = User.restore(UUID.randomUUID(), "sub", Role.TEEN, null, "Old", false);
+
+        for (String bad : new String[] {null, " ", Invisible.ZWSP, "x".repeat(101)}) {
+            assertThatThrownBy(() -> user.rename(bad))
+                    .isInstanceOfSatisfying(IdentityException.class, e -> assertThat(e.error())
+                            .isEqualTo(IdentityError.INVALID_DISPLAY_NAME));
+        }
+        assertThat(user.displayName()).isEqualTo("Old");
+    }
+
+    @Test
+    void aParentSwapsToTheNewCodeAndKeepsEverythingElse() {
+        UUID id = UUID.randomUUID();
+        User parent = User.register(id, "s", Role.PARENT, "Aigul", new JoinCode("ABCDEF"));
+        parent.requireApprovalOfJoins();
+
+        User rotated = parent.withJoinCode(new JoinCode("GHJKLM"));
+
+        assertThat(rotated.joinCode()).isEqualTo("GHJKLM");
+        assertThat(rotated.id()).isEqualTo(id);
+        assertThat(rotated.role()).isEqualTo(Role.PARENT);
+        assertThat(rotated.displayName()).isEqualTo("Aigul");
+        assertThat(rotated.joinApprovalRequired()).isTrue();
+        assertThat(parent.joinCode()).isEqualTo("ABCDEF");
+    }
+
+    @Test
+    void aTeenCannotGetAJoinCode() {
+        User teen = User.register(UUID.randomUUID(), "s", Role.TEEN, "Dana", null);
+
+        assertThatThrownBy(() -> teen.withJoinCode(new JoinCode("ABCDEF")))
+                .isInstanceOfSatisfying(
+                        IdentityException.class, e -> assertThat(e.error()).isEqualTo(IdentityError.FORBIDDEN));
     }
 }
