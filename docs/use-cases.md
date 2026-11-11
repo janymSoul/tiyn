@@ -18,6 +18,7 @@ Actors: **Parent**, **Teen**, **System** (scheduler, event listeners, push).
 | UC-10 | Recurring tasks and deadlines (system-driven) | PAR-02 | MVP |
 | UC-11 | A missed task costs money | PAR-04 | Medium |
 | UC-12 | Teen sets a savings goal | TEN-04 | Medium |
+| UC-13 | Parent adds a manual bonus or penalty (proposed) | none | Proposed |
 
 XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting to `TaskApproved`.
 
@@ -112,7 +113,7 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 **Flow.** Parent cancels a task in `ASSIGNED` or `SUBMITTED` (e.g. created by mistake, or the plan changed). FSM → `CANCELLED`, `TaskCancelled` → teen is notified. For a recurring series, the parent chooses "this occurrence" or "this and all future" (the series is closed, so no further occurrences are created). Cancelling a milestone also cancels its open tasks, each notifying the teen.
 
-**Alternates.** Already `APPROVED`/`REJECTED`/`EXPIRED` → an invalid-transition error (409). Cancelling an approved task does not claw back money, and there is no manual penalty to do it (UC-11 covers only missed tasks).
+**Alternates.** Already `APPROVED`/`REJECTED`/`EXPIRED` → an invalid-transition error (409). Cancelling an approved task does not claw back money, and UC-11 covers only missed tasks; the proposed UC-13 would let the parent take the money back by hand.
 
 ---
 
@@ -182,7 +183,7 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 
 ## UC-11 A missed task costs money
 
-**Flow.** When creating a task or a recurring series, the parent can set an optional penalty (0 or empty means none). If the teen lets the task expire, the ledger debits the penalty automatically and publishes `PenaltyApplied`; the teen is notified. There is no free-form manual penalty.
+**Flow.** When creating a task or a recurring series, the parent can set an optional penalty (0 or empty means none). If the teen lets the task expire, the ledger debits the penalty automatically and publishes `PenaltyApplied`; the teen is notified. A free-form manual bonus or penalty is the proposed UC-13.
 
 **Rules.**
 - Only a missed deadline counts: `ASSIGNED` past its deadline becomes `EXPIRED`. Submitted, rejected, cancelled (including after an unlink) and approved tasks cost nothing.
@@ -199,6 +200,23 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 **Flow.** Teen creates a goal (name, target), locks part of their available balance into it, sees a progress bar (`savedAmount` of `targetAmount`). The money stays in the total balance but is excluded from *available*. The teen can unlock part of it or close the goal, which releases everything saved. A lock cannot take the goal past its target (`exceeds_target`). Goals are visible to the teen only.
 
 **Support needed.** ledger: `savings_goals`; locking funds is a ledger entry (available → locked), not a separate balance. The amount saved in a goal is derived from the entries referencing it. Locked funds are excluded from *available*, so they cannot be requested as a payout until unlocked.
+
+---
+
+## UC-13 Parent adds a manual bonus or penalty (proposed)
+
+> **Proposed, not a documented requirement.** It comes from the maintainers' review. `UC-05` (task rewards) and `UC-11` (automatic missed-task penalties) are the only money movements the requirements describe.
+
+**Flow.** A linked parent calls `POST /teens/{teenId}/adjustments` with a kind (`BONUS` or `PENALTY`), a positive amount and a reason of 1 to 140 characters. The ledger, in one transaction, locks the teen's wallet, re-checks the link, appends a `MANUAL_BONUS` or `MANUAL_PENALTY` entry that records the parent and the reason, and publishes `BalanceAdjusted`; notification pushes the teen.
+
+**Rules.**
+- Parent only, and only for a teen linked to them at that moment.
+- A penalty behaves like UC-11: the balance may go negative and a debt blocks payout requests and goal locks.
+- Entries are append-only. There is no edit or delete; a mistake is corrected by the opposite adjustment.
+- The amount has the same ceiling as a task reward. A required `Idempotency-Key` makes a retry return the first entry.
+- The reason is stored on the entry but nothing lists entries yet (see "Gaps a client will hit" in `docs/api.md`).
+
+**Support needed.** `Wallet.adjust`, the `Adjustment` value object, ledger kinds `MANUAL_BONUS` and `MANUAL_PENALTY` (migration V17), the `BalanceAdjusted` event and its notification copy.
 
 ---
 

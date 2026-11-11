@@ -21,7 +21,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 | 422 | `validation_failed` | bean validation failure |
 | 500 | `internal_error` | unexpected; retry is safe only for idempotent calls |
 
-- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
+- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock`, `POST /payouts` and `POST /teens/{teenId}/adjustments`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
 - **Eventual consistency:** a rewarded approval and an expired penalty reach the wallet through events, usually within seconds. After `approve`, the balance may lag; re-read it instead of assuming.
 - **Roles:** `PARENT` and `TEEN`. A teen may be linked to several parents; a parent to several teens. A parent only sees and acts on tasks they created for linked teens.
 - **Lists that grow are paginated** with an opaque cursor, always newest first; see [Pagination](#pagination). `GET /family` and `GET /tasks/{id}/proofs` stay plain because the domain keeps them small.
@@ -242,6 +242,27 @@ A teen asks a linked parent for money; the parent hands over the cash and confir
 
 Errors: 422 `parent_required`, `invalid_amount`, `amount_too_small`, `insufficient_funds`, `invalid_filter`, `invalid_idempotency_key`; 409 `payout_already_open`, 409 `invalid_transition`; 403 `forbidden` (wrong role, or the link is gone).
 
+### Manual bonus or penalty (parent)
+
+> **Proposed feature.** This comes from the maintainers' review, not from `docs/use-cases.md` (which has only task rewards and automatic missed-task penalties). It is documented here so the contract can be reviewed; drop it together with `UC-13` and migration V17 if it is not wanted.
+
+`POST /teens/{teenId}/adjustments` → `201`, parent only, `Idempotency-Key` required.
+```json
+{ "kind": "BONUS", "amount": 25000, "reason": "Great grades" }
+```
+`kind` is `BONUS` (credits the teen's wallet) or `PENALTY` (debits it). `amount` is a positive integer in minor units, at most `LEDGER_MAX_ADJUSTMENT_AMOUNT` (default 10000000, the same as the task reward maximum). `reason` is required, 1 to 140 characters after normalisation: every whitespace character (line breaks and tabs included) becomes a plain space, other control and invisible format characters are removed, and the ends are trimmed. Length is counted in characters, not bytes. The response is the new entry:
+```json
+{ "id": "…", "teenId": "…", "parentId": "…", "kind": "BONUS", "amount": 25000, "currency": "KZT",
+  "reason": "Great grades", "createdAt": "…" }
+```
+- The parent must be linked to the teen right now; the link is re-checked under the wallet lock. An unlinked parent gets 403 `forbidden`, and so does an id that belongs to nobody (the two are deliberately indistinguishable, as for `teenId` on `POST /task-series`).
+- A penalty may take the balance below zero, exactly like the automatic missed-task penalty (UC-11): `available` goes negative and blocks payout requests and goal locks until bonuses or rewards pay it down.
+- An adjustment is an append-only ledger entry (`MANUAL_BONUS` or `MANUAL_PENALTY`) that records the parent and the reason. There is no edit and no delete. A mistake is corrected with an adjustment of the opposite kind and the same amount.
+- The teen gets a push (`BONUS_RECEIVED` or `MANUAL_PENALTY_APPLIED`) with the amount; the reason is not in the push.
+- A replay with the same key returns `201` with the same entry and changes nothing. The same key with another teen, kind, amount or reason is 422 `invalid_idempotency_key`.
+
+Errors: 403 `forbidden` (teen caller, parent not linked, unknown teen); 400 `invalid_request` (malformed `teenId`), `invalid_body` (malformed JSON); 422 `invalid_amount` (missing, not positive, or over the maximum), `invalid_kind`, `invalid_reason`, `invalid_idempotency_key`.
+
 ## Teen home screen
 
 ### `GET /dashboard` (teen only; parents get 403)
@@ -268,11 +289,11 @@ Register or refresh a device: `{ "token": "<fcm token>", "platform": "ANDROID", 
 `{ "token": "…" }`. Call it on sign-out. Tokens that Firebase reports as dead are removed by the server.
 
 ### What a push contains
-A localised `notification` (title and body in Russian or Kazakh by the device's locale) plus a `data` map of strings: `type` always, and `taskId` or `payoutId` when relevant, for deep links. `taskId` is always the id of the task the event is about; for a milestone's own push (assigned, submitted, approved, …) it is the milestone's id, and a child task's push carries the child's id. Open the milestone through `GET /tasks/{id}`. `type` is one of:
+A localised `notification` (title and body in Russian or Kazakh by the device's locale) plus a `data` map of strings: `type` always, and `taskId`, `payoutId` or `entryId` (manual adjustments) when relevant, for deep links. `taskId` is always the id of the task the event is about; for a milestone's own push (assigned, submitted, approved, …) it is the milestone's id, and a child task's push carries the child's id. Open the milestone through `GET /tasks/{id}`. `type` is one of:
 
 | Recipient | Types |
 |---|---|
-| teen | `TASK_ASSIGNED`, `TASK_APPROVED`, `TASK_REJECTED`, `TASK_REDO_REQUESTED`, `TASK_CANCELLED`, `TASK_EXPIRED`, `TASK_EXPIRED_WITH_PENALTY`, `PENALTY_APPLIED`, `PAYOUT_FULFILLED`, `PAYOUT_DECLINED`, `PAYOUT_EXPIRED`, `PAYOUT_UNLINKED`, `FAMILY_LINKED_TEEN`, `FAMILY_UNLINKED` |
+| teen | `TASK_ASSIGNED`, `TASK_APPROVED`, `TASK_REJECTED`, `TASK_REDO_REQUESTED`, `TASK_CANCELLED`, `TASK_EXPIRED`, `TASK_EXPIRED_WITH_PENALTY`, `PENALTY_APPLIED`, `BONUS_RECEIVED`, `MANUAL_PENALTY_APPLIED`, `PAYOUT_FULFILLED`, `PAYOUT_DECLINED`, `PAYOUT_EXPIRED`, `PAYOUT_UNLINKED`, `FAMILY_LINKED_TEEN`, `FAMILY_UNLINKED` |
 | parent | `TASK_SUBMITTED`, `PAYOUT_REQUESTED` (high priority), `PAYOUT_CANCELLED_BY_TEEN`, `FAMILY_LINKED_PARENT`, `FAMILY_UNLINKED` |
 
 Each event is sent at most once per recipient, even if the server redelivers it. The push is a nudge, not a source of truth: on receipt, refetch the data.
@@ -286,7 +307,7 @@ Each event is sent at most once per recipient, even if the server redelivers it.
 These are facts about the current API, listed so they are decided on purpose and not found in the app:
 
 1. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
-2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
+2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed; a manual adjustment's reason is stored on the entry and returned once, by the `POST` that created it, and is not readable afterwards. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
 3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
 4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
 5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.

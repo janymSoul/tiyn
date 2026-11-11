@@ -109,8 +109,9 @@ If a flow ever needs strict ordering (it does not today), that is a reason to ad
 | `PayoutFulfilled` | ledger | notification | "paid" → teen |
 | `PayoutCancelled` | ledger | notification | to the parent when the teen cancelled; otherwise "declined / expired / unlinked" → teen |
 | `PenaltyApplied` | ledger | notification | "deduction" → teen |
+| `BalanceAdjusted` | ledger | notification | "bonus" or "deduction from your parent" → teen (proposed manual adjustment) |
 
-`FamilyLinked`, `FamilyUnlinked` and all the `Task*` events exist in code. The real listeners today are the two `FamilyUnlinked` handlers in the task module (cancel open tasks, close series), the ledger's `FamilyUnlinked` handler (cancel the open payout) and its `TaskApproved` handler (credit the wallet) and `TaskExpired` handler (debit the penalty); `PayoutRequested`, `PayoutFulfilled`, `PayoutCancelled` and `PenaltyApplied` are consumed by the notification module; the notification module consumes every event in the table (idempotent through `notification.delivered`, claimed before sending). Event payloads are records in the producing module's root package and are part of its **public contract**.
+`FamilyLinked`, `FamilyUnlinked` and all the `Task*` events exist in code. The real listeners today are the two `FamilyUnlinked` handlers in the task module (cancel open tasks, close series), the ledger's `FamilyUnlinked` handler (cancel the open payout) and its `TaskApproved` handler (credit the wallet) and `TaskExpired` handler (debit the penalty); `PayoutRequested`, `PayoutFulfilled`, `PayoutCancelled`, `PenaltyApplied` and `BalanceAdjusted` are consumed by the notification module; the notification module consumes every event in the table (idempotent through `notification.delivered`, claimed before sending). Event payloads are records in the producing module's root package and are part of its **public contract**.
 
 ## Before production
 
