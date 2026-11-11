@@ -5,7 +5,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 ## Conventions
 
 - **Transport:** JSON over HTTPS. Timestamps are ISO-8601 UTC instants (`2026-11-01T20:58:13.173252Z`). Ids are UUIDs.
-- **Auth:** every endpoint except `POST /auth/google` and `GET /actuator/health/**` needs `Authorization: Bearer <token>`. The token is our own JWT (HS256, issuer `tiyn`, `sub` = user id, `role` = `PARENT` or `TEEN`), valid for `JWT_TTL` (default 7 days). There is no refresh or logout endpoint: when it expires, sign in with Google again.
+- **Auth:** every endpoint except `POST /auth/google`, `POST /auth/refresh`, `POST /auth/logout` and `GET /actuator/health/**` needs `Authorization: Bearer <token>`. The token is our own JWT (HS256, issuer `tiyn`, `sub` = user id, `role` = `PARENT` or `TEEN`), valid for `JWT_TTL` (default 7 days). Before it expires, or after, exchange the refresh token for a new one with `POST /auth/refresh` (see Identity). Do not send an `Authorization` header to the three public `/auth/*` endpoints: an expired or invalid one is rejected with 401 `unauthenticated` before the endpoint runs.
 - **Money:** `long` in **minor units** (tiyn): 1 KZT = 100. Currency is always `"KZT"`. Examples: reward `150000` = 1,500 KZT. Defaults: maximum reward or penalty `10000000` (100,000 KZT, `TASK_MAX_REWARD_AMOUNT`), minimum payout `10000` (100 KZT, `LEDGER_MIN_PAYOUT_AMOUNT`).
 - **Errors:** every failure is `{"error": "<code>"}` with an HTTP status. Clients switch on the code; the text is never localised. Cross-cutting codes:
 
@@ -21,7 +21,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 | 422 | `validation_failed` | bean validation failure |
 | 500 | `internal_error` | unexpected; retry is safe only for idempotent calls |
 
-- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
+- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join`, `POST /auth/google` and `POST /auth/logout` need no key: repeating them is safe (each sign-in starts a new session), except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it). `POST /auth/refresh` takes no key either, and repeating it with the same token is not safe (see Identity).
 - **Eventual consistency:** a rewarded approval and an expired penalty reach the wallet through events, usually within seconds. After `approve`, the balance may lag; re-read it instead of assuming.
 - **Roles:** `PARENT` and `TEEN`. A teen may be linked to several parents; a parent to several teens. A parent only sees and acts on tasks they created for linked teens.
 - **Lists that grow are paginated** with an opaque cursor, always newest first; see [Pagination](#pagination). `GET /family` and `GET /tasks/{id}/proofs` stay plain because the domain keeps them small.
@@ -70,11 +70,33 @@ Client flow: call without `role`. On `422 role_required` (the account is new and
 
 Response `200`:
 ```json
-{ "token": "<our jwt>", "user": { "id": "…", "role": "PARENT", "displayName": "Aigerim", "joinCode": "SXVPUR" } }
+{ "token": "<our jwt>", "user": { "id": "…", "role": "PARENT", "displayName": "Aigerim", "joinCode": "SXVPUR" }, "refreshToken": "<opaque string>" }
 ```
-`joinCode` appears only for parents (six characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). One Google account is one user with one role.
+`joinCode` appears only for parents (six characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). One Google account is one user with one role. Every sign-in starts a new session with its own `refreshToken`; sessions on several devices are independent.
 
 Errors: 401 `invalid_identity` (bad or wrong-audience token), 422 `role_required` (new account, no `role`), 422 `invalid_role`, 422 `invalid_display_name`, 409 `conflict`, 503 `identity_provider_unavailable`.
+
+### `POST /auth/refresh` (public)
+
+Exchange a refresh token for a new access token and a new refresh token.
+
+Request: `{ "refreshToken": "<opaque string>" }`
+
+Response `200`: the same shape as `POST /auth/google`. The `role` in the new access token and in `user` is read from the account at this moment.
+
+Errors: 401 `invalid_refresh_token` for every failure, so the response never says why: unknown, malformed, blank or missing token, expired, revoked, or already used.
+
+Refresh flow:
+- A refresh token is an opaque random string, valid for `JWT_REFRESH_TTL` (default 30 days from when it was issued) and **single use**. Each successful refresh returns a new `refreshToken`; replace the stored one with it and discard the old one. Each rotation extends the session by another `JWT_REFRESH_TTL`.
+- Refresh when the access token is about to expire or after a 401 `unauthenticated`, then retry the original call once. On 401 `invalid_refresh_token`, clear both tokens and sign in with Google again.
+- Presenting a token that was already used is treated as theft: the whole session (every token issued since sign-in) is revoked and the answer is 401. Two refreshes with the same token racing each other therefore leave one success and the session revoked. Keep one refresh in flight per session, and if the response to a refresh is lost, sign in again instead of retrying with the old token.
+- Store the refresh token in secure storage (Keychain / Keystore). The server keeps only a SHA-256 hash of it and cannot show it again.
+
+### `POST /auth/logout` (public)
+
+Request: `{ "refreshToken": "<opaque string>" }`
+
+Response `204`, always: for a valid, expired, already-used, revoked or unknown token alike, so it never reveals whether the token existed. A known token revokes its whole session (that token and every other token issued since the same sign-in). Repeating it is harmless. Other sessions of the same account are not affected. The access token already issued stays valid until it expires (`JWT_TTL`).
 
 ### `GET /me`
 
@@ -288,6 +310,6 @@ These are facts about the current API, listed so they are decided on purpose and
 1. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
 2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
 3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
-4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
+4. **Access tokens cannot be revoked.** They last `JWT_TTL` (7 days) and `POST /auth/logout` only ends the refresh session, so a stolen access token works until it expires. Shortening `JWT_TTL` is safe now that clients can refresh.
 5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
 6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
