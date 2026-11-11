@@ -20,16 +20,18 @@ final class TaskSeries {
     private final UUID id;
     private final UUID parentId;
     private final UUID teenId;
-    private final String title;
-    private final String description;
-    private final long rewardAmount;
-    private final long penaltyAmount;
+    private String title;
+    private String description;
+    private long rewardAmount;
+    private long penaltyAmount;
     private final String currency;
     private final Recurrence recurrence;
-    private final ZoneId zone;
-    private final LocalTime dueTime;
+    private ZoneId zone;
+    private LocalTime dueTime;
     private final LocalDate startsOn;
     private boolean active;
+    private boolean closed;
+    private final int version;
 
     private TaskSeries(
             UUID id,
@@ -44,7 +46,9 @@ final class TaskSeries {
             ZoneId zone,
             LocalTime dueTime,
             LocalDate startsOn,
-            boolean active) {
+            boolean active,
+            boolean closed,
+            int version) {
         this.id = id;
         this.parentId = parentId;
         this.teenId = teenId;
@@ -58,6 +62,8 @@ final class TaskSeries {
         this.dueTime = dueTime;
         this.startsOn = startsOn;
         this.active = active;
+        this.closed = closed;
+        this.version = version;
     }
 
     static TaskSeries create(UUID id, UUID parentId, NewSeries draft, Instant now) {
@@ -86,7 +92,9 @@ final class TaskSeries {
                 zone,
                 draft.dueTime(),
                 startsOn,
-                true);
+                true,
+                false,
+                0);
     }
 
     static TaskSeries restore(
@@ -102,7 +110,9 @@ final class TaskSeries {
             String timezone,
             LocalTime dueTime,
             LocalDate startsOn,
-            boolean active) {
+            boolean active,
+            boolean closed,
+            int version) {
         return new TaskSeries(
                 id,
                 parentId,
@@ -116,7 +126,9 @@ final class TaskSeries {
                 ZoneId.of(timezone),
                 dueTime,
                 startsOn,
-                active);
+                active,
+                closed,
+                version);
     }
 
     Optional<Occurrence> dueOccurrence(Instant now) {
@@ -133,10 +145,53 @@ final class TaskSeries {
     }
 
     void close(UUID byParentId) {
+        requireOwner(byParentId);
+        active = false;
+        closed = true;
+    }
+
+    void pause(UUID byParentId) {
+        requireOpen(byParentId);
+        active = false;
+    }
+
+    void resume(UUID byParentId) {
+        requireOpen(byParentId);
+        active = true;
+    }
+
+    void amend(UUID byParentId, SeriesChanges changes) {
+        requireOpen(byParentId);
+        ZoneId newZone = changes.timezone() == null ? zone : parseZone(changes.timezone());
+        if (changes.title() != null) {
+            title = changes.title().trim();
+        }
+        if (changes.description() != null) {
+            description = changes.description().trim();
+        }
+        if (changes.rewardAmount() != null) {
+            rewardAmount = changes.rewardAmount();
+        }
+        if (changes.penaltyAmount() != null) {
+            penaltyAmount = changes.penaltyAmount();
+        }
+        if (changes.dueTime() != null) {
+            dueTime = changes.dueTime();
+        }
+        zone = newZone;
+    }
+
+    private void requireOwner(UUID byParentId) {
         if (!parentId.equals(byParentId)) {
             throw new TaskException(TaskError.FORBIDDEN);
         }
-        active = false;
+    }
+
+    private void requireOpen(UUID byParentId) {
+        requireOwner(byParentId);
+        if (closed) {
+            throw new TaskException(TaskError.INVALID_TRANSITION);
+        }
     }
 
     private static Recurrence parseRecurrence(String raw) {
@@ -205,6 +260,14 @@ final class TaskSeries {
 
     boolean isActive() {
         return active;
+    }
+
+    boolean isClosed() {
+        return closed;
+    }
+
+    int version() {
+        return version;
     }
 
     @Override

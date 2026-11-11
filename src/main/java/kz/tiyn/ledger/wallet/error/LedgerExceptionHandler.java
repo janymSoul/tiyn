@@ -26,6 +26,7 @@ class LedgerExceptionHandler {
                     AMOUNT_TOO_SMALL,
                     INSUFFICIENT_FUNDS,
                     PARENT_REQUIRED,
+                    TEEN_REQUIRED,
                     INVALID_IDEMPOTENCY_KEY,
                     INVALID_FILTER,
                     INVALID_NAME,

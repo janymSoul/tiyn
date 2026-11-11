@@ -35,6 +35,15 @@ class LinkStore {
                 .map(LinkStore::toLink);
     }
 
+    List<FamilyLink> findActiveForUpdate(UUID userId, Role role) {
+        var self = role == Role.PARENT ? FAMILY_LINKS.PARENT_ID : FAMILY_LINKS.TEEN_ID;
+        return dsl.selectFrom(FAMILY_LINKS)
+                .where(self.eq(userId).and(FAMILY_LINKS.REMOVED_AT.isNull()))
+                .orderBy(FAMILY_LINKS.PARENT_ID, FAMILY_LINKS.TEEN_ID)
+                .forUpdate()
+                .fetch(LinkStore::toLink);
+    }
+
     boolean existsActive(UUID parentId, UUID teenId) {
         return dsl.fetchExists(dsl.selectOne()
                 .from(FAMILY_LINKS)
@@ -59,7 +68,7 @@ class LinkStore {
                 .from(FAMILY_LINKS)
                 .join(USERS)
                 .on(USERS.ID.eq(other))
-                .where(self.eq(userId).and(FAMILY_LINKS.REMOVED_AT.isNull()))
+                .where(self.eq(userId).and(FAMILY_LINKS.REMOVED_AT.isNull()).and(USERS.DELETED_AT.isNull()))
                 .orderBy(USERS.DISPLAY_NAME, USERS.ID)
                 .fetch(r ->
                         new FamilyMember(r.get(USERS.ID), Role.valueOf(r.get(USERS.ROLE)), r.get(USERS.DISPLAY_NAME)));

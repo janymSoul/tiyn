@@ -2,6 +2,7 @@ package kz.tiyn.ledger.wallet.error;
 
 public enum LedgerError {
     FORBIDDEN,
+    TEEN_REQUIRED,
     NOT_FOUND,
     INVALID_AMOUNT,
     UNSUPPORTED_CURRENCY,

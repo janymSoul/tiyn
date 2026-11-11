@@ -28,6 +28,9 @@ tiyn:
     resubmit-after: ${EVENTS_RESUBMIT_AFTER:PT1M}
   idempotency:
     ttl: ${IDEMPOTENCY_TTL:PT24H}
+  export:
+    page-size: ${EXPORT_PAGE_SIZE:500}
+    min-interval: ${EXPORT_MIN_INTERVAL:PT5M}
   task:
     max-reward-amount: ${TASK_MAX_REWARD_AMOUNT:10000000}
   notification:
@@ -38,6 +41,7 @@ tiyn:
   dashboard:
     recent-window: ${DASHBOARD_RECENT_WINDOW:P7D}
     max-tasks: ${DASHBOARD_MAX_TASKS:50}
+    review-preview: ${DASHBOARD_REVIEW_PREVIEW:10}
   media:
     s3:
       endpoint: ${S3_ENDPOINT:}
@@ -54,6 +58,7 @@ tiyn:
   jwt:
     secret: ${JWT_SECRET}
     ttl: ${JWT_TTL:168h}
+    refresh-ttl: ${JWT_REFRESH_TTL:720h}
   google:
     client-ids: ${GOOGLE_CLIENT_IDS}
 

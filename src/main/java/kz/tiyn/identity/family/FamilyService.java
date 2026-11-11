@@ -1,6 +1,7 @@
 package kz.tiyn.identity.family;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import kz.tiyn.identity.account.AccountDirectory;
@@ -13,11 +14,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-class FamilyService {
+class FamilyService implements FamilyExit {
 
     private final AccountDirectory accounts;
     private final LinkStore links;
     private final JoinAttemptStore joinAttempts;
+    private final JoinRequestStore joinRequests;
     private final TransactionTemplate tx;
     private final Clock clock;
 
@@ -25,22 +27,38 @@ class FamilyService {
             AccountDirectory accounts,
             LinkStore links,
             JoinAttemptStore joinAttempts,
+            JoinRequestStore joinRequests,
             TransactionTemplate tx,
             Clock clock) {
         this.accounts = accounts;
         this.links = links;
         this.joinAttempts = joinAttempts;
+        this.joinRequests = joinRequests;
         this.tx = tx;
         this.clock = clock;
     }
 
-    User join(UUID teenId, String rawCode) {
+    JoinOutcome join(UUID teenId, String rawCode) {
         User teen = accounts.requireUser(teenId);
         registerJoinAttempt(teenId);
         User parent = accounts.requireParentByJoinCode(rawCode);
-        ConflictRetry.run(() -> linkOnce(parent, teen), conflict());
+        JoinOutcome outcome = needsApproval(parent, teen) ? requestApproval(parent, teen) : link(parent, teen);
         clearJoinAttempts(teenId);
-        return parent;
+        return outcome;
+    }
+
+    private boolean needsApproval(User parent, User teen) {
+        return parent.joinApprovalRequired() && !links.existsActive(parent.id(), teen.id());
+    }
+
+    private JoinOutcome link(User parent, User teen) {
+        ConflictRetry.run(() -> linkOnce(parent, teen), conflict());
+        return new JoinOutcome.Linked(parent);
+    }
+
+    private JoinOutcome requestApproval(User parent, User teen) {
+        JoinRequest request = ConflictRetry.run(() -> requestOnce(parent, teen), conflict());
+        return new JoinOutcome.Pending(request.id(), parent);
     }
 
     private void registerJoinAttempt(UUID teenId) {
@@ -67,13 +85,51 @@ class FamilyService {
         ConflictRetry.run(() -> unlinkOnce(parentId, teenId), conflict());
     }
 
+    @Override
+    public void leave(User user) {
+        Instant now = clock.instant();
+        joinAttempts.clear(user.id());
+        settlePendingRequests(user, now);
+        links.findActiveForUpdate(user.id(), user.role()).forEach(link -> {
+            link.unlink(now);
+            links.save(link);
+        });
+    }
+
+    private void settlePendingRequests(User user, Instant now) {
+        joinRequests.findPendingForUpdate(user.id(), user.role()).forEach(request -> {
+            if (user.role() == Role.PARENT) {
+                request.declineBy(user.id(), now);
+            } else {
+                request.withdrawBy(user.id(), now);
+            }
+            joinRequests.save(request);
+        });
+    }
+
     private Void linkOnce(User parent, User teen) {
         return tx.execute(status -> {
+            accounts.shareActiveUser(parent.id())
+                    .orElseThrow(() -> new IdentityException(IdentityError.INVALID_JOIN_CODE));
+            accounts.shareActiveUser(teen.id()).orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
             FamilyLink link =
                     links.findForUpdate(parent.id(), teen.id()).orElseGet(() -> FamilyLink.between(parent, teen));
             link.link();
             links.save(link);
             return null;
+        });
+    }
+
+    private JoinRequest requestOnce(User parent, User teen) {
+        return tx.execute(status -> {
+            accounts.shareActiveUser(parent.id())
+                    .orElseThrow(() -> new IdentityException(IdentityError.INVALID_JOIN_CODE));
+            accounts.shareActiveUser(teen.id()).orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
+            return joinRequests.findPending(parent.id(), teen.id()).orElseGet(() -> {
+                JoinRequest request = JoinRequest.submit(UUID.randomUUID(), parent, teen);
+                joinRequests.insert(request);
+                return request;
+            });
         });
     }
 

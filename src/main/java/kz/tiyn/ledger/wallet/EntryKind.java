@@ -7,5 +7,13 @@ enum EntryKind {
     GOAL_UNLOCK,
     PENALTY,
     MANUAL_BONUS,
-    MANUAL_PENALTY
+    MANUAL_PENALTY;
+
+    boolean relatesToTask() {
+        return this == TASK_REWARD || this == PENALTY;
+    }
+
+    boolean relatesToGoal() {
+        return this == GOAL_LOCK || this == GOAL_UNLOCK;
+    }
 }

@@ -8,6 +8,7 @@ import kz.tiyn.identity.FamilyLinked;
 import kz.tiyn.identity.FamilyUnlinked;
 import kz.tiyn.ledger.AdjustmentKind;
 import kz.tiyn.ledger.BalanceAdjusted;
+import kz.tiyn.identity.JoinRequested;
 import kz.tiyn.ledger.PayoutCancelled;
 import kz.tiyn.ledger.PayoutFulfilled;
 import kz.tiyn.ledger.PayoutRequested;
@@ -156,6 +157,15 @@ class NotificationListener {
                 type,
                 Map.of("entryId", e.entryId().toString()),
                 money(e.amount()));
+    }
+
+    @ApplicationModuleListener
+    void on(JoinRequested e) {
+        notify(
+                "JoinRequested:" + e.requestId(),
+                e.parentId(),
+                NotificationType.JOIN_REQUESTED,
+                Map.of("requestId", e.requestId().toString()));
     }
 
     @ApplicationModuleListener
