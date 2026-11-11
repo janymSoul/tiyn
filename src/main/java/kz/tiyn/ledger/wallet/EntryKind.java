@@ -5,5 +5,7 @@ enum EntryKind {
     PAYOUT,
     GOAL_LOCK,
     GOAL_UNLOCK,
-    PENALTY
+    PENALTY,
+    MANUAL_BONUS,
+    MANUAL_PENALTY
 }

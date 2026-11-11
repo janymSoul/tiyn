@@ -15,7 +15,9 @@ public enum LedgerError {
     INVALID_NAME,
     EXCEEDS_TARGET,
     INSUFFICIENT_GOAL_FUNDS,
-    GOAL_CLOSED;
+    GOAL_CLOSED,
+    INVALID_KIND,
+    INVALID_REASON;
 
     public String code() {
         return name().toLowerCase();

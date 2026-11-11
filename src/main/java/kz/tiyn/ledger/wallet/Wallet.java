@@ -3,6 +3,7 @@ package kz.tiyn.ledger.wallet;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import kz.tiyn.ledger.BalanceAdjusted;
 import kz.tiyn.ledger.PenaltyApplied;
 import kz.tiyn.ledger.wallet.error.LedgerError;
 import kz.tiyn.ledger.wallet.error.LedgerException;
@@ -68,6 +69,22 @@ final class Wallet {
         events.record(new PenaltyApplied(entryId, teenId, taskId, amount, currency));
         return new LedgerEntry(
                 entryId, teenId, currency, EntryKind.PENALTY, -amount, 0, taskId, LedgerEntry.penaltyKey(taskId));
+    }
+
+    LedgerEntry adjust(UUID entryId, UUID parentId, Adjustment adjustment) {
+        balanceAmount += adjustment.balanceDelta();
+        events.record(new BalanceAdjusted(entryId, teenId, parentId, adjustment.kind(), adjustment.amount(), currency));
+        return new LedgerEntry(
+                entryId,
+                teenId,
+                currency,
+                adjustment.entryKind(),
+                adjustment.balanceDelta(),
+                0,
+                null,
+                LedgerEntry.adjustmentKey(entryId),
+                adjustment.reason(),
+                parentId);
     }
 
     List<Object> pullEvents() {

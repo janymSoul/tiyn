@@ -3,6 +3,8 @@ package kz.tiyn.ledger.wallet;
 import static kz.tiyn.platform.jooq.ledger.Tables.LEDGER_ENTRIES;
 
 import java.util.Optional;
+import java.util.UUID;
+import kz.tiyn.platform.time.Instants;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 
@@ -44,6 +46,22 @@ class LedgerStore {
                 .set(LEDGER_ENTRIES.LOCKED_DELTA, entry.lockedDelta())
                 .set(LEDGER_ENTRIES.REF_ID, entry.refId())
                 .set(LEDGER_ENTRIES.IDEMPOTENCY_KEY, entry.idempotencyKey())
+                .set(LEDGER_ENTRIES.NOTE, entry.note())
+                .set(LEDGER_ENTRIES.ACTOR_ID, entry.actorId())
                 .execute();
+    }
+
+    Optional<AdjustmentView> findAdjustment(UUID entryId) {
+        return dsl.selectFrom(LEDGER_ENTRIES)
+                .where(LEDGER_ENTRIES.ID.eq(entryId))
+                .fetchOptional(r -> new AdjustmentView(
+                        r.getId(),
+                        r.getTeenId(),
+                        r.getActorId(),
+                        EntryKind.valueOf(r.getKind()),
+                        r.getBalanceDelta(),
+                        r.getCurrency(),
+                        r.getNote(),
+                        Instants.fromUtc(r.getCreatedAt())));
     }
 }

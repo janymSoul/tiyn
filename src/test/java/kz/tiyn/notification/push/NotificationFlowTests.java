@@ -222,6 +222,55 @@ class NotificationFlowTests {
     }
 
     @Test
+    void aManualBonusAndAManualPenaltyTellTheTeenInTheirLanguageAndNotTheParent() throws Exception {
+        Family f = fx.linkedFamily();
+        String teenRu = device(f.teen(), "ru");
+        String teenKk = device(f.teen(), "kk");
+        String parent = device(f.parent(), "ru");
+
+        fx.send(
+                        "/teens/" + f.teen().id() + "/adjustments",
+                        "{\"kind\":\"BONUS\",\"amount\":25000,\"reason\":\"Great grades\"}",
+                        f.parent().bearer(),
+                        "Idempotency-Key",
+                        "n1")
+                .andExpect(status().isCreated());
+        fx.send(
+                        "/teens/" + f.teen().id() + "/adjustments",
+                        "{\"kind\":\"PENALTY\",\"amount\":10000,\"reason\":\"Late home\"}",
+                        f.parent().bearer(),
+                        "Idempotency-Key",
+                        "n2")
+                .andExpect(status().isCreated());
+
+        var bonus = awaitPush(teenRu, "BONUS_RECEIVED");
+        assertThat(bonus.push().body()).contains("250");
+        assertThat(bonus.push().data()).containsKey("entryId");
+        assertThat(awaitPush(teenRu, "MANUAL_PENALTY_APPLIED").push().body()).contains("100");
+        assertThat(awaitPush(teenKk, "BONUS_RECEIVED").push().title())
+                .isNotEqualTo(bonus.push().title());
+        awaitPush(teenKk, "MANUAL_PENALTY_APPLIED");
+        assertNoPush(parent, "BONUS_RECEIVED");
+        assertNoPush(parent, "MANUAL_PENALTY_APPLIED");
+    }
+
+    @Test
+    void aReplayedAdjustmentPushesOnce() throws Exception {
+        Family f = fx.linkedFamily();
+        String teen = device(f.teen(), "ru");
+        String body = "{\"kind\":\"BONUS\",\"amount\":25000,\"reason\":\"Great grades\"}";
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            fx.send("/teens/" + f.teen().id() + "/adjustments", body, f.parent().bearer(), "Idempotency-Key", "same")
+                    .andExpect(status().isCreated());
+        }
+
+        awaitPush(teen, "BONUS_RECEIVED");
+        assertNoPush(teen, "MANUAL_PENALTY_APPLIED");
+        assertThat(sender.sentTo(teen, "BONUS_RECEIVED")).hasSize(1);
+    }
+
+    @Test
     void payoutEventsGoToTheRightPerson() throws Exception {
         Family f = fx.linkedFamily();
         String teen = device(f.teen(), "ru");
