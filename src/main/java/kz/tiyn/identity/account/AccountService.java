@@ -24,18 +24,21 @@ class AccountService implements AccountDirectory {
     private final UserStore users;
     private final TransactionTemplate tx;
     private final SecureRandom random;
+    private final SessionService sessions;
 
     AccountService(
             GoogleVerifier google,
             AccessTokenIssuer tokens,
             UserStore users,
             TransactionTemplate tx,
-            SecureRandom random) {
+            SecureRandom random,
+            SessionService sessions) {
         this.google = google;
         this.tokens = tokens;
         this.users = users;
         this.tx = tx;
         this.random = random;
+        this.sessions = sessions;
     }
 
     SignInResult signIn(String idToken, String role, String displayName) {
@@ -45,7 +48,38 @@ class AccountService implements AccountDirectory {
         GoogleIdentity identity = verify(idToken);
         User user = ConflictRetry.run(
                 () -> signInOnce(identity, role, displayName), () -> new IdentityException(IdentityError.CONFLICT));
-        return new SignInResult(tokens.issue(user.id(), user.role()), user);
+        return new SignInResult(tokens.issue(user.id(), user.role()), sessions.open(user), user);
+    }
+
+    User changeJoinApproval(UUID userId, boolean required) {
+        return tx.execute(status -> {
+            User user =
+                    users.findForUpdate(userId).orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
+            if (required) {
+                user.requireApprovalOfJoins();
+            } else {
+                user.allowDirectJoins();
+            }
+            users.saveJoinApproval(user);
+            return user;
+        });
+    }
+
+    User updateProfile(UUID userId, String displayName) {
+        return tx.execute(status -> {
+            User user =
+                    users.findForUpdate(userId).orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
+            if (displayName != null) {
+                user.rename(displayName);
+                users.updateDisplayName(user);
+            }
+            return user;
+        });
+    }
+
+    User regenerateJoinCode(UUID userId) {
+        return ConflictRetry.run(
+                () -> regenerateJoinCodeOnce(userId), () -> new IdentityException(IdentityError.CONFLICT));
     }
 
     private GoogleIdentity verify(String idToken) {
@@ -82,6 +116,16 @@ class AccountService implements AccountDirectory {
             User user = User.register(UUID.randomUUID(), identity.subject(), role, name, code);
             users.insert(user);
             return user;
+        });
+    }
+
+    private User regenerateJoinCodeOnce(UUID userId) {
+        return tx.execute(status -> {
+            User user =
+                    users.findForUpdate(userId).orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
+            User rotated = user.withJoinCode(JoinCode.generate(random));
+            users.updateJoinCode(rotated);
+            return rotated;
         });
     }
 

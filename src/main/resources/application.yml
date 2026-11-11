@@ -41,6 +41,7 @@ tiyn:
   dashboard:
     recent-window: ${DASHBOARD_RECENT_WINDOW:P7D}
     max-tasks: ${DASHBOARD_MAX_TASKS:50}
+    review-preview: ${DASHBOARD_REVIEW_PREVIEW:10}
   media:
     s3:
       endpoint: ${S3_ENDPOINT:}
@@ -56,6 +57,7 @@ tiyn:
   jwt:
     secret: ${JWT_SECRET}
     ttl: ${JWT_TTL:168h}
+    refresh-ttl: ${JWT_REFRESH_TTL:720h}
   google:
     client-ids: ${GOOGLE_CLIENT_IDS}
 
