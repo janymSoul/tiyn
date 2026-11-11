@@ -79,6 +79,8 @@ The service compares the amount with *available* funds (balance minus locked min
 
 The same pattern is used for the identity `family_links` row, so concurrent join/unlink of one pair are serialised.
 
+**Join requests: the request row first, then the link row.** Approve, decline and withdraw lock the `join_requests` row (`FOR UPDATE`) and approve then locks the pair's `family_links` row, so a double approve or an approve racing a decline is serialised: the loser reads the closed request and either replays (same decision) or gets `invalid_transition`. Creating a request has no row to lock; the unique partial index on pending `(teen_id, parent_id)` turns a race into a `ConflictException`, and the retry returns the winner's request. Join and unlink lock only the link row, so the order cannot cycle.
+
 ### Task state → optimistic (version column)
 
 Two parents (or a double-tap) approving the same task concurrently should not both succeed. Rather than hold a row lock, detect the conflict:

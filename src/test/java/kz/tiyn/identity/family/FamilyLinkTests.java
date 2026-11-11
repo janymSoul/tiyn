@@ -81,6 +81,6 @@ class FamilyLinkTests {
     }
 
     private static User user(Role role) {
-        return User.restore(UUID.randomUUID(), "sub-" + UUID.randomUUID(), role, null, "Name");
+        return User.restore(UUID.randomUUID(), "sub-" + UUID.randomUUID(), role, null, "Name", false);
     }
 }
