@@ -48,6 +48,11 @@ class AccountService implements AccountDirectory {
         return new SignInResult(tokens.issue(user.id(), user.role()), user);
     }
 
+    User regenerateJoinCode(UUID userId) {
+        return ConflictRetry.run(
+                () -> regenerateJoinCodeOnce(userId), () -> new IdentityException(IdentityError.CONFLICT));
+    }
+
     private GoogleIdentity verify(String idToken) {
         try {
             return google.verify(idToken);
@@ -82,6 +87,16 @@ class AccountService implements AccountDirectory {
             User user = User.register(UUID.randomUUID(), identity.subject(), role, name, code);
             users.insert(user);
             return user;
+        });
+    }
+
+    private User regenerateJoinCodeOnce(UUID userId) {
+        return tx.execute(status -> {
+            User user =
+                    users.findForUpdate(userId).orElseThrow(() -> new IdentityException(IdentityError.UNAUTHENTICATED));
+            User rotated = user.withJoinCode(JoinCode.generate(random));
+            users.updateJoinCode(rotated);
+            return rotated;
         });
     }
 

@@ -33,6 +33,13 @@ public final class User {
         return new User(id, idpSub, role, code, name);
     }
 
+    User withJoinCode(JoinCode newCode) {
+        if (role != Role.PARENT) {
+            throw new IdentityException(IdentityError.FORBIDDEN);
+        }
+        return new User(id, idpSub, role, newCode.value(), displayName);
+    }
+
     public static User restore(UUID id, String idpSub, Role role, String joinCode, String displayName) {
         return new User(id, idpSub, role, joinCode, displayName);
     }
