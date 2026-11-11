@@ -18,6 +18,14 @@ class JoinAttemptStore {
     }
 
     JoinAttempts lockOrCreate(UUID teenId, Instant now) {
+        JoinAttempts locked = null;
+        while (locked == null) {
+            locked = insertThenLock(teenId, now);
+        }
+        return locked;
+    }
+
+    private JoinAttempts insertThenLock(UUID teenId, Instant now) {
         dsl.insertInto(JOIN_ATTEMPTS)
                 .set(JOIN_ATTEMPTS.TEEN_ID, teenId)
                 .set(JOIN_ATTEMPTS.ATTEMPTS, 0)

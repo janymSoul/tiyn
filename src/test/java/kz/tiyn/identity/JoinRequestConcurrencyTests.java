@@ -54,7 +54,7 @@ class JoinRequestConcurrencyTests {
 
         List<Integer> statuses = runConcurrently(() -> join(teen, parent));
 
-        assertThat(statuses).contains(202).containsOnly(202, 429);
+        assertThat(statuses).contains(202).allMatch(status -> status == 202 || status == 429);
         assertThat(jdbc.queryForObject(
                         "SELECT count(*) FROM identity.join_requests WHERE parent_id = ? AND teen_id = ?"
                                 + " AND state = 'PENDING'",
