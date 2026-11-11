@@ -31,7 +31,8 @@ class WalletAdjustmentTests {
         Wallet wallet = Wallet.restore(TEEN, "KZT", 1000, 0, 0);
         UUID entryId = UUID.randomUUID();
 
-        LedgerEntry entry = wallet.adjust(entryId, PARENT, adjustment("BONUS", 500L, "Great grades"));
+        LedgerEntry entry = wallet.adjust(
+                entryId, PARENT, adjustment("BONUS", 500L, "Great grades"), "ADJUSTMENT:" + PARENT + ":k1");
 
         assertThat(wallet.balanceAmount()).isEqualTo(1500);
         assertThat(entry)
@@ -43,7 +44,7 @@ class WalletAdjustmentTests {
                         500,
                         0,
                         null,
-                        "ADJUSTMENT-" + entryId,
+                        "ADJUSTMENT:" + PARENT + ":k1",
                         "Great grades",
                         PARENT));
         assertThat(wallet.pullEvents())
@@ -55,7 +56,7 @@ class WalletAdjustmentTests {
         Wallet wallet = Wallet.restore(TEEN, "KZT", 1000, 0, 0);
         UUID entryId = UUID.randomUUID();
 
-        LedgerEntry entry = wallet.adjust(entryId, PARENT, adjustment("PENALTY", 400L, "Broke the window"));
+        LedgerEntry entry = wallet.adjust(entryId, PARENT, adjustment("PENALTY", 400L, "Broke the window"), "k");
 
         assertThat(wallet.balanceAmount()).isEqualTo(600);
         assertThat(entry.kind()).isEqualTo(EntryKind.MANUAL_PENALTY);
@@ -71,7 +72,7 @@ class WalletAdjustmentTests {
     void aPenaltyBeyondTheBalanceLeavesADebtAndKeepsLockedFunds() {
         Wallet wallet = Wallet.restore(TEEN, "KZT", 300, 100, 50);
 
-        wallet.adjust(UUID.randomUUID(), PARENT, adjustment("PENALTY", 800L, "Lost the phone"));
+        wallet.adjust(UUID.randomUUID(), PARENT, adjustment("PENALTY", 800L, "Lost the phone"), "k");
 
         assertThat(wallet.balanceAmount()).isEqualTo(-500);
         assertThat(wallet.lockedAmount()).isEqualTo(100);
@@ -82,7 +83,7 @@ class WalletAdjustmentTests {
     void aBonusPaysDownADebt() {
         Wallet wallet = Wallet.restore(TEEN, "KZT", -300, 0, 0);
 
-        wallet.adjust(UUID.randomUUID(), PARENT, adjustment("BONUS", 1000L, "Forgiven"));
+        wallet.adjust(UUID.randomUUID(), PARENT, adjustment("BONUS", 1000L, "Forgiven"), "k");
 
         assertThat(wallet.balanceAmount()).isEqualTo(700);
     }

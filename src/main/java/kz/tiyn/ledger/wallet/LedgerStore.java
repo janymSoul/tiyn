@@ -58,7 +58,9 @@ class LedgerStore {
                 r.getBalanceDelta(),
                 r.getLockedDelta(),
                 r.getRefId(),
-                r.getIdempotencyKey());
+                r.getIdempotencyKey(),
+                r.getNote(),
+                r.getActorId());
     }
 
     void append(LedgerEntry entry) {

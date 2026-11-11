@@ -71,7 +71,7 @@ final class Wallet {
                 entryId, teenId, currency, EntryKind.PENALTY, -amount, 0, taskId, LedgerEntry.penaltyKey(taskId));
     }
 
-    LedgerEntry adjust(UUID entryId, UUID parentId, Adjustment adjustment) {
+    LedgerEntry adjust(UUID entryId, UUID parentId, Adjustment adjustment, String idempotencyKey) {
         balanceAmount += adjustment.balanceDelta();
         events.record(new BalanceAdjusted(entryId, teenId, parentId, adjustment.kind(), adjustment.amount(), currency));
         return new LedgerEntry(
@@ -82,7 +82,7 @@ final class Wallet {
                 adjustment.balanceDelta(),
                 0,
                 null,
-                LedgerEntry.adjustmentKey(entryId),
+                idempotencyKey,
                 adjustment.reason(),
                 parentId);
     }

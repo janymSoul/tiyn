@@ -13,6 +13,10 @@ enum EntryKind {
         return this == TASK_REWARD || this == PENALTY;
     }
 
+    boolean isManual() {
+        return this == MANUAL_BONUS || this == MANUAL_PENALTY;
+    }
+
     boolean relatesToGoal() {
         return this == GOAL_LOCK || this == GOAL_UNLOCK;
     }

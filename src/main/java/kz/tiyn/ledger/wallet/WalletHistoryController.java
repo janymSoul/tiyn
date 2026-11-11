@@ -35,6 +35,8 @@ class WalletHistoryController {
                 view.createdAt(),
                 entry.kind().relatesToTask() ? entry.refId() : null,
                 entry.kind() == EntryKind.PAYOUT ? entry.refId() : null,
-                entry.kind().relatesToGoal() ? entry.refId() : null);
+                entry.kind().relatesToGoal() ? entry.refId() : null,
+                entry.kind().isManual() ? entry.note() : null,
+                entry.kind().isManual() ? entry.actorId() : null);
     }
 }

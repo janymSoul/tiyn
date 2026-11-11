@@ -26,8 +26,8 @@ record LedgerEntry(
         this(id, teenId, currency, kind, balanceDelta, lockedDelta, refId, idempotencyKey, null, null);
     }
 
-    static String adjustmentKey(UUID entryId) {
-        return "ADJUSTMENT-" + entryId;
+    static String adjustmentKey(UUID parentId, String key) {
+        return "ADJUSTMENT:" + parentId + ":" + key;
     }
 
     static String rewardKey(UUID taskId) {

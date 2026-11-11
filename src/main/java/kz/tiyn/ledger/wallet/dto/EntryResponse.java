@@ -13,4 +13,6 @@ public record EntryResponse(
         Instant createdAt,
         UUID taskId,
         UUID payoutId,
-        UUID goalId) {}
+        UUID goalId,
+        String reason,
+        UUID actorId) {}
