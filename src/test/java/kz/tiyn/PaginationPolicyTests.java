@@ -46,6 +46,7 @@ class PaginationPolicyTests {
 
         assertThat(marked)
                 .containsExactlyInAnyOrder(
+                        "kz.tiyn.dashboard.view.ParentDashboardController.dashboard(kz.tiyn.platform.security.Principal)",
                         "kz.tiyn.identity.family.FamilyController.family(kz.tiyn.platform.security.Principal)",
                         "kz.tiyn.task.tasks.TaskController.proofs(kz.tiyn.platform.security.Principal, java.util.UUID)");
     }

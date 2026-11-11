@@ -333,10 +333,116 @@ class IdentityFlowTests {
     }
 
     @Test
+    void regeneratingReturnsANewCodeThatReplacesTheOldOneInMe() throws Exception {
+        JsonNode parent = signIn(uniqueSub(), "PARENT", "Aigul");
+        String oldCode = parent.at("/user/joinCode").asText();
+
+        String body = regenerate(bearer(parent))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id(parent).toString()))
+                .andExpect(jsonPath("$.role").value("PARENT"))
+                .andExpect(jsonPath("$.displayName").value("Aigul"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String newCode = json.readTree(body).get("joinCode").asText();
+
+        assertThat(newCode).matches("[A-Z2-9]{6}").isNotEqualTo(oldCode);
+        mvc.perform(get("/me").header("Authorization", bearer(parent)))
+                .andExpect(jsonPath("$.joinCode").value(newCode));
+    }
+
+    @Test
+    void theNewCodeLinksATeenAndTheOldCodeIsRejectedLikeAnUnknownOne() throws Exception {
+        JsonNode parent = signIn(uniqueSub(), "PARENT", "Aigul");
+        JsonNode teen = signIn(uniqueSub(), "TEEN", "Dana");
+        String oldCode = parent.at("/user/joinCode").asText();
+        String newCode = regeneratedCode(parent);
+
+        send("/links/join", "{\"code\":\"" + oldCode + "\"}", bearer(teen))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_join_code"));
+        assertThat(directory.areLinked(id(parent), id(teen))).isFalse();
+        send("/links/join", "{\"code\":\"" + newCode.toLowerCase() + "\"}", bearer(teen))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parent.id").value(id(parent).toString()));
+        assertThat(directory.areLinked(id(parent), id(teen))).isTrue();
+    }
+
+    @Test
+    void regeneratingKeepsExistingLinksAndTheirEvents() throws Exception {
+        JsonNode parent = signIn(uniqueSub(), "PARENT", "Aigul");
+        JsonNode teen = signIn(uniqueSub(), "TEEN", "Dana");
+        send("/links/join", codeBody(parent), bearer(teen)).andExpect(status().isOk());
+        long linkedBefore = linkedEvents();
+        long unlinkedBefore = events.stream(FamilyUnlinked.class).count();
+
+        regeneratedCode(parent);
+
+        assertThat(directory.areLinked(id(parent), id(teen))).isTrue();
+        family(bearer(parent)).andExpect(jsonPath("$.members.length()").value(1));
+        family(bearer(teen)).andExpect(jsonPath("$.members.length()").value(1));
+        assertThat(linkedEvents()).isEqualTo(linkedBefore);
+        assertThat(events.stream(FamilyUnlinked.class).count()).isEqualTo(unlinkedBefore);
+    }
+
+    @Test
+    void regeneratingTwiceInARowInvalidatesEachPreviousCode() throws Exception {
+        JsonNode parent = signIn(uniqueSub(), "PARENT", "Aigul");
+        JsonNode teen = signIn(uniqueSub(), "TEEN", "Dana");
+        String first = regeneratedCode(parent);
+        String second = regeneratedCode(parent);
+
+        assertThat(second).isNotEqualTo(first);
+        send("/links/join", "{\"code\":\"" + first + "\"}", bearer(teen))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("invalid_join_code"));
+        send("/links/join", "{\"code\":\"" + second + "\"}", bearer(teen)).andExpect(status().isOk());
+    }
+
+    @Test
+    void regeneratingDoesNotChangeAnotherParentsCode() throws Exception {
+        JsonNode mother = signIn(uniqueSub(), "PARENT", "Mother");
+        JsonNode father = signIn(uniqueSub(), "PARENT", "Father");
+
+        String motherCode = regeneratedCode(mother);
+
+        mvc.perform(get("/me").header("Authorization", bearer(father)))
+                .andExpect(
+                        jsonPath("$.joinCode").value(father.at("/user/joinCode").asText()));
+        assertThat(motherCode).isNotEqualTo(father.at("/user/joinCode").asText());
+    }
+
+    @Test
+    void aTeenCannotRegenerateAndAnonymousCallersAreUnauthenticated() throws Exception {
+        JsonNode teen = signIn(uniqueSub(), "TEEN", "Dana");
+
+        regenerate(bearer(teen))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("forbidden"));
+        send("/me/join-code/regenerate", "", null)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("unauthenticated"));
+    }
+
+    @Test
     void familyNeedsAToken() throws Exception {
         mvc.perform(MockMvcRequestBuilders.get("/family"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("unauthenticated"));
+    }
+
+    private ResultActions regenerate(String authorization) throws Exception {
+        return send("/me/join-code/regenerate", "", authorization);
+    }
+
+    private String regeneratedCode(JsonNode parent) throws Exception {
+        String body = regenerate(bearer(parent))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return json.readTree(body).get("joinCode").asText();
     }
 
     private ResultActions family(String authorization) throws Exception {
