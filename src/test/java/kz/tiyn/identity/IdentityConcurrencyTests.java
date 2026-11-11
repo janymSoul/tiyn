@@ -84,6 +84,31 @@ class IdentityConcurrencyTests {
                 .isEqualTo(1);
     }
 
+    @Test
+    void concurrentRefreshesOfTheSameTokenProduceExactlyOneSuccessAndEndTheSession() throws Exception {
+        JsonNode session = signIn("sub-" + UUID.randomUUID(), "TEEN", "Dana");
+        String refreshToken = session.get("refreshToken").asText();
+        UUID userId = UUID.fromString(session.at("/user/id").asText());
+
+        List<Integer> statuses = runConcurrently(() -> mvc.perform(post("/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(json.createObjectNode().put("refreshToken", refreshToken))))
+                .andReturn()
+                .getResponse()
+                .getStatus());
+
+        assertThat(statuses.stream().filter(s -> s == 200)).hasSize(1);
+        assertThat(statuses.stream().filter(s -> s == 401)).hasSize(THREADS - 1);
+        assertThat(jdbc.queryForObject(
+                        "SELECT count(*) FROM identity.refresh_tokens WHERE user_id = ?", Integer.class, userId))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                        "SELECT count(*) FROM identity.refresh_tokens WHERE user_id = ? AND revoked_at IS NULL",
+                        Integer.class,
+                        userId))
+                .isZero();
+    }
+
     private JsonNode signIn(String sub, String role, String name) throws Exception {
         String body = json.writeValueAsString(json.createObjectNode()
                 .put("idToken", tokenFor(sub, name))

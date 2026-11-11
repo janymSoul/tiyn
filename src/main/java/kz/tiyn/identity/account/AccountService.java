@@ -24,18 +24,21 @@ class AccountService implements AccountDirectory {
     private final UserStore users;
     private final TransactionTemplate tx;
     private final SecureRandom random;
+    private final SessionService sessions;
 
     AccountService(
             GoogleVerifier google,
             AccessTokenIssuer tokens,
             UserStore users,
             TransactionTemplate tx,
-            SecureRandom random) {
+            SecureRandom random,
+            SessionService sessions) {
         this.google = google;
         this.tokens = tokens;
         this.users = users;
         this.tx = tx;
         this.random = random;
+        this.sessions = sessions;
     }
 
     SignInResult signIn(String idToken, String role, String displayName) {
@@ -45,7 +48,7 @@ class AccountService implements AccountDirectory {
         GoogleIdentity identity = verify(idToken);
         User user = ConflictRetry.run(
                 () -> signInOnce(identity, role, displayName), () -> new IdentityException(IdentityError.CONFLICT));
-        return new SignInResult(tokens.issue(user.id(), user.role()), user);
+        return new SignInResult(tokens.issue(user.id(), user.role()), sessions.open(user), user);
     }
 
     private GoogleIdentity verify(String idToken) {

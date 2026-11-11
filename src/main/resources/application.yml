@@ -53,6 +53,7 @@ tiyn:
   jwt:
     secret: ${JWT_SECRET}
     ttl: ${JWT_TTL:168h}
+    refresh-ttl: ${JWT_REFRESH_TTL:720h}
   google:
     client-ids: ${GOOGLE_CLIENT_IDS}
 

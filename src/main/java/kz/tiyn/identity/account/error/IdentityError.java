@@ -2,6 +2,7 @@ package kz.tiyn.identity.account.error;
 
 public enum IdentityError {
     INVALID_IDENTITY,
+    INVALID_REFRESH_TOKEN,
     UNAUTHENTICATED,
     FORBIDDEN,
     NOT_FOUND,

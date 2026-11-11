@@ -19,7 +19,7 @@ class IdentityExceptionHandler {
 
     private static HttpStatus statusOf(IdentityException e) {
         return switch (e.error()) {
-            case INVALID_IDENTITY, UNAUTHENTICATED -> HttpStatus.UNAUTHORIZED;
+            case INVALID_IDENTITY, INVALID_REFRESH_TOKEN, UNAUTHENTICATED -> HttpStatus.UNAUTHORIZED;
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
             case NOT_FOUND -> HttpStatus.NOT_FOUND;
             case ROLE_REQUIRED, INVALID_ROLE, INVALID_DISPLAY_NAME, INVALID_JOIN_CODE -> HttpStatus
