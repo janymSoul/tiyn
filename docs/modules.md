@@ -236,6 +236,8 @@ public interface BalanceReader {
 
 Errors: `forbidden` 403, `not_found` 404, `invalid_amount` / `amount_too_small` / `insufficient_funds` / `parent_required` / `invalid_idempotency_key` / `invalid_filter` 422, `payout_already_open` / `invalid_transition` 409. Repeating the same cancellation is a no-op; resolving a payout another way is `invalid_transition`. The fulfil debit must fit `balance − locked` (funds locked in goals can never be paid out).
 
+**Wallet history API.** `GET /wallet/entries` is a keyset page over `ledger_entries` ordered by `(created_at DESC, id DESC)`, served by the existing `ledger_entries_teen_created_id_idx` (no migration). A teen reads their own; a parent must pass `teenId` of a currently linked teen (`FamilyDirectory.areLinked`), otherwise `forbidden`; a parent without `teenId` gets `teen_required` 422. `amount` is `balance_delta - locked_delta`, the effect on *available*; the related id is mapped from `ref_id` by kind (`taskId`, `payoutId`, `goalId`). Entries are append-only, so a page never changes under a cursor.
+
 **Savings goals API** (teen only; a parent gets `forbidden`; goals are private to the teen). A goal is a label on part of the wallet's money: locking moves nothing, it writes a `GOAL_LOCK` entry (`balance_delta = 0`, `locked_delta = +amount`) and raises `wallets.locked_amount`, which lowers *available*. The money stays in the total balance. A goal's `savedAmount` is derived: the sum of `locked_delta` over the entries whose `ref_id` is the goal, so the goals and the wallet's locked total cannot drift apart (a test asserts `locked_amount = sum of saved`).
 
 | Route | Notes |
