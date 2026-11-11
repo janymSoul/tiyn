@@ -188,7 +188,7 @@ Nothing is debited yet; the open request only lowers *available*, so several req
 - Only a missed deadline counts: `ASSIGNED` past its deadline becomes `EXPIRED`. Submitted, rejected, cancelled (including after an unlink) and approved tasks cost nothing.
 - One penalty per task at most (key `PENALTY-TASK-{taskId}`), so a redelivered event does nothing.
 - The balance may go negative. A debt blocks payout requests and goal locks until rewards pay it down; releasing a goal still works.
-- The teen sees the penalty on the task (`penaltyAmount`) before the deadline. A teen-visible history of deductions is not built yet.
+- The teen sees the penalty on the task (`penaltyAmount`) before the deadline. Penalties also appear in the wallet history (`GET /wallet/entries`, kind `PENALTY`, with the task id), visible to the teen and to linked parents.
 
 **Support needed.** The expiry ticker (UC-10), the ledger's `TaskExpired` listener, the compensating `PENALTY` journal entry.
 
