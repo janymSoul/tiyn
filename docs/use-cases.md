@@ -100,6 +100,8 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 
 **Alternates.** Concurrent approve (two parents, double-tap) → optimistic version check; the loser gets a concurrent-modification conflict (409). Parent not linked → 403. Replayed command → no-op success.
 
+**As built.** The parent's home screen is one call, `GET /parent/dashboard` (parent only): for every linked teen it returns the balance, the number of proofs waiting for review with a preview of the 10 newest, and the open payout request addressed to that parent, plus totals across teens. See `docs/modules.md` (Dashboard).
+
 **Support needed.** The canonical flow in `docs/transactions.md`. The task transaction writes task tables and publishes the event only; the credit happens in the ledger's own transaction.
 
 **Notes.**

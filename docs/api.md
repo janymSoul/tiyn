@@ -28,7 +28,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 
 ## Pagination
 
-`GET /tasks`, `GET /payouts`, `GET /goals` and `GET /task-series` are paginated. Anything that grows with time is, and so will the wallet history be. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list.
+`GET /tasks`, `GET /payouts`, `GET /goals` and `GET /task-series` are paginated. Anything that grows with time is, and so will the wallet history be. `GET /family` (a handful of people) and `GET /tasks/{id}/proofs` (one entry per submission attempt) return everything and are not paginated. `GET /dashboard` is a composed view with its own window and is not a list. `GET /parent/dashboard` lists the parent's teens, a handful, each with a preview capped at 10 review items.
 
 **Request.** Two optional query parameters:
 - `limit`: items per page, default 50. Below 1, above 100 or not a number is 400 `invalid_request`.
@@ -259,6 +259,29 @@ One call for the home screen:
 ```
 `pendingAmount` is the sum of rewards of tasks awaiting a parent's decision. `milestoneId` is the id of the milestone a task belongs to, or `null`; the client can use it to group tasks under their milestone. `chores` and `milestones` hold open work plus recently decided tasks (window `DASHBOARD_RECENT_WINDOW`, default 7 days, at most `DASHBOARD_MAX_TASKS` = 50 tasks). `goals` lists active goals. `openPayout` is omitted when there is none.
 
+## Parent home screen
+
+### `GET /parent/dashboard` (parent only; teens get 403)
+
+One call for the parent's home screen, covering every linked teen:
+```json
+{
+  "totalPendingReviews": 3,
+  "totalOpenPayouts": 1,
+  "teens": [
+    {
+      "id": "…",
+      "displayName": "Dana",
+      "balance": { "balanceAmount": 0, "lockedAmount": 0, "availableAmount": 0, "currency": "KZT" },
+      "pendingReviewCount": 12,
+      "pendingReviews": [ { "id": "…", "title": "…", "rewardAmount": 0, "currency": "KZT", "submittedAt": "…" } ],
+      "openPayout": { "id": "…", "amount": 0, "currency": "KZT", "requestedAt": "…" }
+    }
+  ]
+}
+```
+`teens` holds the teens linked to the caller, ordered by display name; a parent with none gets an empty list. It is not paginated: a parent is linked to a handful of teens. `pendingReviews` are the caller's own tasks in state `SUBMITTED` for that teen, newest `submittedAt` first, and at most 10 per teen (`DASHBOARD_REVIEW_PREVIEW`); `pendingReviewCount` is the true number, so a client shows "12 waiting" and opens `GET /tasks?state=SUBMITTED&teenId=…` for the rest. `openPayout` is the teen's open request addressed to the caller and is omitted when there is none. `totalPendingReviews` and `totalOpenPayouts` sum across all teens (counts, not capped by the preview). A teen removed with `DELETE /links/{teenId}` disappears from the response at once.
+
 ## Push notifications
 
 ### `PUT /devices` → `204`
@@ -285,9 +308,8 @@ Each event is sent at most once per recipient, even if the server redelivers it.
 
 These are facts about the current API, listed so they are decided on purpose and not found in the app:
 
-1. **No parent home screen.** There is no parent dashboard: pending proofs, open payouts and teen balances need several calls.
-2. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
-3. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
-4. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
-5. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
-6. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
+1. **There is no wallet history.** Nobody can list ledger entries, so the app can show a balance but not why it changed. A teen also cannot read their own submitted proofs (`/proofs` is parent-only).
+2. **No `If-Modified-Since` or sync.** Lists are paginated, but their cursors are for browsing only (see Pagination). A client that must mirror server state refetches from the first page.
+3. **No refresh token.** Sessions last 7 days, then the user signs in with Google again.
+4. **No profile edit, account deletion or data export.** The last matters for the Kazakhstan personal-data law.
+5. **Push copy is Russian and Kazakh only,** with no English fallback; the Kazakh text has not been reviewed by a native speaker.
