@@ -21,7 +21,7 @@ Everything the backend exposes today, read from the code (controllers, DTO recor
 | 422 | `validation_failed` | bean validation failure |
 | 500 | `internal_error` | unexpected; retry is safe only for idempotent calls |
 
-- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it).
+- **Idempotency:** `Idempotency-Key` (a non-blank string, at most 100 characters) is **required** on `POST /tasks`, `POST /task-series`, `POST /goals`, `POST /tasks/{id}/submit`, `POST /goals/{id}/lock`, `POST /goals/{id}/unlock` and `POST /payouts`, and rejected with 422 `invalid_idempotency_key` when missing. Repeating a call with the same key returns the original result instead of repeating the effect; a repeated create (`POST /tasks`, `/task-series`, `/goals`) returns `201` with the object created the first time, in its current state. Keys are scoped to the caller and expire after 24 hours. Reusing a key with a different payload is 422 `invalid_idempotency_key`. Generate one UUID per user action and reuse it on retries. Approve, reject, request-redo, cancel, `POST /links/join`, `POST /me/join-code/regenerate` and `POST /auth/google` need no key: repeating them is safe, except that repeating request-redo returns 409 `invalid_transition` (the task is already back in `ASSIGNED`; reload it) and repeating a regenerate issues yet another code (see its section).
 - **Eventual consistency:** a rewarded approval and an expired penalty reach the wallet through events, usually within seconds. After `approve`, the balance may lag; re-read it instead of assuming.
 - **Roles:** `PARENT` and `TEEN`. A teen may be linked to several parents; a parent to several teens. A parent only sees and acts on tasks they created for linked teens.
 - **Lists that grow are paginated** with an opaque cursor, always newest first; see [Pagination](#pagination). `GET /family` and `GET /tasks/{id}/proofs` stay plain because the domain keeps them small.
@@ -72,13 +72,22 @@ Response `200`:
 ```json
 { "token": "<our jwt>", "user": { "id": "…", "role": "PARENT", "displayName": "Aigerim", "joinCode": "SXVPUR" } }
 ```
-`joinCode` appears only for parents (six characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). One Google account is one user with one role.
+`joinCode` appears only for parents (six characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`) and changes only when the parent calls `POST /me/join-code/regenerate`. One Google account is one user with one role.
 
 Errors: 401 `invalid_identity` (bad or wrong-audience token), 422 `role_required` (new account, no `role`), 422 `invalid_role`, 422 `invalid_display_name`, 409 `conflict`, 503 `identity_provider_unavailable`.
 
 ### `GET /me`
 
 Returns the same `user` object. 401 `unauthenticated` if the user no longer exists.
+
+### `POST /me/join-code/regenerate` (parent)
+
+Issues a new join code for the caller and invalidates the old one immediately. Use it when the code has leaked or was shared too widely.
+
+No request body. Response `200`: the same `user` object as `GET /me`, carrying the new `joinCode`.
+The old code then behaves like any unknown code on `POST /links/join` (422 `invalid_join_code`). Existing family links are untouched: linked teens stay linked and no event is published. A teen who has not joined yet needs the new code.
+Needs no `Idempotency-Key`, but repeating a call rotates the code again; each response carries the code that was valid when it was produced, and `GET /me` always returns the current one. After a lost response, read `GET /me` instead of retrying. Two simultaneous calls leave exactly one valid code (the later commit wins).
+Errors: 401 `unauthenticated`, 403 `forbidden` (caller is not a parent), 409 `conflict` (the random draw collided with another parent's code five times in a row; try again).
 
 ### `POST /links/join` (teen)
 

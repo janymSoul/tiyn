@@ -26,22 +26,22 @@ XP/levels (GAM-01) are out of scope here; they would be a sixth module reacting 
 ## UC-01 Sign in and link a teen to a family
 
 **Flow.**
-1. Parent signs in with Google without a role; if the account is new, identity answers `role_required` and creates nothing, and the app asks for the role and signs in again with the same token and `PARENT`; identity verifies the Google ID token and issues the app JWT (first sign-in creates the account and its permanent join code). An account has exactly one role.
+1. Parent signs in with Google without a role; if the account is new, identity answers `role_required` and creates nothing, and the app asks for the role and signs in again with the same token and `PARENT`; identity verifies the Google ID token and issues the app JWT (first sign-in creates the account and its join code, permanent until the parent regenerates it). An account has exactly one role.
 2. Parent shares their join code with the teen (shown in the app; sent in a messenger, SMS, or told in person).
 3. Teen signs in with Google (first sign-in creates the teen account) and enters the code.
 4. Identity finds the parent by code and creates the `family_links` row.
 5. `FamilyLinked(parentId, teenId, generation)` is published. The API for these steps is in `docs/modules.md` ("HTTP API").
 
-**Alternates.** Unknown code → generic "invalid code". Repeated failures → 429 `join_rate_limited` after 5 attempts per account within 15 minutes (counter in `identity.join_attempts`, reset by a successful join). Teen already linked to this parent → no-op. A teen entering a second parent's code → links to that parent too. Parent removes a link later → teen's tasks are cancelled, wallet history is kept.
+**Alternates.** Unknown code → generic "invalid code". Repeated failures → 429 `join_rate_limited` after 5 attempts per account within 15 minutes (counter in `identity.join_attempts`, reset by a successful join). Teen already linked to this parent → no-op. A teen entering a second parent's code → links to that parent too. Parent removes a link later → teen's tasks are cancelled, wallet history is kept. Parent regenerates the code → the old code is rejected like an unknown one, existing links stay.
 
 **Support needed.**
-- identity: Google ID token verification, `users.join_code` (permanent, unique, no look-alike characters; join attempts are limited per account by `identity.join_attempts`), `FamilyDirectory.areLinked`.
+- identity: Google ID token verification, `users.join_code` (unique, kept until the parent regenerates it, no look-alike characters; join attempts are limited per account by `identity.join_attempts`), `FamilyDirectory.areLinked`.
 - ledger consumes the event → creates the teen's wallet (idempotent: the wallet key is `(teen_id, currency)`). notification consumes it → welcome push.
 
 **Open.**
 - **Age and consent.** Teens are 11–17. Confirm whether under-14s can hold a Google account in Kazakhstan, and what parental consent the data-protection law requires. Likely needs an ADR.
 - **Apple.** Not in MVP: Google only. The provider-agnostic identity design allows adding Sign in with Apple later. Revisit if iOS App Store review requires it.
-- **Parent confirmation of a join.** Deferred. The join code is permanent and reusable, so anyone who learns it can link to that parent. The accepted risk is low for a family app; if it grows, add a pending-request step (identity-owned `join_requests`).
+- **Parent confirmation of a join.** Deferred. The join code is reusable until the parent regenerates it, so anyone who learns it can link to that parent. The accepted risk is low for a family app; if it grows, add a pending-request step (identity-owned `join_requests`).
 
 ---
 
