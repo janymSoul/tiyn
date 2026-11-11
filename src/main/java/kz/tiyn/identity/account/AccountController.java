@@ -32,4 +32,10 @@ class AccountController {
     UserResponse me(@AuthenticationPrincipal Principal principal) {
         return UserResponse.from(service.requireUser(principal.userId()));
     }
+
+    @PostMapping("/me/join-code/regenerate")
+    @NaturallyIdempotent
+    UserResponse regenerateJoinCode(@AuthenticationPrincipal Principal principal) {
+        return UserResponse.from(service.regenerateJoinCode(principal.userId()));
+    }
 }
